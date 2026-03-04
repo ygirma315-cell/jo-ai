@@ -101,6 +101,7 @@ async def _start_polling_with_retries(dispatcher: Dispatcher, bot: Bot) -> None:
                 await bot.delete_webhook(drop_pending_updates=True)
                 dropped_pending_updates = True
                 logger.info("Dropped pending Telegram updates on startup to avoid stale sessions.")
+            logger.info("POLLING STARTED | allowed_updates=%s", ",".join(allowed_updates))
             await dispatcher.start_polling(bot, allowed_updates=allowed_updates)
             return
         except asyncio.CancelledError:
@@ -123,6 +124,8 @@ async def _start_polling_with_retries(dispatcher: Dispatcher, bot: Bot) -> None:
 async def run_bot() -> None:
     settings = load_settings()
     setup_logging(settings.log_level)
+    logger.info("TOKEN LOADED | env_var=%s", settings.bot_token_env_var)
+    logger.info("BOT STARTED")
 
     # aiogram expects timeout as number of seconds, not aiohttp.ClientTimeout object.
     session = AiohttpSession(timeout=30)

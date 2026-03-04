@@ -41,14 +41,22 @@
    - `KIMI_MODEL`
    - `MINIAPP_URL`
    - `MINIAPP_API_BASE` (public backend base URL serving `/api/*`)
-3. Run bot:
+3. Run FastAPI backend (Terminal 1):
    ```bash
    python main.py
    ```
-4. Run mini app backend:
+4. Run Telegram bot polling worker (Terminal 2):
+   ```bash
+   python run_bot.py
+   ```
+5. Verify both services:
+   - FastAPI health: `GET http://127.0.0.1:8000/health`
+   - Telegram bot: send `/ping` and expect `pong`
+6. Run the mini app locally (Terminal 3):
    ```bash
    python miniapp/server.py
    ```
+   Open `http://127.0.0.1:8080` in your browser.
 
 ## Mini App API
 

@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import asyncio
+import html
 import logging
 import random
 from contextlib import suppress
@@ -8,6 +9,7 @@ from typing import Literal
 
 from aiogram import F, Router
 from aiogram.filters import Command
+from aiogram.exceptions import TelegramBadRequest
 from aiogram.types import BufferedInputFile, CallbackQuery, Message
 from aiogram.utils.chat_action import ChatActionSender
 
@@ -40,14 +42,16 @@ router = Router(name="jo_ai")
 logger = logging.getLogger(__name__)
 
 JO_AI_MENU_TEXT = (
-    "AI Tools - Choose a mode:\n\n"
-    "- JO AI Chat\n"
-    "- Code Generator\n"
-    "- Research\n"
-    "- Prompt Generator\n"
-    "- Image Generator\n"
-    "- Kimi Image Describer\n"
-    "- DeepSeek Models"
+    "🤖 <b>JO AI Tools</b>\n\n"
+    "Choose a mode:\n"
+    "• 💬 JO AI Chat\n"
+    "• ⚡ Code Generator\n"
+    "• 🔍 Research\n"
+    "• ✨ Prompt Generator\n"
+    "• 🎨 Image Generator\n"
+    "• 🖼️ Kimi Image Describer\n"
+    "• 🧠 DeepSeek Models\n\n"
+    "💡 Tip: Use /help any time for guidance."
 )
 
 IMAGE_TYPE_LABELS = {
@@ -76,10 +80,29 @@ MODEL_PROFILE_LABELS = {
 }
 
 ENGAGEMENT_LINES = (
-    "Working on it...",
-    "Analyzing your request...",
-    "Optimizing the response...",
+    "🤖 Thinking...",
+    "🧠 Analyzing your request...",
+    "⚡ Optimizing the response...",
+    "✨ Crafting a clean answer...",
 )
+
+MODE_PROGRESS_TEXT = {
+    "chat": "🤖 Thinking about your message...",
+    "code": "⚡ Generating code...",
+    "research": "🔍 Researching your topic...",
+    "prompt": "✨ Building your prompt...",
+    "image_prompt": "🧠 Optimizing image prompt...",
+}
+
+MODE_RESULT_TITLE = {
+    "chat": "JO AI Reply",
+    "code": "Code Result",
+    "research": "Research Result",
+    "prompt": "Prompt Result",
+    "image_prompt": "Image Prompt Result",
+}
+
+MAX_REPLY_CHARS = 3300
 
 
 def _profile_options(profile: AIModelProfile, deepseek_api_key: str | None, deepseek_model: str) -> dict[str, object]:
@@ -129,25 +152,48 @@ async def _activate_mode(
         await message.answer(transition.notice, reply_markup=main_menu_keyboard(miniapp_url))
 
     if mode == JoAIMode.CHAT:
-        await message.answer("JO AI Chat is active. Send any message.", reply_markup=jo_chat_keyboard())
+        await message.answer(
+            "💬 <b>JO AI Chat is active</b>\n\n"
+            "🧠 Ask me anything and I will respond clearly.\n"
+            "💡 Need options? Use /help.",
+            reply_markup=jo_chat_keyboard(),
+        )
         return
     if mode == JoAIMode.CODE:
-        await message.answer("Code Generator mode is active. Describe the code you need.", reply_markup=jo_chat_keyboard())
+        await message.answer(
+            "⚡ <b>Code Generator is active</b>\n\n"
+            "Describe what you want to build, including language/framework.\n"
+            "📌 Example: \"Create a Python FastAPI health endpoint.\"",
+            reply_markup=jo_chat_keyboard(),
+        )
         return
     if mode == JoAIMode.RESEARCH:
-        await message.answer("Research mode is active. Send your topic/question.", reply_markup=jo_chat_keyboard())
+        await message.answer(
+            "🔍 <b>Research mode is active</b>\n\n"
+            "Send a topic/question and I will provide structured insights.\n"
+            "🎯 Include context for better results.",
+            reply_markup=jo_chat_keyboard(),
+        )
         return
     if mode == JoAIMode.PROMPT:
         await message.answer(
-            "Prompt Generator mode is active.\nStep 1/2: Tell me the prompt type (image, coding, video, research...).",
+            "✨ <b>Prompt Generator is active</b>\n\n"
+            "Step 1/2: Tell me the prompt type\n"
+            "📌 Examples: image, coding, video, research.",
             reply_markup=jo_chat_keyboard(),
         )
         return
     if mode == JoAIMode.IMAGE:
-        await message.answer("Image Generator mode is active. Choose image style:", reply_markup=image_type_keyboard())
+        await message.answer(
+            "🎨 <b>Image Generator is active</b>\n\n"
+            "Step 1/2: Choose an image style below.",
+            reply_markup=image_type_keyboard(),
+        )
         return
     await message.answer(
-        "Kimi Image Describer is active.\nSend an image and I will describe what I see.",
+        "🖼️ <b>Kimi Image Describer is active</b>\n\n"
+        "Send an image and I will describe what I see.\n"
+        "💡 Optional: include a text instruction with the photo.",
         reply_markup=jo_chat_keyboard(),
     )
 
@@ -162,6 +208,94 @@ def _is_kimi_unclear_result(error_text: str) -> bool:
     return "empty image description" in lower or "did not return image description choices" in lower
 
 
+def _split_text_blocks(text: str, chunk_size: int = MAX_REPLY_CHARS) -> list[str]:
+    payload = text.strip()
+    if not payload:
+        return []
+    if len(payload) <= chunk_size:
+        return [payload]
+
+    chunks: list[str] = []
+    cursor = 0
+    while cursor < len(payload):
+        end = min(cursor + chunk_size, len(payload))
+        if end < len(payload):
+            split_at = payload.rfind("\n", cursor, end)
+            if split_at > cursor + 200:
+                end = split_at
+        chunk = payload[cursor:end].strip()
+        if chunk:
+            chunks.append(chunk)
+        cursor = end
+    return chunks
+
+
+def _friendly_error_text(title: str, exc: Exception | None = None) -> str:
+    base = (
+        f"⚠️ <b>{title}</b>\n"
+        "Please try again in a moment.\n"
+        "💡 You can switch mode from the button below or use /menu."
+    )
+    if exc is None:
+        return base
+    detail = str(exc).strip()
+    if not detail:
+        return base
+    return f"{base}\n\n📌 <i>Details:</i> <code>{html.escape(detail[:240])}</code>"
+
+
+async def _send_progress_message(message: Message, text: str) -> Message | None:
+    try:
+        return await message.answer(text)
+    except Exception:
+        return None
+
+
+async def _clear_progress_message(progress_message: Message | None) -> None:
+    if progress_message is None:
+        return
+    with suppress(TelegramBadRequest):
+        await progress_message.delete()
+
+
+async def _send_styled_ai_reply(
+    message: Message,
+    mode: Literal["chat", "code", "research", "prompt", "image_prompt"],
+    reply_text: str,
+    reply_markup,
+) -> None:
+    safe_body = html.escape(reply_text.strip() or "No output generated.")
+    title = MODE_RESULT_TITLE.get(mode, "AI Result")
+    emoji = {
+        "chat": "🤖",
+        "code": "⚡",
+        "research": "🔍",
+        "prompt": "✨",
+        "image_prompt": "🎨",
+    }.get(mode, "🤖")
+    footer = "💡 <i>Need help? Use /help</i>"
+    chunks = _split_text_blocks(safe_body)
+
+    if not chunks:
+        await message.answer(
+            f"{emoji} <b>{title}</b>\n\nNo output generated.\n\n{footer}",
+            reply_markup=reply_markup,
+        )
+        return
+
+    if len(chunks) == 1:
+        await message.answer(
+            f"{emoji} <b>{title}</b>\n\n{chunks[0]}\n\n{footer}",
+            reply_markup=reply_markup,
+        )
+        return
+
+    await message.answer(f"{emoji} <b>{title}</b>\n\n{footer}")
+    for index, chunk in enumerate(chunks):
+        markup = reply_markup if index == len(chunks) - 1 else None
+        await message.answer(chunk, reply_markup=markup)
+
+
 @router.message(Command("joai"))
 @router.message(Command("chat"))
 @router.message(Command("code"))
@@ -171,14 +305,23 @@ def _is_kimi_unclear_result(error_text: str) -> bool:
 @router.message(Command("deepseek"))
 @router.message(Command("kimi"))
 @router.message(F.text == MENU_AI_CHAT)
+@router.message(F.text == "JO AI Chat")
 @router.message(F.text == MENU_AI_CODE)
+@router.message(F.text == "Code Generator")
 @router.message(F.text == MENU_AI_RESEARCH)
+@router.message(F.text == "Research")
 @router.message(F.text == MENU_AI_PROMPT)
+@router.message(F.text == "Prompt Generator")
 @router.message(F.text == MENU_AI_IMAGE)
+@router.message(F.text == "Image Generator")
 @router.message(F.text == MENU_AI_DEEPSEEK)
+@router.message(F.text == "DeepSeek Models")
 @router.message(F.text == MENU_AI_KIMI)
+@router.message(F.text == "Kimi Image Describer")
 @router.message(F.text == MENU_AI_TOOLS)
+@router.message(F.text == "AI Tools")
 @router.message(F.text == MENU_JO_AI)
+@router.message(F.text == "Jo AI")
 async def open_jo_ai_menu(message: Message, session_manager: SessionManager, miniapp_url: str | None) -> None:
     if not message.from_user:
         return
@@ -203,7 +346,12 @@ async def open_jo_ai_menu(message: Message, session_manager: SessionManager, min
         await _activate_mode(message, message.from_user.id, JoAIMode.KIMI_IMAGE_DESCRIBER, session_manager, miniapp_url)
         return
     if text in {"/deepseek", MENU_AI_DEEPSEEK.lower()}:
-        await message.answer("Choose DeepSeek profile:", reply_markup=deepseek_model_keyboard())
+        await message.answer(
+            "🧠 <b>Choose DeepSeek profile</b>\n\n"
+            "• Thinking: broader exploration\n"
+            "• Reasoning: direct, stepwise accuracy",
+            reply_markup=deepseek_model_keyboard(),
+        )
         return
 
     transition = await session_manager.switch_feature(message.from_user.id, Feature.AI_TOOLS_MENU)
@@ -219,6 +367,7 @@ async def exit_chat_command(message: Message, session_manager: SessionManager, m
     transition = await session_manager.switch_feature(message.from_user.id, Feature.AI_TOOLS_MENU)
     if transition.notice:
         await message.answer(transition.notice, reply_markup=main_menu_keyboard(miniapp_url))
+    await message.answer("↩️ Exited current mode. Returning to AI tools menu.")
     await _show_jo_ai_menu(message)
 
 
@@ -307,23 +456,28 @@ async def choose_image_type(query: CallbackQuery, session_manager: SessionManage
     raw = query.data or ""
     parts = raw.split(":")
     if len(parts) != 3:
-        await query.answer("Invalid image style.", show_alert=True)
+        await query.answer("⚠️ Invalid image style.", show_alert=True)
         return
     image_type = parts[2]
     label = IMAGE_TYPE_LABELS.get(image_type)
     if not label:
-        await query.answer("Unknown image style.", show_alert=True)
+        await query.answer("⚠️ Unknown image style.", show_alert=True)
         return
 
     async with session_manager.lock(query.from_user.id) as session:
         if session.active_feature != Feature.JO_AI or session.jo_ai_mode != JoAIMode.IMAGE:
-            await query.answer("Image session expired. Send /image again.", show_alert=True)
+            await query.answer("⏳ Image session expired. Send /image again.", show_alert=True)
             return
         session.jo_ai_image_type = image_type
 
-    await query.answer(f"{label} selected.")
+    await query.answer(f"✅ {label} selected.")
     if isinstance(query.message, Message):
-        await query.message.answer(f"{label} selected.\nNow describe the image you want.", reply_markup=jo_chat_keyboard())
+        await query.message.answer(
+            f"✅ <b>{label}</b> selected.\n\n"
+            "Step 2/2: Describe the image you want me to create.\n"
+            "🎯 Be specific for better results.",
+            reply_markup=jo_chat_keyboard(),
+        )
 
 
 @router.callback_query(F.data.startswith("joaimodel:"))
@@ -338,7 +492,7 @@ async def choose_model_profile(query: CallbackQuery, session_manager: SessionMan
     }
     profile = mapping.get(value)
     if not profile:
-        await query.answer("Unknown model profile.", show_alert=True)
+        await query.answer("⚠️ Unknown model profile.", show_alert=True)
         return
 
     async with session_manager.lock(query.from_user.id) as session:
@@ -347,10 +501,12 @@ async def choose_model_profile(query: CallbackQuery, session_manager: SessionMan
         session.jo_ai_mode = JoAIMode.CHAT
 
     label = MODEL_PROFILE_LABELS.get(profile, "Unknown")
-    await query.answer(f"{label} selected.")
+    await query.answer(f"✅ {label} selected.")
     if isinstance(query.message, Message):
         await query.message.answer(
-            f"Profile set to <b>{label}</b>.\nJO AI Chat is active now. Send your message.",
+            f"🧠 Profile set to <b>{label}</b>.\n\n"
+            "💬 JO AI Chat is now active.\n"
+            "Ask me anything.",
             reply_markup=jo_chat_keyboard(),
         )
 
@@ -362,7 +518,10 @@ async def handle_jo_ai_action(query: CallbackQuery) -> None:
         return
     await query.answer()
     if isinstance(query.message, Message):
-        await query.message.answer("Unknown AI action. Please use menu buttons.", reply_markup=jo_ai_menu_keyboard())
+        await query.message.answer(
+            "⚠️ Unknown AI action.\nPlease use the buttons below.",
+            reply_markup=jo_ai_menu_keyboard(),
+        )
 
 
 @router.message(
@@ -383,7 +542,7 @@ async def handle_jo_ai_text(
         return
     text = (message.text or "").strip()
     if not text:
-        await message.answer("Please send text input.")
+        await message.answer("✍️ Please send a text message to continue.")
         return
 
     async with session_manager.lock(message.from_user.id) as session:
@@ -414,10 +573,17 @@ async def handle_jo_ai_text(
         )
         return
     if mode == JoAIMode.KIMI_IMAGE_DESCRIBER:
-        await message.answer("Send an image so I can describe it.", reply_markup=jo_chat_keyboard())
+        await message.answer(
+            "🖼️ Send an image and I will describe it.\n"
+            "💡 You can also include a short instruction.",
+            reply_markup=jo_chat_keyboard(),
+        )
         return
 
-    await message.answer("Pick an AI mode first.", reply_markup=jo_ai_menu_keyboard())
+    await message.answer(
+        "🤖 Pick an AI mode first from the menu below.",
+        reply_markup=jo_ai_menu_keyboard(),
+    )
 
 
 @router.message(ActiveFeatureFilter(Feature.JO_AI), F.photo)
@@ -433,10 +599,13 @@ async def handle_kimi_photo(
     async with session_manager.lock(message.from_user.id) as session:
         mode = session.jo_ai_mode if session.active_feature == Feature.JO_AI else JoAIMode.MENU
     if mode != JoAIMode.KIMI_IMAGE_DESCRIBER:
-        await message.answer("To describe images, first open Kimi Image Describer mode.", reply_markup=jo_chat_keyboard())
+        await message.answer(
+            "🖼️ To describe images, first open <b>Kimi Image Describer</b> mode.",
+            reply_markup=jo_chat_keyboard(),
+        )
         return
 
-    await message.answer("Analyzing your image now...")
+    progress_message = await _send_progress_message(message, "🖼️ Analyzing your image...")
     largest = message.photo[-1]
     async with session_manager.lock(message.from_user.id) as session:
         session.jo_ai_last_image_file_id = largest.file_id
@@ -446,36 +615,40 @@ async def handle_kimi_photo(
             _describe_kimi_file_id(message, chat_service, largest.file_id, kimi_api_key, kimi_model),
         )
     except AIServiceError as exc:
+        await _clear_progress_message(progress_message)
         if _is_kimi_unclear_result(str(exc)):
             await message.answer(
-                "I couldn't clearly understand this image. Please try another image with better lighting or clarity.",
+                "🤔 I couldn't clearly understand this image.\n"
+                "Try another image with better lighting or clarity.",
                 reply_markup=kimi_result_keyboard(),
             )
             return
         if "timed out" in str(exc).lower() or "timeout" in str(exc).lower():
             await message.answer(
-                "Couldn't describe this image in time. Please try again.",
+                "⏳ I couldn't describe this image in time.\nPlease try again.",
                 reply_markup=kimi_result_keyboard(),
             )
             return
         await message.answer(
-            "Kimi image describer is temporarily unavailable or timed out. Please try again shortly.",
+            _friendly_error_text("Kimi image describer is temporarily unavailable", exc),
             reply_markup=kimi_result_keyboard(),
         )
         return
     except Exception:
+        await _clear_progress_message(progress_message)
         logger.exception("Failed to download user image.")
-        await message.answer("I could not read that image. Please send another one.")
+        await message.answer("⚠️ I couldn't read that image file.\nPlease send another one.")
         return
 
+    await _clear_progress_message(progress_message)
     if not description.strip():
         await message.answer(
-            "I couldn't clearly understand this image. Please try another image.",
+            "🤔 I couldn't clearly understand this image.\nPlease try another image.",
             reply_markup=kimi_result_keyboard(),
         )
         return
 
-    await message.answer(description, reply_markup=kimi_result_keyboard())
+    await _send_styled_ai_reply(message, "chat", description, kimi_result_keyboard())
 
 
 @router.callback_query(F.data == "joai:kimi_retry")
@@ -495,49 +668,52 @@ async def kimi_retry_same_image(
         mode = session.jo_ai_mode if session.active_feature == Feature.JO_AI else JoAIMode.MENU
 
     if mode != JoAIMode.KIMI_IMAGE_DESCRIBER or not last_file_id:
-        await query.answer("No image to retry. Send a new image first.", show_alert=True)
+        await query.answer("⚠️ No image to retry. Send a new image first.", show_alert=True)
         return
 
-    await query.answer("Retrying same image...")
+    await query.answer("🔁 Retrying same image...")
     if isinstance(query.message, Message):
-        await query.message.answer("Trying again on the same image...")
+        progress_message = await _send_progress_message(query.message, "🖼️ Re-analyzing the same image...")
         try:
             description = await _run_kimi_with_progress(
                 query.message,
                 _describe_kimi_file_id(query.message, chat_service, last_file_id, kimi_api_key, kimi_model),
             )
         except AIServiceError as exc:
+            await _clear_progress_message(progress_message)
             if _is_kimi_unclear_result(str(exc)):
                 await query.message.answer(
-                    "I still couldn't clearly understand this image. Try a clearer image.",
+                    "🤔 I still couldn't clearly understand this image.\nTry a clearer image.",
                     reply_markup=kimi_result_keyboard(),
                 )
             elif "timed out" in str(exc).lower() or "timeout" in str(exc).lower():
                 await query.message.answer(
-                    "Couldn't describe this image in time. Please try again.",
+                    "⏳ I couldn't describe this image in time.\nPlease try again.",
                     reply_markup=kimi_result_keyboard(),
                 )
             else:
                 await query.message.answer(
-                    "Kimi image describer is temporarily unavailable or timed out. Please try again shortly.",
+                    _friendly_error_text("Kimi image describer is temporarily unavailable", exc),
                     reply_markup=kimi_result_keyboard(),
                 )
             return
         except Exception:
+            await _clear_progress_message(progress_message)
             logger.exception("Unexpected Kimi retry callback error.")
             await query.message.answer(
-                "I couldn't process that image now. Please try again shortly.",
+                "⚠️ I couldn't process that image right now.\nPlease try again shortly.",
                 reply_markup=kimi_result_keyboard(),
             )
             return
 
+        await _clear_progress_message(progress_message)
         if not description.strip():
             await query.message.answer(
-                "I still couldn't clearly understand this image. Try another image.",
+                "🤔 I still couldn't clearly understand this image.\nTry another image.",
                 reply_markup=kimi_result_keyboard(),
             )
             return
-        await query.message.answer(description, reply_markup=kimi_result_keyboard())
+        await _send_styled_ai_reply(query.message, "chat", description, kimi_result_keyboard())
 
 
 async def _describe_kimi_file_id(
@@ -581,8 +757,8 @@ async def _run_kimi_with_progress(message: Message, work_coro) -> str:
         return await asyncio.wait_for(asyncio.shield(task), timeout=15)
     except asyncio.TimeoutError:
         await message.answer(
-            "Wait, we're retrying to figure out the image details. "
-            "Usually if it takes this long it might not work."
+            "⏳ Still working on it...\n"
+            "I'm retrying once to extract the image details."
         )
         try:
             return await asyncio.wait_for(asyncio.shield(task), timeout=15)
@@ -603,6 +779,8 @@ async def _process_chat_message(
     profile_options: dict[str, object],
 ) -> None:
     await _maybe_send_engagement(message)
+    progress_text = MODE_PROGRESS_TEXT.get(mode, "🤖 Working on it...")
+    progress_message = await _send_progress_message(message, progress_text)
     try:
         async with ChatActionSender.typing(bot=message.bot, chat_id=message.chat.id):
             reply = await chat_service.generate_reply(
@@ -614,19 +792,22 @@ async def _process_chat_message(
                 thinking=bool(profile_options.get("thinking", False)),
             )
     except AIServiceError as exc:
-        await message.answer(f"AI is unavailable right now.\n{exc}", reply_markup=jo_chat_keyboard())
+        await _clear_progress_message(progress_message)
+        await message.answer(_friendly_error_text("AI is unavailable right now", exc), reply_markup=jo_chat_keyboard())
         return
     except Exception:
+        await _clear_progress_message(progress_message)
         logger.exception("Unexpected JO AI error.")
-        await message.answer("AI failed unexpectedly. Please try again.", reply_markup=jo_chat_keyboard())
+        await message.answer(_friendly_error_text("Unexpected AI failure"), reply_markup=jo_chat_keyboard())
         return
 
+    await _clear_progress_message(progress_message)
     if message.from_user:
         async with session_manager.lock(message.from_user.id) as session:
             if session.active_feature == Feature.JO_AI and session.jo_ai_mode == JoAIMode.CHAT:
                 session.jo_ai_chat_history.append(("user", user_text))
                 session.jo_ai_chat_history.append(("assistant", reply))
-    await message.answer(reply, reply_markup=jo_chat_keyboard())
+    await _send_styled_ai_reply(message, mode, reply, jo_chat_keyboard())
 
 
 async def _process_prompt_message(
@@ -642,14 +823,20 @@ async def _process_prompt_message(
     if not current_prompt_type:
         async with session_manager.lock(message.from_user.id) as session:
             if session.active_feature != Feature.JO_AI or session.jo_ai_mode != JoAIMode.PROMPT:
-                await message.answer("Prompt session expired. Send /prompt to start again.")
+                await message.answer("⏳ Prompt session expired. Send /prompt to start again.")
                 return
             session.jo_ai_prompt_type = user_text
-        await message.answer("Step 2/2: Describe what you want for that prompt type.", reply_markup=jo_chat_keyboard())
+        await message.answer(
+            "✅ Prompt type saved.\n\n"
+            "Step 2/2: Describe what you want for that prompt type.\n"
+            "🎯 Include audience, tone, and constraints if possible.",
+            reply_markup=jo_chat_keyboard(),
+        )
         return
 
     await _maybe_send_engagement(message)
     prompt_request = f"Prompt type: {current_prompt_type}\nUser goal/details: {user_text}\nGenerate one optimized prompt."
+    progress_message = await _send_progress_message(message, "✨ Generating your optimized prompt...")
     try:
         prompt_output = await chat_service.generate_reply(
             prompt_request,
@@ -660,13 +847,16 @@ async def _process_prompt_message(
             thinking=bool(profile_options.get("thinking", False)),
         )
     except AIServiceError as exc:
-        await message.answer(f"Prompt generation failed.\n{exc}", reply_markup=jo_chat_keyboard())
+        await _clear_progress_message(progress_message)
+        await message.answer(_friendly_error_text("Prompt generation failed", exc), reply_markup=jo_chat_keyboard())
         return
     except Exception:
+        await _clear_progress_message(progress_message)
         logger.exception("Unexpected prompt generation error.")
-        await message.answer("Prompt generation failed unexpectedly. Please try again.", reply_markup=jo_chat_keyboard())
+        await message.answer(_friendly_error_text("Unexpected prompt generation error"), reply_markup=jo_chat_keyboard())
         return
-    await message.answer(prompt_output, reply_markup=jo_chat_keyboard())
+    await _clear_progress_message(progress_message)
+    await _send_styled_ai_reply(message, "prompt", prompt_output, jo_chat_keyboard())
 
 
 async def _process_image_message(
@@ -679,7 +869,10 @@ async def _process_image_message(
     profile_options: dict[str, object],
 ) -> None:
     if not current_image_type:
-        await message.answer("Step 1/2: Choose an image style first.", reply_markup=image_type_keyboard())
+        await message.answer(
+            "🎨 Step 1/2: Choose an image style first.",
+            reply_markup=image_type_keyboard(),
+        )
         return
     await _maybe_send_engagement(message)
 
@@ -689,6 +882,7 @@ async def _process_image_message(
         f"Image type: {style_label}\nStyle hints: {style_hint}\nUser description: {user_text}\n"
         "Generate one optimized image prompt with subject detail, lighting, environment, style and quality tags."
     )
+    progress_message = await _send_progress_message(message, "🧠 Optimizing your image prompt...")
     try:
         async with ChatActionSender.typing(bot=message.bot, chat_id=message.chat.id):
             optimized_prompt = await chat_service.generate_reply(
@@ -700,37 +894,57 @@ async def _process_image_message(
                 thinking=bool(profile_options.get("thinking", False)),
             )
     except AIServiceError as exc:
-        await message.answer(f"Image prompt optimization failed.\n{exc}", reply_markup=jo_chat_keyboard())
+        await _clear_progress_message(progress_message)
+        await message.answer(_friendly_error_text("Image prompt optimization failed", exc), reply_markup=jo_chat_keyboard())
         return
     except Exception:
+        await _clear_progress_message(progress_message)
         logger.exception("Unexpected image prompt optimization error.")
-        await message.answer("Image optimization failed unexpectedly. Please try again.", reply_markup=jo_chat_keyboard())
+        await message.answer(_friendly_error_text("Unexpected image optimization error"), reply_markup=jo_chat_keyboard())
         return
 
     cleaned_prompt = optimized_prompt.replace("Optimized Prompt:", "").strip() or optimized_prompt.strip()
+    if progress_message is not None:
+        with suppress(TelegramBadRequest):
+            await progress_message.edit_text("🎨 Creating your image...")
     try:
         async with ChatActionSender.upload_photo(bot=message.bot, chat_id=message.chat.id):
             image_bytes = await image_generation_service.generate_image(cleaned_prompt)
     except AIServiceError as exc:
+        await _clear_progress_message(progress_message)
         await message.answer(
-            "Image generation API is unavailable right now.\n"
-            f"{exc}\n\nOptimized prompt:\n<code>{cleaned_prompt}</code>",
+            "⚠️ <b>Image generation API is unavailable right now.</b>\n"
+            "You can still use this optimized prompt manually:\n\n"
+            f"<code>{html.escape(cleaned_prompt)}</code>\n\n"
+            f"📌 <i>Details:</i> <code>{html.escape(str(exc)[:240])}</code>",
             reply_markup=jo_chat_keyboard(),
         )
         return
     except Exception:
+        await _clear_progress_message(progress_message)
         logger.exception("Unexpected image generation error.")
-        await message.answer("Image generation failed unexpectedly. Please try again.", reply_markup=jo_chat_keyboard())
+        await message.answer(_friendly_error_text("Unexpected image generation error"), reply_markup=jo_chat_keyboard())
         return
 
+    await _clear_progress_message(progress_message)
     image_file = BufferedInputFile(image_bytes, filename="jo_ai_generated.png")
     await message.answer_photo(
         photo=image_file,
-        caption=f"Style: {style_label}\nPrompt used:\n<code>{cleaned_prompt[:900]}</code>",
+        caption=(
+            "🎉 <b>Your image is ready</b>\n\n"
+            f"🎨 Style: <b>{html.escape(style_label)}</b>\n"
+            "📌 Prompt used:\n"
+            f"<code>{html.escape(cleaned_prompt[:900])}</code>"
+        ),
         reply_markup=jo_chat_keyboard(),
     )
 
 
 @router.message(ActiveFeatureFilter(Feature.JO_AI))
 async def jo_ai_unexpected_input(message: Message) -> None:
-    await message.answer("Please send text, or send an image in Kimi Image Describer mode.", reply_markup=jo_ai_menu_keyboard())
+    await message.answer(
+        "📩 Send text in the current JO AI mode.\n"
+        "🖼️ In Kimi mode, send an image.\n"
+        "💡 You can switch mode anytime.",
+        reply_markup=jo_ai_menu_keyboard(),
+    )

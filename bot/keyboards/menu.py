@@ -31,7 +31,7 @@ def main_menu_keyboard(miniapp_url: str | None = None) -> ReplyKeyboardMarkup:
     return ReplyKeyboardMarkup(
         keyboard=rows,
         resize_keyboard=True,
-        input_field_placeholder="Choose a feature from the menu",
+        input_field_placeholder="🧠 Ask me anything or pick a feature",
     )
 
 
@@ -46,7 +46,7 @@ def ai_tools_keyboard() -> ReplyKeyboardMarkup:
     return ReplyKeyboardMarkup(
         keyboard=rows,
         resize_keyboard=True,
-        input_field_placeholder="Choose an AI tool",
+        input_field_placeholder="🤖 Pick an AI mode",
     )
 
 
@@ -59,14 +59,14 @@ def utilities_keyboard() -> ReplyKeyboardMarkup:
     return ReplyKeyboardMarkup(
         keyboard=rows,
         resize_keyboard=True,
-        input_field_placeholder="Choose a utility",
+        input_field_placeholder="🛠️ Pick a utility tool",
     )
 
 
 def games_menu_keyboard() -> InlineKeyboardMarkup:
     builder = InlineKeyboardBuilder()
-    builder.button(text="Tic-Tac-Toe (X/O)", callback_data="gm:ttt")
-    builder.button(text="Guess the Number", callback_data="gm:guess")
-    builder.button(text="Back to Main Menu", callback_data="menu:main")
+    builder.button(text="❌⭕ Tic-Tac-Toe", callback_data="gm:ttt")
+    builder.button(text="🎯 Guess the Number", callback_data="gm:guess")
+    builder.button(text="🏠 Back to Main Menu", callback_data="menu:main")
     builder.adjust(1)
     return builder.as_markup()

@@ -92,33 +92,33 @@ class SessionManager:
     def _transition_notice(self, previous: Feature, new_feature: Feature) -> str:
         if new_feature == Feature.NONE:
             if previous == Feature.CALCULATOR:
-                return "Calculator closed. Returning to main menu."
+                return "🧮 Calculator closed. Returning to main menu."
             if is_game_feature(previous):
-                return "Game ended. Returning to main menu."
+                return "🎮 Game ended. Returning to main menu."
             if previous == Feature.GAMES_MENU:
-                return "Returning to main menu."
+                return "↩️ Returning to main menu."
             if previous == Feature.AI_TOOLS_MENU:
-                return "Closing AI tools. Returning to main menu."
+                return "🤖 Closing AI tools. Returning to main menu."
             if previous == Feature.UTILITIES_MENU:
-                return "Closing utilities menu. Returning to main menu."
+                return "🛠️ Closing utilities menu. Returning to main menu."
             if previous == Feature.JO_AI:
-                return "Jo AI closed. Returning to main menu."
-            return "Returning to main menu."
+                return "🤖 Jo AI closed. Returning to main menu."
+            return "↩️ Returning to main menu."
 
         if is_game_feature(previous) and new_feature == Feature.CALCULATOR:
-            return "Game ended. Opening calculator."
+            return "🎮 Game ended. Opening calculator."
         if previous == Feature.CALCULATOR and (new_feature == Feature.GAMES_MENU or is_game_feature(new_feature)):
-            return "Calculator closed. Opening games."
+            return "🧮 Calculator closed. Opening games."
         if previous == Feature.NONE and new_feature == Feature.AI_TOOLS_MENU:
-            return "Opening AI tools."
+            return "🤖 Opening AI tools."
         if previous == Feature.NONE and new_feature == Feature.UTILITIES_MENU:
-            return "Opening utilities."
+            return "🛠️ Opening utilities."
         if previous == Feature.NONE and new_feature == Feature.JO_AI:
-            return "Opening Jo AI."
+            return "🤖 Opening Jo AI."
         if previous != Feature.JO_AI and new_feature == Feature.JO_AI:
-            return f"{feature_label(previous).capitalize()} closed. Opening Jo AI."
+            return f"✅ {feature_label(previous).capitalize()} closed. Opening Jo AI."
 
-        return f"{feature_label(previous).capitalize()} closed. Opening {feature_label(new_feature)}."
+        return f"✅ {feature_label(previous).capitalize()} closed. Opening {feature_label(new_feature)}."
 
     def _load_known_users(self) -> None:
         if self._known_users_path is None:

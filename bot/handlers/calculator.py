@@ -14,15 +14,16 @@ from bot.services.session_manager import SessionManager
 router = Router(name="calculator")
 
 CALCULATOR_INTRO = (
-    "Calculator mode is ready.\n"
+    "🧮 <b>Calculator mode is ready</b>\n\n"
     "Supported: +, -, *, /, parentheses, decimals.\n"
-    f"Example: <code>{CALCULATOR_EXAMPLE}</code>\n\n"
+    f"📌 Example: <code>{CALCULATOR_EXAMPLE}</code>\n\n"
     "Send an expression now."
 )
 
 
 @router.message(Command("calculator"))
 @router.message(F.text == MENU_CALCULATOR)
+@router.message(F.text == "Calculator")
 async def open_calculator(message: Message, session_manager: SessionManager, miniapp_url: str | None) -> None:
     if not message.from_user:
         return
@@ -49,17 +50,21 @@ async def evaluate_expression(
         result = calculator_service.evaluate(expression)
     except CalculatorError as exc:
         await message.answer(
-            f"{exc}\nTry something like: <code>{CALCULATOR_EXAMPLE}</code>",
+            f"⚠️ {exc}\n\n"
+            f"Try something like: <code>{CALCULATOR_EXAMPLE}</code>",
             reply_markup=main_menu_keyboard(miniapp_url),
         )
         return
 
-    await message.answer(f"Result: <code>{result}</code>", reply_markup=main_menu_keyboard(miniapp_url))
+    await message.answer(
+        f"✅ <b>Result</b>\n<code>{result}</code>",
+        reply_markup=main_menu_keyboard(miniapp_url),
+    )
 
 
 @router.message(ActiveFeatureFilter(Feature.CALCULATOR), ~F.text)
 async def calculator_unexpected_input(message: Message, miniapp_url: str | None) -> None:
     await message.answer(
-        f"Please send a text expression. Example: <code>{CALCULATOR_EXAMPLE}</code>",
+        f"✍️ Please send a text expression.\nExample: <code>{CALCULATOR_EXAMPLE}</code>",
         reply_markup=main_menu_keyboard(miniapp_url),
     )

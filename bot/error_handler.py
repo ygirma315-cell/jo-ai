@@ -1,7 +1,9 @@
 from __future__ import annotations
 
+from contextlib import suppress
 import logging
 
+from aiogram.exceptions import TelegramBadRequest
 from aiogram import Dispatcher
 from aiogram.types import CallbackQuery, ErrorEvent, Message
 
@@ -31,13 +33,22 @@ async def global_error_handler(event: ErrorEvent) -> bool:
     )
 
     if update.message:
-        await update.message.answer("Something went wrong. Please try again.")
+        await update.message.answer(
+            "⚠️ <b>Something went wrong</b>\n"
+            "Please try again in a moment.\n"
+            "💡 You can use /menu or /help if needed."
+        )
         return True
 
     if update.callback_query:
-        await update.callback_query.answer("Something went wrong. Please try again.", show_alert=True)
+        with suppress(TelegramBadRequest):
+            await update.callback_query.answer("⚠️ Something went wrong. Please try again.", show_alert=True)
         if update.callback_query.message:
-            await update.callback_query.message.answer("Something went wrong. Please try again.")
+            await update.callback_query.message.answer(
+                "⚠️ <b>Something went wrong</b>\n"
+                "Please try again.\n"
+                "💡 Tip: use /menu to reset your session."
+            )
         return True
 
     return True

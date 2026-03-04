@@ -3,31 +3,63 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>JO AI Web</title>
+  <title>JO AI Mini App</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link
+    href="https://fonts.googleapis.com/css2?family=DM+Sans:wght@400;500;700&family=Space+Grotesk:wght@500;600;700&display=swap"
+    rel="stylesheet"
+  >
   <link rel="stylesheet" href="style.css">
   <script src="https://telegram.org/js/telegram-web-app.js"></script>
   <script src="app.js" defer></script>
 </head>
 <body>
+  <div id="welcomeOverlay" class="welcome-overlay">
+    <section class="welcome-card">
+      <p class="welcome-tag">JO AI MINI APP</p>
+      <h2>Welcome to your AI cockpit 🤖</h2>
+      <p id="welcomeMessage">Loading Telegram session...</p>
+      <div class="welcome-points">
+        <span>🧠 Chat + Research</span>
+        <span>💻 Code + Prompt Builder</span>
+        <span>🖼️ Image + Kimi Vision</span>
+      </div>
+      <button id="openAppBtn" class="btn primary wide">🚀 Open JO AI</button>
+    </section>
+  </div>
+
   <main class="page">
     <section class="shell">
       <header class="topbar">
         <div>
-          <p class="eyebrow">JO AI</p>
-          <h1>Assistant Workspace</h1>
+          <p class="eyebrow">JO AI WORKSPACE</p>
+          <h1>Build, ask, generate, and play.</h1>
+          <p class="subtitle">Fast responses, clean output, and reliable API fallback handling.</p>
         </div>
-        <div class="status">
-          <span id="status">Starting...</span>
-          <span id="userInfo"></span>
+        <div class="status-cluster">
+          <span id="status" class="chip">🔌 Starting...</span>
+          <span id="apiBaseLabel" class="chip muted">API: detecting...</span>
+          <span id="userInfo" class="chip muted">Guest mode</span>
         </div>
       </header>
 
       <nav class="tabs">
-        <button class="tab active" data-target="ai">AI Tools</button>
-        <button class="tab" data-target="games">Games</button>
+        <button class="tab active" data-target="ai">🤖 AI Tools</button>
+        <button class="tab" data-target="games">🎮 Games</button>
       </nav>
 
       <section id="ai" class="panel active">
+        <section class="hero-card card">
+          <h2>Welcome startup</h2>
+          <p>Choose your model profile, then generate answers with structured output and quick-copy support.</p>
+          <div class="hero-hints">
+            <span>✅ API health checks</span>
+            <span>📋 Copy full output</span>
+            <span>🛟 Support tools built in</span>
+          </div>
+        </section>
+
         <div class="card">
           <label for="modelProfile">Model Profile</label>
           <select id="modelProfile">
@@ -37,17 +69,17 @@
         </div>
 
         <div class="mode-grid">
-          <button class="mode active" data-mode="chat">JO AI Chat</button>
-          <button class="mode" data-mode="code">Code Generator</button>
-          <button class="mode" data-mode="research">Research</button>
-          <button class="mode" data-mode="prompt">Prompt Generator</button>
-          <button class="mode" data-mode="image">Image Generator</button>
-          <button class="mode" data-mode="kimi">Kimi Image Describer</button>
+          <button class="mode active" data-mode="chat">💬 JO AI Chat</button>
+          <button class="mode" data-mode="code">💻 Code Generator</button>
+          <button class="mode" data-mode="research">🔎 Research</button>
+          <button class="mode" data-mode="prompt">🪄 Prompt Builder</button>
+          <button class="mode" data-mode="image">🖼️ Image Generator</button>
+          <button class="mode" data-mode="kimi">👁️ Kimi Describer</button>
         </div>
 
         <div class="card" id="promptTypeWrap" hidden>
           <label for="promptType">Prompt type</label>
-          <input id="promptType" type="text" placeholder="image prompt, coding prompt, video prompt, research prompt..." />
+          <input id="promptType" type="text" placeholder="e.g. coding prompt, marketing prompt, video prompt">
         </div>
 
         <div class="card" id="imageTypeWrap" hidden>
@@ -64,26 +96,48 @@
         </div>
 
         <div class="card" id="kimiImageWrap" hidden>
-          <label for="kimiImage">Upload image</label>
-          <input id="kimiImage" type="file" accept="image/*" />
+          <label for="kimiImage">Upload image for Kimi</label>
+          <input id="kimiImage" type="file" accept="image/*">
+          <p id="uploadInfo" class="hint">No image selected.</p>
         </div>
 
         <div class="card">
           <label for="aiInput" id="inputLabel">Message</label>
-          <textarea id="aiInput" rows="6" placeholder="Type your request here..."></textarea>
+          <textarea id="aiInput" rows="7" placeholder="Type your request here..."></textarea>
           <div class="actions">
-            <button id="sendBtn" class="btn primary">Generate</button>
-            <button id="clearBtn" class="btn">Clear</button>
+            <button id="sendBtn" class="btn primary">⚡ Generate</button>
+            <button id="clearBtn" class="btn">🧹 Clear</button>
           </div>
+          <p id="loadingHint" class="hint">Ready when you are.</p>
         </div>
 
         <div class="card response-card">
           <div class="response-head">
             <h2>Response</h2>
-            <span id="apiState">idle</span>
+            <div class="response-controls">
+              <span id="apiState" class="chip muted">idle</span>
+              <button id="copyBtn" class="btn small">📋 Copy</button>
+              <button id="downloadImageBtn" class="btn small" disabled>⬇️ Save Image</button>
+            </div>
           </div>
-          <pre id="aiOutput">Your AI response will appear here.</pre>
-          <img id="imagePreview" class="image-preview" alt="Generated AI image preview" hidden />
+          <div id="aiOutput" class="rich-output">
+            <p class="placeholder">Your AI response will appear here.</p>
+          </div>
+          <figure id="imageWrap" class="image-wrap" hidden>
+            <img id="imagePreview" class="image-preview" alt="Generated AI image preview">
+            <figcaption id="imageCaption">Generated image preview</figcaption>
+          </figure>
+        </div>
+
+        <div class="card support-card">
+          <h2>Help & Support</h2>
+          <p>If anything fails, report it quickly with diagnostics so the issue can be fixed faster.</p>
+          <div class="actions">
+            <a id="contactBtn" class="btn" href="https://t.me/JO_CHAT_AI_BOT" target="_blank" rel="noopener noreferrer">
+              💬 Contact Developer
+            </a>
+            <button id="reportBtn" class="btn">🐞 Report Problem</button>
+          </div>
         </div>
       </section>
 
@@ -103,7 +157,7 @@
             <h2>Guess the Number</h2>
             <p>Guess the hidden number between 1 and 100.</p>
             <div class="guess-wrap">
-              <input id="guessInput" type="number" min="1" max="100" placeholder="Enter guess" />
+              <input id="guessInput" type="number" min="1" max="100" placeholder="Enter guess">
               <button id="guessBtn" class="btn primary">Try</button>
               <button id="guessReset" class="btn">New Game</button>
             </div>
@@ -113,5 +167,7 @@
       </section>
     </section>
   </main>
+
+  <div id="toast" class="toast" hidden></div>
 </body>
 </html>

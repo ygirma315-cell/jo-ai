@@ -10,6 +10,7 @@ from dotenv import load_dotenv
 @dataclass(frozen=True)
 class Settings:
     bot_token: str
+    bot_token_env_var: str
     known_users_path: Path
     log_level: str
     nvidia_api_key: str | None
@@ -22,13 +23,21 @@ class Settings:
     miniapp_api_base: str | None
 
 
-def load_settings() -> Settings:
-    load_dotenv()
-    root_dir = Path(__file__).resolve().parent.parent
+def _load_required_bot_token() -> tuple[str, str]:
+    for env_name in ("BOT_TOKEN", "TELEGRAM_BOT_TOKEN"):
+        value = os.getenv(env_name, "").strip()
+        if value:
+            return value, env_name
+    raise RuntimeError(
+        "Missing required Telegram token. Set BOT_TOKEN (or TELEGRAM_BOT_TOKEN) in .env."
+    )
 
-    bot_token = os.getenv("BOT_TOKEN", "").strip()
-    if not bot_token:
-        raise RuntimeError("Missing BOT_TOKEN. Set it in .env before running the bot.")
+
+def load_settings() -> Settings:
+    root_dir = Path(__file__).resolve().parent.parent
+    load_dotenv(dotenv_path=root_dir / ".env")
+
+    bot_token, bot_token_env_var = _load_required_bot_token()
 
     known_users_raw = os.getenv("KNOWN_USERS_PATH", "bot/data/known_users.json").strip()
     known_users_path = Path(known_users_raw)
@@ -49,6 +58,7 @@ def load_settings() -> Settings:
 
     return Settings(
         bot_token=bot_token,
+        bot_token_env_var=bot_token_env_var,
         known_users_path=known_users_path,
         log_level=log_level,
         nvidia_api_key=nvidia_api_key,

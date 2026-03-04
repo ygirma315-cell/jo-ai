@@ -24,20 +24,23 @@ router = Router(name="games")
 
 
 async def _send_games_menu(message: Message) -> None:
-    await message.answer("Choose a game:", reply_markup=games_menu_keyboard())
+    await message.answer(
+        "🎮 <b>Games Menu</b>\n\nChoose a game to play:",
+        reply_markup=games_menu_keyboard(),
+    )
 
 
 def _tictactoe_text(state: TicTacToeState, outcome: TicTacToeOutcome | None = None) -> str:
-    header = "Tic-Tac-Toe\nYou are <b>X</b>. Bot is <b>O</b>."
+    header = "❌⭕ <b>Tic-Tac-Toe</b>\nYou are <b>X</b>. Bot is <b>O</b>."
     if outcome is None or outcome.status == "continue":
         if outcome and outcome.bot_move is not None:
-            return f"{header}\nBot played at cell {outcome.bot_move + 1}. Your turn."
-        return f"{header}\nTap an empty cell to play."
+            return f"{header}\n🤖 Bot played at cell {outcome.bot_move + 1}. Your turn."
+        return f"{header}\n🎯 Tap an empty cell to play."
     if outcome.status == "player_win":
-        return f"{header}\n<b>You won.</b>"
+        return f"{header}\n🏆 <b>You won.</b>"
     if outcome.status == "bot_win":
-        return f"{header}\n<b>Bot won this round.</b>"
-    return f"{header}\n<b>Draw.</b>"
+        return f"{header}\n🤖 <b>Bot won this round.</b>"
+    return f"{header}\n🤝 <b>Draw.</b>"
 
 
 async def _start_tictactoe(
@@ -68,7 +71,7 @@ async def _start_guess_number(
         state = session.guess_number
 
     await message.answer(
-        "Guess the Number started.\n"
+        "🎯 <b>Guess the Number started</b>\n"
         f"I picked a number between {state.min_value} and {state.max_value}.\n"
         "Send your first guess.",
         reply_markup=main_menu_keyboard(miniapp_url),
@@ -77,6 +80,7 @@ async def _start_guess_number(
 
 @router.message(Command("games"))
 @router.message(F.text == MENU_GAMES)
+@router.message(F.text == "Games")
 async def open_games_menu(
     message: Message,
     session_manager: SessionManager,
@@ -170,7 +174,7 @@ async def replay_tictactoe(
 
 @router.callback_query(F.data == "ttt:noop")
 async def tictactoe_noop(query: CallbackQuery) -> None:
-    await query.answer("That cell is already taken.")
+    await query.answer("⚠️ That cell is already taken.")
 
 
 @router.callback_query(F.data.startswith("ttt:"))
@@ -186,14 +190,14 @@ async def tictactoe_move(
     raw_data = query.data or ""
     parts = raw_data.split(":")
     if len(parts) != 3:
-        await query.answer("Invalid move payload.", show_alert=True)
+        await query.answer("⚠️ Invalid move payload.", show_alert=True)
         return
 
     _, game_id, cell_raw = parts
     try:
         cell = int(cell_raw)
     except ValueError:
-        await query.answer("Invalid move payload.", show_alert=True)
+        await query.answer("⚠️ Invalid move payload.", show_alert=True)
         return
 
     state: TicTacToeState | None = None
@@ -217,7 +221,7 @@ async def tictactoe_move(
         await query.answer(error_text, show_alert=False)
         return
 
-    await query.answer("Move received.")
+    await query.answer("✅ Move received.")
     if not isinstance(query.message, Message) or state is None or outcome is None:
         return
 
@@ -266,7 +270,7 @@ async def process_guess_number(
 
     text = (message.text or "").strip()
     if not text.isdigit():
-        await message.answer("Please send a whole number like 42.")
+        await message.answer("✍️ Please send a whole number like <code>42</code>.")
         return
 
     guess = int(text)
@@ -294,26 +298,26 @@ async def process_guess_number(
                 game_finished = state.finished
 
     if session_expired:
-        await message.answer("That game session expired. Please start a new one.")
+        await message.answer("⏳ That game session expired. Please start a new one.")
         return
     if processing_error:
         await message.answer(processing_error)
         return
 
     if result_status == "low":
-        await message.answer(f"Too low. Try a higher number ({min_value}-{max_value}).")
+        await message.answer(f"📉 Too low. Try a higher number ({min_value}-{max_value}).")
         return
     if result_status == "high":
-        await message.answer(f"Too high. Try a lower number ({min_value}-{max_value}).")
+        await message.answer(f"📈 Too high. Try a lower number ({min_value}-{max_value}).")
         return
 
     if game_finished:
         await message.answer(
-            f"Correct. You guessed it in {result_attempts} attempt(s).",
+            f"🎉 Correct! You guessed it in {result_attempts} attempt(s).",
             reply_markup=guess_number_end_keyboard(),
         )
 
 
 @router.message(ActiveFeatureFilter(Feature.GUESS_NUMBER), ~F.text)
 async def guess_number_unexpected_message(message: Message) -> None:
-    await message.answer("Please send your guess as plain text digits (for example: 57).")
+    await message.answer("✍️ Please send your guess as plain text digits (for example: <code>57</code>).")

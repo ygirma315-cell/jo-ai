@@ -45,6 +45,14 @@ class UserActionLoggingMiddleware(BaseMiddleware):
             feature = session_manager.get_active_feature(user_id)
 
         if user_id is not None:
+            compact_payload = payload[:200] if payload else ""
+            logger.info(
+                "RECEIVED UPDATE | action=%s user_id=%s username=%s payload=%s",
+                action,
+                user_id,
+                username,
+                compact_payload,
+            )
             logger.info(
                 "User action: id=%s username=%s first_name=%s action=%s payload=%s feature=%s",
                 user_id,
