@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import asyncio
 import logging
+import os
 from urllib.parse import parse_qsl, urlencode, urlparse, urlunparse
 
 from aiogram import Bot, Dispatcher
@@ -127,6 +128,8 @@ async def run_bot() -> None:
     setup_logging(settings.log_level)
     logger.info("TOKEN LOADED | env_var=%s", settings.bot_token_env_var)
     logger.info("🚀 BOT STARTED — VERSION %s", VERSION)
+    process_role = os.getenv("PROCESS_ROLE", "bot-worker").strip() or "bot-worker"
+    logger.info("[RENDER] PROCESS=%s ENTRYPOINT=run_bot.py VERSION=%s", process_role, VERSION)
 
     # aiogram expects timeout as number of seconds, not aiohttp.ClientTimeout object.
     session = AiohttpSession(timeout=30)

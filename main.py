@@ -3,6 +3,7 @@ from __future__ import annotations
 import base64
 import binascii
 import json
+import logging
 import os
 import socket
 from dataclasses import dataclass
@@ -18,9 +19,11 @@ from fastapi.exceptions import RequestValidationError
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 from pydantic import BaseModel, ConfigDict, Field, model_validator
+from version import VERSION
 
 PROJECT_ROOT = Path(__file__).resolve().parent
 load_dotenv(dotenv_path=PROJECT_ROOT / ".env")
+logger = logging.getLogger(__name__)
 
 
 class BackendError(RuntimeError):
@@ -362,6 +365,14 @@ app.add_middleware(
     allow_methods=["GET", "POST", "OPTIONS"],
     allow_headers=["*"],
 )
+
+
+@app.on_event("startup")
+async def _startup_log() -> None:
+    role = _read_env("PROCESS_ROLE") or "web"
+    process_message = f"[RENDER] PROCESS={role} ENTRYPOINT=main.py VERSION={VERSION}"
+    print(process_message, flush=True)
+    logger.info(process_message)
 
 
 @app.exception_handler(RequestValidationError)

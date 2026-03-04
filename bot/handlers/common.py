@@ -96,6 +96,11 @@ async def handle_ping(message: Message) -> None:
     await message.answer("🏓 <b>Pong!</b>\n\n✅ Bot is online and ready.")
 
 
+@router.message(Command("version"))
+async def handle_version(message: Message) -> None:
+    await message.answer(f"🤖 Bot Version: {VERSION}")
+
+
 @router.message(Command("aitools"))
 @router.message(F.text == MENU_AI_TOOLS)
 @router.message(F.text == "AI Tools")
