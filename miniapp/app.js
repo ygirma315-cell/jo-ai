@@ -2,7 +2,7 @@
   const tg = window.Telegram && window.Telegram.WebApp ? window.Telegram.WebApp : null;
   const urlParams = new URLSearchParams(window.location.search);
   const API_BASE = (urlParams.get("api_base") || window.__API_BASE__ || "").trim();
-  const CHAT_BACKEND_URL = "http://127.0.0.1:8000/chat";
+  const CHAT_BACKEND_URL = "https://jo-ai.onrender.com/chat";
 
   const statusEl = document.getElementById("status");
   const userInfoEl = document.getElementById("userInfo");
