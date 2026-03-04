@@ -3,6 +3,8 @@
   const urlParams = new URLSearchParams(window.location.search);
   const API_BASE = (urlParams.get("api_base") || window.__API_BASE__ || "").trim();
   const CHAT_BACKEND_URL = "https://jo-ai.onrender.com/chat";
+  const CODE_BACKEND_URL = "https://jo-ai.onrender.com/code";
+  const IMAGE_BACKEND_URL = "https://jo-ai.onrender.com/image";
 
   const statusEl = document.getElementById("status");
   const userInfoEl = document.getElementById("userInfo");
@@ -97,28 +99,29 @@
 
     const payload = { message: text };
     let requestUrl = CHAT_BACKEND_URL;
-    let endpoint = "/api/chat";
 
     if (activeMode !== "chat") {
       payload.model_profile = modelProfile ? modelProfile.value : "default";
-      if (activeMode === "code") endpoint = "/api/code";
-      if (activeMode === "research") endpoint = "/api/research";
+      if (activeMode === "code") {
+        requestUrl = CODE_BACKEND_URL;
+      }
+      if (activeMode === "research") requestUrl = apiUrl("/api/research");
       if (activeMode === "prompt") {
-        endpoint = "/api/prompt";
+        requestUrl = apiUrl("/api/prompt");
         payload.prompt_type = (promptType.value || "").trim();
         if (!payload.prompt_type) {
           aiOutput.textContent = "Please enter a prompt type first.";
           return;
         }
       } else if (activeMode === "image") {
-        endpoint = "/api/image";
+        requestUrl = IMAGE_BACKEND_URL;
         payload.image_type = (imageType.value || "").trim();
         if (!payload.image_type) {
           aiOutput.textContent = "Please choose an image style.";
           return;
         }
       } else if (activeMode === "kimi") {
-        endpoint = "/api/kimi_image_describer";
+        requestUrl = apiUrl("/api/kimi_image_describer");
         const file = kimiImage && kimiImage.files ? kimiImage.files[0] : null;
         if (!file) {
           aiOutput.textContent = "Please upload an image first.";
@@ -126,7 +129,6 @@
         }
         payload.image_base64 = await fileToBase64(file);
       }
-      requestUrl = apiUrl(endpoint);
     }
 
     apiState.textContent = "loading...";
