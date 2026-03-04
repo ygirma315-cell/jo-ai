@@ -1,10 +1,9 @@
 (() => {
   const tg = window.Telegram && window.Telegram.WebApp ? window.Telegram.WebApp : null;
-  const urlParams = new URLSearchParams(window.location.search);
-  const API_BASE = (urlParams.get("api_base") || window.__API_BASE__ || "").trim();
-  const CHAT_BACKEND_URL = "https://jo-ai.onrender.com/chat";
-  const CODE_BACKEND_URL = "https://jo-ai.onrender.com/code";
-  const IMAGE_BACKEND_URL = "https://jo-ai.onrender.com/image";
+  const API_BASE = "https://jo-ai.onrender.com";
+  const CHAT_BACKEND_URL = `${API_BASE}/chat`;
+  const CODE_BACKEND_URL = `${API_BASE}/code`;
+  const IMAGE_BACKEND_URL = `${API_BASE}/image`;
 
   const statusEl = document.getElementById("status");
   const userInfoEl = document.getElementById("userInfo");
@@ -29,7 +28,6 @@
   let activeMode = "chat";
 
   function apiUrl(path) {
-    if (!API_BASE) return path;
     return `${API_BASE}${path}`;
   }
 
