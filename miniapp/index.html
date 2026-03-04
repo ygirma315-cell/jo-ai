@@ -1,0 +1,117 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>JO AI Web</title>
+  <link rel="stylesheet" href="style.css">
+  <script src="https://telegram.org/js/telegram-web-app.js"></script>
+  <script src="app.js" defer></script>
+</head>
+<body>
+  <main class="page">
+    <section class="shell">
+      <header class="topbar">
+        <div>
+          <p class="eyebrow">JO AI</p>
+          <h1>Assistant Workspace</h1>
+        </div>
+        <div class="status">
+          <span id="status">Starting...</span>
+          <span id="userInfo"></span>
+        </div>
+      </header>
+
+      <nav class="tabs">
+        <button class="tab active" data-target="ai">AI Tools</button>
+        <button class="tab" data-target="games">Games</button>
+      </nav>
+
+      <section id="ai" class="panel active">
+        <div class="card">
+          <label for="modelProfile">Model Profile</label>
+          <select id="modelProfile">
+            <option value="deepseek_reasoning">DeepSeek Reasoning</option>
+            <option value="deepseek_thinking">DeepSeek Thinking</option>
+          </select>
+        </div>
+
+        <div class="mode-grid">
+          <button class="mode active" data-mode="chat">JO AI Chat</button>
+          <button class="mode" data-mode="code">Code Generator</button>
+          <button class="mode" data-mode="research">Research</button>
+          <button class="mode" data-mode="prompt">Prompt Generator</button>
+          <button class="mode" data-mode="image">Image Generator</button>
+          <button class="mode" data-mode="kimi">Kimi Image Describer</button>
+        </div>
+
+        <div class="card" id="promptTypeWrap" hidden>
+          <label for="promptType">Prompt type</label>
+          <input id="promptType" type="text" placeholder="image prompt, coding prompt, video prompt, research prompt..." />
+        </div>
+
+        <div class="card" id="imageTypeWrap" hidden>
+          <label for="imageType">Image style</label>
+          <select id="imageType">
+            <option value="realistic">Realistic Image</option>
+            <option value="ai_art">AI Art</option>
+            <option value="anime">Anime Style</option>
+            <option value="cyberpunk">Cyberpunk Style</option>
+            <option value="logo_icon">Logo / Icon</option>
+            <option value="render_3d">3D Render</option>
+            <option value="concept_art">Concept Art</option>
+          </select>
+        </div>
+
+        <div class="card" id="kimiImageWrap" hidden>
+          <label for="kimiImage">Upload image</label>
+          <input id="kimiImage" type="file" accept="image/*" />
+        </div>
+
+        <div class="card">
+          <label for="aiInput" id="inputLabel">Message</label>
+          <textarea id="aiInput" rows="6" placeholder="Type your request here..."></textarea>
+          <div class="actions">
+            <button id="sendBtn" class="btn primary">Generate</button>
+            <button id="clearBtn" class="btn">Clear</button>
+          </div>
+        </div>
+
+        <div class="card response-card">
+          <div class="response-head">
+            <h2>Response</h2>
+            <span id="apiState">idle</span>
+          </div>
+          <pre id="aiOutput">Your AI response will appear here.</pre>
+          <img id="imagePreview" class="image-preview" alt="Generated AI image preview" hidden />
+        </div>
+      </section>
+
+      <section id="games" class="panel">
+        <div class="games-grid">
+          <article class="card">
+            <h2>Tic-Tac-Toe</h2>
+            <p>Play against a simple bot with animated board feedback.</p>
+            <div id="tttBoard" class="ttt-board"></div>
+            <div class="actions">
+              <button id="tttReset" class="btn">Restart</button>
+            </div>
+            <p id="tttStatus" class="game-status">Your turn (X).</p>
+          </article>
+
+          <article class="card">
+            <h2>Guess the Number</h2>
+            <p>Guess the hidden number between 1 and 100.</p>
+            <div class="guess-wrap">
+              <input id="guessInput" type="number" min="1" max="100" placeholder="Enter guess" />
+              <button id="guessBtn" class="btn primary">Try</button>
+              <button id="guessReset" class="btn">New Game</button>
+            </div>
+            <p id="guessStatus" class="game-status">Game ready.</p>
+          </article>
+        </div>
+      </section>
+    </section>
+  </main>
+</body>
+</html>

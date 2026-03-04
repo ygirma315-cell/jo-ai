@@ -1,0 +1,72 @@
+from __future__ import annotations
+
+from aiogram.types import InlineKeyboardMarkup, KeyboardButton, ReplyKeyboardMarkup
+from aiogram.utils.keyboard import InlineKeyboardBuilder
+
+from bot.constants import (
+    MENU_AI_CODE,
+    MENU_AI_CHAT,
+    MENU_AI_DEEPSEEK,
+    MENU_AI_IMAGE,
+    MENU_AI_KIMI,
+    MENU_AI_PROMPT,
+    MENU_AI_RESEARCH,
+    MENU_AI_TOOLS,
+    MENU_CALCULATOR,
+    MENU_CANCEL,
+    MENU_GAMES,
+    MENU_HELP,
+    MENU_UTILITIES,
+)
+
+
+def main_menu_keyboard(miniapp_url: str | None = None) -> ReplyKeyboardMarkup:
+    _ = miniapp_url
+    rows = [
+        [KeyboardButton(text=MENU_AI_TOOLS), KeyboardButton(text=MENU_UTILITIES)],
+        [KeyboardButton(text=MENU_HELP)],
+        [KeyboardButton(text=MENU_CANCEL)],
+    ]
+
+    return ReplyKeyboardMarkup(
+        keyboard=rows,
+        resize_keyboard=True,
+        input_field_placeholder="Choose a feature from the menu",
+    )
+
+
+def ai_tools_keyboard() -> ReplyKeyboardMarkup:
+    rows = [
+        [KeyboardButton(text=MENU_AI_CHAT), KeyboardButton(text=MENU_AI_CODE)],
+        [KeyboardButton(text=MENU_AI_RESEARCH), KeyboardButton(text=MENU_AI_PROMPT)],
+        [KeyboardButton(text=MENU_AI_IMAGE), KeyboardButton(text=MENU_AI_DEEPSEEK)],
+        [KeyboardButton(text=MENU_AI_KIMI)],
+        [KeyboardButton(text=MENU_CANCEL)],
+    ]
+    return ReplyKeyboardMarkup(
+        keyboard=rows,
+        resize_keyboard=True,
+        input_field_placeholder="Choose an AI tool",
+    )
+
+
+def utilities_keyboard() -> ReplyKeyboardMarkup:
+    rows = [
+        [KeyboardButton(text=MENU_CALCULATOR)],
+        [KeyboardButton(text=MENU_GAMES)],
+        [KeyboardButton(text=MENU_CANCEL)],
+    ]
+    return ReplyKeyboardMarkup(
+        keyboard=rows,
+        resize_keyboard=True,
+        input_field_placeholder="Choose a utility",
+    )
+
+
+def games_menu_keyboard() -> InlineKeyboardMarkup:
+    builder = InlineKeyboardBuilder()
+    builder.button(text="Tic-Tac-Toe (X/O)", callback_data="gm:ttt")
+    builder.button(text="Guess the Number", callback_data="gm:guess")
+    builder.button(text="Back to Main Menu", callback_data="menu:main")
+    builder.adjust(1)
+    return builder.as_markup()

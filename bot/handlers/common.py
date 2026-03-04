@@ -1,0 +1,121 @@
+from __future__ import annotations
+
+from aiogram import F, Router
+from aiogram.filters import Command, CommandStart
+from aiogram.types import CallbackQuery, Message
+
+from bot.constants import MENU_AI_TOOLS, MENU_CANCEL, MENU_HELP, MENU_UTILITIES
+from bot.keyboards.menu import ai_tools_keyboard, main_menu_keyboard, utilities_keyboard
+from bot.models.session import Feature
+from bot.services.session_manager import SessionManager
+
+router = Router(name="common")
+
+WELCOME_TEXT = (
+    "Welcome. I am your multi-feature bot.\n\n"
+    "Use the menu buttons to open AI Tools or Utilities."
+)
+
+HELP_TEXT = (
+    "AI commands:\n"
+    "- /chat: AI chat mode.\n"
+    "- /code: AI code generator mode.\n"
+    "- /research: AI research mode.\n"
+    "- /prompt: prompt generator mode.\n"
+    "- /image: image generator mode.\n"
+    "- /deepseek: choose DeepSeek Thinking or Reasoning profile.\n"
+    "- /kimi: image describer mode (send photo).\n\n"
+    "Available features:\n"
+    "- Calculator: evaluate safe expressions with +, -, *, /, parentheses, decimals.\n"
+    "- Games: Tic-Tac-Toe (X/O) and Guess the Number.\n"
+    "- AI Tools: JO AI Chat, Code, Research, Prompt Generator, Image Generator, DeepSeek profiles, Kimi Image Describer.\n\n"
+    "You can switch features anytime. The current feature is cancelled cleanly."
+)
+
+
+@router.message(CommandStart())
+async def handle_start(message: Message, session_manager: SessionManager, miniapp_url: str | None) -> None:
+    if not message.from_user:
+        return
+
+    transition = await session_manager.switch_feature(message.from_user.id, Feature.NONE)
+    if transition.notice:
+        await message.answer(transition.notice, reply_markup=main_menu_keyboard(miniapp_url))
+    await message.answer(WELCOME_TEXT, reply_markup=main_menu_keyboard(miniapp_url))
+
+
+@router.message(Command("restart"))
+async def handle_restart(message: Message, session_manager: SessionManager, miniapp_url: str | None) -> None:
+    if not message.from_user:
+        return
+
+    transition = await session_manager.switch_feature(message.from_user.id, Feature.NONE)
+    if transition.notice:
+        await message.answer(transition.notice, reply_markup=main_menu_keyboard(miniapp_url))
+    await message.answer(
+        "Bot session restarted successfully. You can start again from the menu.",
+        reply_markup=main_menu_keyboard(miniapp_url),
+    )
+
+
+@router.message(Command("help"))
+@router.message(F.text == MENU_HELP)
+async def handle_help(message: Message, miniapp_url: str | None) -> None:
+    await message.answer(HELP_TEXT, reply_markup=main_menu_keyboard(miniapp_url))
+
+
+@router.message(Command("aitools"))
+@router.message(F.text == MENU_AI_TOOLS)
+async def handle_ai_tools_menu(
+    message: Message, session_manager: SessionManager, miniapp_url: str | None
+) -> None:
+    if not message.from_user:
+        return
+
+    transition = await session_manager.switch_feature(message.from_user.id, Feature.AI_TOOLS_MENU)
+    if transition.notice:
+        await message.answer(transition.notice, reply_markup=main_menu_keyboard(miniapp_url))
+    await message.answer("AI Tools menu:", reply_markup=ai_tools_keyboard())
+
+
+@router.message(Command("utilities"))
+@router.message(F.text == MENU_UTILITIES)
+async def handle_utilities_menu(
+    message: Message, session_manager: SessionManager, miniapp_url: str | None
+) -> None:
+    if not message.from_user:
+        return
+
+    transition = await session_manager.switch_feature(message.from_user.id, Feature.UTILITIES_MENU)
+    if transition.notice:
+        await message.answer(transition.notice, reply_markup=main_menu_keyboard(miniapp_url))
+    await message.answer("Utilities menu:", reply_markup=utilities_keyboard())
+
+
+@router.message(Command("menu"))
+@router.message(Command("cancel"))
+@router.message(F.text == MENU_CANCEL)
+async def handle_menu(message: Message, session_manager: SessionManager, miniapp_url: str | None) -> None:
+    if not message.from_user:
+        return
+
+    transition = await session_manager.switch_feature(message.from_user.id, Feature.NONE)
+    if transition.notice:
+        await message.answer(transition.notice, reply_markup=main_menu_keyboard(miniapp_url))
+    else:
+        await message.answer("You are already in the main menu.", reply_markup=main_menu_keyboard(miniapp_url))
+
+
+@router.callback_query(F.data == "menu:main")
+async def handle_menu_callback(query: CallbackQuery, session_manager: SessionManager, miniapp_url: str | None) -> None:
+    if not query.from_user:
+        await query.answer()
+        return
+
+    transition = await session_manager.switch_feature(query.from_user.id, Feature.NONE)
+    await query.answer()
+    if isinstance(query.message, Message):
+        if transition.notice:
+            await query.message.answer(transition.notice, reply_markup=main_menu_keyboard(miniapp_url))
+        else:
+            await query.message.answer("Returned to main menu.", reply_markup=main_menu_keyboard(miniapp_url))
