@@ -539,6 +539,20 @@ input:focus {
   font-weight: 600;
 }
 
+.version-badge {
+  position: fixed;
+  right: 12px;
+  bottom: 12px;
+  z-index: 25;
+  border: 1px solid #d2dddb;
+  border-radius: 999px;
+  background: rgba(255, 255, 255, 0.92);
+  color: #495760;
+  font-size: 11px;
+  font-weight: 600;
+  padding: 4px 10px;
+}
+
 .toast {
   position: fixed;
   left: 50%;

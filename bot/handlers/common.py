@@ -8,6 +8,7 @@ from bot.constants import MENU_AI_TOOLS, MENU_CANCEL, MENU_HELP, MENU_UTILITIES
 from bot.keyboards.menu import ai_tools_keyboard, main_menu_keyboard, utilities_keyboard
 from bot.models.session import Feature
 from bot.services.session_manager import SessionManager
+from version import VERSION
 
 router = Router(name="common")
 
@@ -57,6 +58,7 @@ async def handle_start(message: Message, session_manager: SessionManager, miniap
     if transition.notice:
         await message.answer(transition.notice, reply_markup=main_menu_keyboard(miniapp_url))
     await message.answer(WELCOME_TEXT, reply_markup=main_menu_keyboard(miniapp_url))
+    await message.answer(f"🤖 Bot Version: {VERSION}", reply_markup=main_menu_keyboard(miniapp_url))
     await message.answer(
         "🎯 <b>Quick Start</b>\n\n"
         "• Tap <b>🤖 AI Tools</b> to chat, code, research, generate prompts, or create images.\n"

@@ -26,6 +26,7 @@ from bot.services.calculator_service import CalculatorService
 from bot.services.guess_number_service import GuessNumberService
 from bot.services.session_manager import SessionManager
 from bot.services.tictactoe_service import TicTacToeService
+from version import VERSION
 
 logger = logging.getLogger(__name__)
 
@@ -125,7 +126,7 @@ async def run_bot() -> None:
     settings = load_settings()
     setup_logging(settings.log_level)
     logger.info("TOKEN LOADED | env_var=%s", settings.bot_token_env_var)
-    logger.info("BOT STARTED")
+    logger.info("🚀 BOT STARTED — VERSION %s", VERSION)
 
     # aiogram expects timeout as number of seconds, not aiohttp.ClientTimeout object.
     session = AiohttpSession(timeout=30)
