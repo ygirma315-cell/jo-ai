@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import asyncio
 import base64
 import binascii
 import json
@@ -13,12 +14,14 @@ from typing import Any
 
 import requests
 import uvicorn
+from aiogram.types import Update
+from bot.app import BotRuntime, close_bot_runtime, create_bot_runtime, process_telegram_update
 from dotenv import load_dotenv
 from fastapi import FastAPI, Request
 from fastapi.exceptions import RequestValidationError
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
-from pydantic import BaseModel, ConfigDict, Field, model_validator
+from pydantic import BaseModel, ConfigDict, Field, ValidationError, model_validator
 from version import VERSION
 
 PROJECT_ROOT = Path(__file__).resolve().parent
@@ -370,7 +373,10 @@ app.add_middleware(
 @app.on_event("startup")
 async def _startup_log() -> None:
     role = _read_env("PROCESS_ROLE") or "web"
+    startup_message = f"🚀 API STARTED — VERSION {VERSION}"
     process_message = f"[RENDER] PROCESS={role} ENTRYPOINT=main.py VERSION={VERSION}"
+    print(startup_message, flush=True)
+    logger.info(startup_message)
     print(process_message, flush=True)
     logger.info(process_message)
 
@@ -384,8 +390,8 @@ async def request_validation_exception_handler(_request: Request, exc: RequestVa
 
 @app.get("/health")
 @app.get("/api/health")
-def health() -> dict[str, bool]:
-    return {"ok": True}
+def health() -> dict[str, bool | str]:
+    return {"ok": True, "version": VERSION}
 
 
 @app.post("/chat")

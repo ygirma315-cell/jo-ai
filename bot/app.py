@@ -1,17 +1,16 @@
 from __future__ import annotations
 
-import asyncio
 import logging
 import os
+from dataclasses import dataclass
 from urllib.parse import parse_qsl, urlencode, urlparse, urlunparse
 
 from aiogram import Bot, Dispatcher
-from aiogram.client.session.aiohttp import AiohttpSession
 from aiogram.client.default import DefaultBotProperties
+from aiogram.client.session.aiohttp import AiohttpSession
 from aiogram.enums import ParseMode
-from aiogram.exceptions import TelegramBadRequest, TelegramForbiddenError, TelegramNetworkError
-from aiogram.types import MenuButtonCommands, MenuButtonWebApp, WebAppInfo
-from aiohttp import ClientConnectorError
+from aiogram.exceptions import TelegramBadRequest, TelegramForbiddenError
+from aiogram.types import MenuButtonCommands, MenuButtonWebApp, Update, WebAppInfo
 
 from bot.config import load_settings
 from bot.error_handler import register_error_handler
@@ -31,12 +30,17 @@ from version import VERSION
 
 logger = logging.getLogger(__name__)
 
-NETWORK_RETRY_BASE_SECONDS = 2
-NETWORK_RETRY_MAX_SECONDS = 30
 RESTART_BROADCAST_TEXT = (
     "Bot was restarted with updates.\n"
     "Please send /restart to refresh your session."
 )
+
+
+@dataclass(slots=True)
+class BotRuntime:
+    bot: Bot
+    dispatcher: Dispatcher
+    token_env_var: str
 
 
 def _build_miniapp_url(miniapp_url: str | None, api_base: str | None) -> str | None:
@@ -89,47 +93,13 @@ async def _notify_known_users_on_restart(bot: Bot, session_manager: SessionManag
         )
 
 
-async def _start_polling_with_retries(dispatcher: Dispatcher, bot: Bot) -> None:
-    attempt = 0
-    dropped_pending_updates = False
-    allowed_updates = dispatcher.resolve_used_update_types()
-
-    while True:
-        try:
-            attempt += 1
-            me = await bot.get_me()
-            logger.info("Connected to Telegram as @%s (id=%s).", me.username or "unknown", me.id)
-            if not dropped_pending_updates:
-                await bot.delete_webhook(drop_pending_updates=True)
-                dropped_pending_updates = True
-                logger.info("Dropped pending Telegram updates on startup to avoid stale sessions.")
-            logger.info("POLLING STARTED | allowed_updates=%s", ",".join(allowed_updates))
-            await dispatcher.start_polling(bot, allowed_updates=allowed_updates)
-            return
-        except asyncio.CancelledError:
-            raise
-        except (TelegramNetworkError, ClientConnectorError, asyncio.TimeoutError) as exc:
-            delay = min(NETWORK_RETRY_BASE_SECONDS * (2 ** (attempt - 1)), NETWORK_RETRY_MAX_SECONDS)
-            logger.warning(
-                "Telegram network error (%s): %s. Retrying in %s seconds (attempt %s).",
-                type(exc).__name__,
-                exc,
-                delay,
-                attempt,
-            )
-            await asyncio.sleep(delay)
-        except Exception:
-            logger.exception("Bot stopped due to unexpected error.")
-            raise
-
-
-async def run_bot() -> None:
+async def create_bot_runtime() -> BotRuntime:
     settings = load_settings()
     setup_logging(settings.log_level)
     logger.info("TOKEN LOADED | env_var=%s", settings.bot_token_env_var)
-    logger.info("🚀 BOT STARTED — VERSION %s", VERSION)
+    logger.info("🤖 BOT INIT — VERSION %s", VERSION)
     process_role = os.getenv("PROCESS_ROLE", "bot-worker").strip() or "bot-worker"
-    logger.info("[RENDER] PROCESS=%s ENTRYPOINT=run_bot.py VERSION=%s", process_role, VERSION)
+    logger.info("[RENDER] PROCESS=%s ENTRYPOINT=main.py VERSION=%s", process_role, VERSION)
 
     # aiogram expects timeout as number of seconds, not aiohttp.ClientTimeout object.
     session = AiohttpSession(timeout=30)
@@ -164,9 +134,23 @@ async def run_bot() -> None:
     dispatcher.include_router(fallback_router)
     register_error_handler(dispatcher)
 
-    try:
-        await _configure_chat_menu_button(bot, settings.miniapp_url, settings.miniapp_api_base)
-        await _notify_known_users_on_restart(bot, session_manager)
-        await _start_polling_with_retries(dispatcher, bot)
-    finally:
-        await bot.session.close()
+    await _configure_chat_menu_button(bot, settings.miniapp_url, settings.miniapp_api_base)
+    await _notify_known_users_on_restart(bot, session_manager)
+
+    me = await bot.get_me()
+    logger.info("Webhook runtime ready for @%s (id=%s).", me.username or "unknown", me.id)
+    return BotRuntime(bot=bot, dispatcher=dispatcher, token_env_var=settings.bot_token_env_var)
+
+
+async def process_telegram_update(runtime: BotRuntime, update: Update) -> None:
+    await runtime.dispatcher.feed_update(runtime.bot, update)
+
+
+async def close_bot_runtime(runtime: BotRuntime) -> None:
+    await runtime.bot.session.close()
+
+
+async def run_bot() -> None:
+    raise RuntimeError(
+        "Polling mode is disabled. Run `uvicorn main:app --host 0.0.0.0 --port $PORT` and use webhook mode."
+    )

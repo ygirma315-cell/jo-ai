@@ -36,6 +36,7 @@
     imageWrap: document.getElementById("imageWrap"),
     imagePreview: document.getElementById("imagePreview"),
     imageCaption: document.getElementById("imageCaption"),
+    versionBadge: document.getElementById("versionBadge"),
     toast: document.getElementById("toast"),
     contactBtn: document.getElementById("contactBtn"),
     reportBtn: document.getElementById("reportBtn"),
@@ -155,6 +156,18 @@
     if (elements.apiBaseLabel) {
       elements.apiBaseLabel.textContent = `API: ${shorten(text || "not set")}`;
     }
+  }
+
+  function setVersionBadge(version) {
+    if (!elements.versionBadge) {
+      return;
+    }
+    const safeVersion = String(version || "").trim();
+    if (!safeVersion) {
+      elements.versionBadge.textContent = "Version: unknown";
+      return;
+    }
+    elements.versionBadge.textContent = `Version: ${safeVersion}`;
   }
 
   function setApiState(text, variant = "muted") {
@@ -522,13 +535,14 @@
       try {
         const { response, data } = await fetchJsonWithTimeout(`${base}${path}`, { method: "GET" }, 5500);
         if (response.ok && data && data.ok) {
-          return true;
+          const version = data && typeof data.version === "string" ? data.version : "";
+          return { ok: true, version };
         }
       } catch (_error) {
         // try next path
       }
     }
-    return false;
+    return { ok: false, version: "" };
   }
 
   async function resolveApiBase() {
@@ -542,11 +556,14 @@
     }
 
     for (const candidate of candidates) {
-      const healthy = await isApiHealthy(candidate);
-      if (healthy) {
+      const health = await isApiHealthy(candidate);
+      if (health.ok) {
         state.apiBase = candidate;
         window.localStorage.setItem(API_BASE_STORAGE_KEY, candidate);
         setApiBaseLabel(candidate);
+        if (health.version) {
+          setVersionBadge(health.version);
+        }
         setStatus(tg ? "✅ Connected + API ready" : "✅ API ready");
         return;
       }
