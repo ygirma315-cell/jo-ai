@@ -28,6 +28,7 @@ from bot.services.calculator_service import CalculatorService
 from bot.services.guess_number_service import GuessNumberService
 from bot.services.session_manager import SessionManager
 from bot.services.tictactoe_service import TicTacToeService
+from bot.telegram_formatting import run_markdown_sanity_checks
 from version import VERSION
 
 logger = logging.getLogger(__name__)
@@ -161,6 +162,7 @@ def start_telegram_startup_tasks(runtime: BotRuntime) -> asyncio.Task[None]:
 async def create_bot_runtime() -> BotRuntime:
     settings = load_settings()
     setup_logging(settings.log_level)
+    run_markdown_sanity_checks()
     logger.info("TOKEN LOADED | env_var=%s", settings.bot_token_env_var)
     logger.info("🤖 BOT INIT — VERSION %s", VERSION)
     process_role = os.getenv("PROCESS_ROLE", "bot-worker").strip() or "bot-worker"

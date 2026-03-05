@@ -1,9 +1,11 @@
 from __future__ import annotations
 
 import asyncio
+from dataclasses import dataclass
 import html
 import logging
 import random
+import re
 from contextlib import suppress
 from typing import Literal
 
@@ -37,6 +39,7 @@ from bot.keyboards.menu import ai_tools_keyboard, main_menu_keyboard
 from bot.models.session import AIModelProfile, Feature, JoAIMode
 from bot.services.ai_service import AIServiceError, ChatService, ImageGenerationService
 from bot.services.session_manager import SessionManager
+from bot.telegram_formatting import TelegramMessageFormatter
 
 router = Router(name="jo_ai")
 logger = logging.getLogger(__name__)
@@ -103,6 +106,17 @@ MODE_RESULT_TITLE = {
 }
 
 MAX_REPLY_CHARS = 3300
+CODE_FENCE_PATTERN = re.compile(r"```(?P<lang>[a-zA-Z0-9_+#.-]*)\n(?P<code>[\s\S]*?)```", re.MULTILINE)
+
+
+@dataclass(slots=True)
+class ParsedCodeReply:
+    title: str
+    explanation_lines: list[str]
+    code: str
+    lang: str
+    run_steps: list[str]
+    notes_lines: list[str]
 
 
 def _profile_options(profile: AIModelProfile, deepseek_api_key: str | None, deepseek_model: str) -> dict[str, object]:
@@ -208,26 +222,157 @@ def _is_kimi_unclear_result(error_text: str) -> bool:
     return "empty image description" in lower or "did not return image description choices" in lower
 
 
-def _split_text_blocks(text: str, chunk_size: int = MAX_REPLY_CHARS) -> list[str]:
-    payload = text.strip()
-    if not payload:
+def _split_sentences(text: str, max_items: int = 5) -> list[str]:
+    normalized = " ".join(text.replace("\r", "\n").split())
+    if not normalized:
         return []
-    if len(payload) <= chunk_size:
-        return [payload]
+    parts = re.split(r"(?<=[.!?])\s+(?=[A-Z0-9])", normalized)
+    lines = [part.strip() for part in parts if part.strip()]
+    return lines[:max_items] if lines else [normalized]
 
-    chunks: list[str] = []
-    cursor = 0
-    while cursor < len(payload):
-        end = min(cursor + chunk_size, len(payload))
-        if end < len(payload):
-            split_at = payload.rfind("\n", cursor, end)
-            if split_at > cursor + 200:
-                end = split_at
-        chunk = payload[cursor:end].strip()
-        if chunk:
-            chunks.append(chunk)
-        cursor = end
-    return chunks
+
+def _clean_list_block(block: str, max_items: int = 6) -> list[str]:
+    stripped_lines = [line.strip() for line in block.splitlines() if line.strip()]
+    cleaned_lines: list[str] = []
+    for line in stripped_lines:
+        cleaned = re.sub(r"^(?:[-*]|\d+[.)])\s*", "", line).strip()
+        if cleaned:
+            cleaned_lines.append(cleaned)
+    if cleaned_lines:
+        return cleaned_lines[:max_items]
+
+    paragraphs = [item.strip() for item in re.split(r"\n\s*\n", block) if item.strip()]
+    if len(paragraphs) > 1:
+        return paragraphs[:max_items]
+    return _split_sentences(block, max_items=max_items)
+
+
+def _collect_named_sections(text: str) -> dict[str, list[str]]:
+    sections: dict[str, list[str]] = {}
+    labels = {
+        "title": "title",
+        "explanation": "explanation",
+        "code language": "code language",
+        "how to run": "how to run",
+        "notes": "notes",
+        "summary": "summary",
+        "details": "details",
+        "risks/tradeoffs": "risks/tradeoffs",
+        "risks and tradeoffs": "risks/tradeoffs",
+        "next steps": "next steps",
+    }
+    current_label: str | None = None
+    buffer: list[str] = []
+
+    def flush() -> None:
+        nonlocal buffer, current_label
+        if current_label is None:
+            return
+        payload = "\n".join(buffer).strip()
+        if payload:
+            sections[current_label] = _clean_list_block(payload, max_items=8)
+        buffer = []
+        current_label = None
+
+    for raw_line in text.replace("\r\n", "\n").replace("\r", "\n").splitlines():
+        line = raw_line.strip()
+        match = re.match(
+            r"^(Title|Explanation|Code Language|How to run|Notes|Summary|Details|Risks/Tradeoffs|Risks and Tradeoffs|Next Steps)\s*:\s*(.*)$",
+            line,
+            flags=re.IGNORECASE,
+        )
+        if match:
+            flush()
+            current_label = labels[match.group(1).lower()]
+            inline_value = match.group(2).strip()
+            if inline_value:
+                buffer.append(inline_value)
+            continue
+        if current_label is not None:
+            buffer.append(raw_line)
+    flush()
+    return sections
+
+
+def _guess_code_language(code: str, fallback: str = "text") -> str:
+    sample = code.strip().lower()
+    if not sample:
+        return fallback
+    if sample.startswith("<!doctype html") or "<html" in sample:
+        return "html"
+    if sample.startswith("{") and '"name"' in sample:
+        return "json"
+    if "def " in sample or "import " in sample or "print(" in sample:
+        return "python"
+    if "console.log" in sample or "const " in sample or "function " in sample:
+        return "javascript"
+    if "public class " in sample:
+        return "java"
+    if "select " in sample or "insert into " in sample:
+        return "sql"
+    if "package main" in sample or "fmt." in sample:
+        return "go"
+    return fallback
+
+
+def _default_run_steps(lang: str) -> list[str]:
+    language = (lang or "text").lower()
+    defaults = {
+        "python": ["Save the file as output.py.", "Install dependencies if required.", "Run python output.py."],
+        "javascript": ["Save the file as output.js.", "Install dependencies if required.", "Run node output.js."],
+        "typescript": ["Save the file as output.ts.", "Install dependencies if required.", "Run it with your TypeScript toolchain."],
+        "html": ["Save the file as output.html.", "Open the file in a browser.", "Use browser developer tools if you need to debug it."],
+        "css": ["Save the file as output.css.", "Link it from your HTML file.", "Reload the page to verify the styles."],
+        "sql": ["Open your SQL client.", "Paste the query into a new editor tab.", "Run it against the intended database."],
+    }
+    return defaults.get(language, ["Save the output to a file.", "Run it with the appropriate tool for this language."])
+
+
+def _extract_code_body(reply_text: str) -> tuple[str, str]:
+    fence_match = CODE_FENCE_PATTERN.search(reply_text)
+    if fence_match:
+        return fence_match.group("code").rstrip(), (fence_match.group("lang") or "").strip().lower()
+
+    code_heading = re.search(r"(?im)^Code\s*:\s*$", reply_text)
+    if not code_heading:
+        return reply_text.strip(), ""
+
+    trailing = reply_text[code_heading.end() :].strip()
+    next_heading = re.search(
+        r"(?im)^(How to run|Notes|Summary|Details|Risks/Tradeoffs|Risks and Tradeoffs|Next Steps)\s*:",
+        trailing,
+    )
+    if next_heading:
+        trailing = trailing[: next_heading.start()].strip()
+    return trailing, ""
+
+
+def _parse_code_reply(reply_text: str, fallback_title: str) -> ParsedCodeReply:
+    code, fenced_lang = _extract_code_body(reply_text)
+    text_without_code = CODE_FENCE_PATTERN.sub("", reply_text, count=1).strip()
+    named_sections = _collect_named_sections(text_without_code)
+
+    title = (named_sections.get("title") or [fallback_title])[0]
+    explanation_lines = named_sections.get("explanation") or _clean_list_block(text_without_code, max_items=4)
+    lang = fenced_lang or (named_sections.get("code language") or [""])[0].strip().lower()
+    lang = _guess_code_language(code, fallback=lang or "text")
+    run_steps = named_sections.get("how to run") or _default_run_steps(lang)
+    notes_lines = named_sections.get("notes") or []
+
+    if not explanation_lines:
+        explanation_lines = [
+            f"Generated a {lang} example tailored to your request.",
+            "Review the configuration and dependencies before running it.",
+        ]
+
+    return ParsedCodeReply(
+        title=title,
+        explanation_lines=explanation_lines,
+        code=code.strip(),
+        lang=lang,
+        run_steps=run_steps,
+        notes_lines=notes_lines,
+    )
 
 
 def _friendly_error_text(title: str, exc: Exception | None = None) -> str:
@@ -264,7 +409,10 @@ async def _send_styled_ai_reply(
     reply_text: str,
     reply_markup,
 ) -> None:
-    safe_body = html.escape(reply_text.strip() or "No output generated.")
+    await _send_formatted_ai_reply(message, mode, reply_text, reply_markup)
+    return
+    formatter = TelegramMessageFormatter(message.bot)
+    normalized_reply = reply_text.strip() or "No output generated."
     title = MODE_RESULT_TITLE.get(mode, "AI Result")
     emoji = {
         "chat": "🤖",
@@ -294,6 +442,54 @@ async def _send_styled_ai_reply(
     for index, chunk in enumerate(chunks):
         markup = reply_markup if index == len(chunks) - 1 else None
         await message.answer(chunk, reply_markup=markup)
+
+
+async def _send_formatted_ai_reply(
+    message: Message,
+    mode: Literal["chat", "code", "research", "prompt", "image_prompt"],
+    reply_text: str,
+    reply_markup,
+) -> None:
+    formatter = TelegramMessageFormatter(message.bot)
+    normalized_reply = reply_text.strip() or "No output generated."
+    title = MODE_RESULT_TITLE.get(mode, "AI Result")
+
+    if mode == "code" or CODE_FENCE_PATTERN.search(normalized_reply):
+        parsed = _parse_code_reply(normalized_reply, title)
+        await formatter.send_code_response(
+            chat_id=message.chat.id,
+            title=parsed.title,
+            explanation_lines=parsed.explanation_lines,
+            code=parsed.code or "# No code was generated.",
+            lang=parsed.lang,
+            run_steps=parsed.run_steps,
+            notes_lines=parsed.notes_lines,
+            reply_markup=reply_markup,
+        )
+        return
+
+    named_sections = _collect_named_sections(normalized_reply)
+    if mode == "research":
+        sections = [
+            ("Summary", named_sections.get("summary") or _clean_list_block(normalized_reply, max_items=4)),
+            ("Details", named_sections.get("details") or _clean_list_block(normalized_reply, max_items=6)),
+            ("Risks / Tradeoffs", named_sections.get("risks/tradeoffs") or []),
+            ("Next Steps", named_sections.get("next steps") or []),
+        ]
+    elif mode == "prompt":
+        sections = [
+            ("Prompt", _clean_list_block(normalized_reply, max_items=8)),
+            ("How to use", ["Copy the prompt, adjust any tool-specific details, and run it in your target app."]),
+        ]
+    else:
+        sections = [("Highlights", _clean_list_block(normalized_reply, max_items=8))]
+
+    await formatter.send_structured_response(
+        chat_id=message.chat.id,
+        title=title,
+        sections=[section for section in sections if section[1]],
+        reply_markup=reply_markup,
+    )
 
 
 @router.message(Command("joai"))
@@ -648,7 +844,7 @@ async def handle_kimi_photo(
         )
         return
 
-    await _send_styled_ai_reply(message, "chat", description, kimi_result_keyboard())
+    await _send_formatted_ai_reply(message, "chat", description, kimi_result_keyboard())
 
 
 @router.callback_query(F.data == "joai:kimi_retry")
@@ -713,7 +909,7 @@ async def kimi_retry_same_image(
                 reply_markup=kimi_result_keyboard(),
             )
             return
-        await _send_styled_ai_reply(query.message, "chat", description, kimi_result_keyboard())
+        await _send_formatted_ai_reply(query.message, "chat", description, kimi_result_keyboard())
 
 
 async def _describe_kimi_file_id(
@@ -807,7 +1003,7 @@ async def _process_chat_message(
             if session.active_feature == Feature.JO_AI and session.jo_ai_mode == JoAIMode.CHAT:
                 session.jo_ai_chat_history.append(("user", user_text))
                 session.jo_ai_chat_history.append(("assistant", reply))
-    await _send_styled_ai_reply(message, mode, reply, jo_chat_keyboard())
+    await _send_formatted_ai_reply(message, mode, reply, jo_chat_keyboard())
 
 
 async def _process_prompt_message(
@@ -856,7 +1052,7 @@ async def _process_prompt_message(
         await message.answer(_friendly_error_text("Unexpected prompt generation error"), reply_markup=jo_chat_keyboard())
         return
     await _clear_progress_message(progress_message)
-    await _send_styled_ai_reply(message, "prompt", prompt_output, jo_chat_keyboard())
+    await _send_formatted_ai_reply(message, "prompt", prompt_output, jo_chat_keyboard())
 
 
 async def _process_image_message(

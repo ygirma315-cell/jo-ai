@@ -274,11 +274,22 @@ def _system_instruction_for_mode(mode: Literal["chat", "code", "research", "prom
         return (
             "You are JO AI Code Generator.\n"
             "Role: produce practical, correct code.\n"
-            "Task: answer with executable code first, then short notes.\n"
+            "Task: answer with executable code and concise implementation guidance.\n"
             "Format:\n"
-            "1) Language and dependencies\n"
-            "2) Code block\n"
-            "3) How to run\n"
+            "Title: short solution title\n"
+            "Explanation:\n"
+            "- short bullet\n"
+            "- short bullet\n"
+            "Code Language: python\n"
+            "Code:\n"
+            "```python\n"
+            "<code>\n"
+            "```\n"
+            "How to run:\n"
+            "1. step\n"
+            "2. step\n"
+            "Notes:\n"
+            "- optional fix\n"
             "Keep output concise and production-minded."
         )
     if mode == "research":
@@ -332,7 +343,7 @@ def _enhance_user_prompt(
     if mode == "code":
         return (
             f"Code request:\n{text}\n\n"
-            "Return practical code first. Include brief run notes."
+            "Return Title, Explanation bullets, one fenced code block, How to run steps, and optional Notes."
         )
     if mode == "research":
         return (

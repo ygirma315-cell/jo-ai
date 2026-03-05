@@ -10,6 +10,7 @@ from bot.keyboards.menu import main_menu_keyboard
 from bot.models.session import Feature
 from bot.services.calculator_service import CalculatorError, CalculatorService
 from bot.services.session_manager import SessionManager
+from bot.telegram_formatting import TelegramMessageFormatter
 
 router = Router(name="calculator")
 
@@ -56,8 +57,14 @@ async def evaluate_expression(
         )
         return
 
-    await message.answer(
-        f"✅ <b>Result</b>\n<code>{result}</code>",
+    formatter = TelegramMessageFormatter(message.bot)
+    await formatter.send_structured_response(
+        chat_id=message.chat.id,
+        title="Calculator Result",
+        sections=[
+            ("Details", [f"Expression: {expression}", f"Result: {result}"]),
+            ("Next Step", ["Send another expression if you want to keep calculating."]),
+        ],
         reply_markup=main_menu_keyboard(miniapp_url),
     )
 
