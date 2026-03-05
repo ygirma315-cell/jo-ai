@@ -360,6 +360,7 @@ def _find_open_port(start_port: int = 8000, host: str = "0.0.0.0", max_attempts:
 
 
 app = FastAPI(title="Telegram Bot + Miniapp Backend", version="1.0.0")
+app.state.bot_runtime = None
 
 app.add_middleware(
     CORSMiddleware,
@@ -368,6 +369,18 @@ app.add_middleware(
     allow_methods=["GET", "POST", "OPTIONS"],
     allow_headers=["*"],
 )
+
+
+def _get_bot_runtime() -> BotRuntime | None:
+    runtime = getattr(app.state, "bot_runtime", None)
+    return runtime if isinstance(runtime, BotRuntime) else None
+
+
+async def _process_webhook_update(runtime: BotRuntime, update: Update) -> None:
+    try:
+        await process_telegram_update(runtime, update)
+    except Exception:
+        logger.exception("Failed to process Telegram webhook update.")
 
 
 @app.on_event("startup")
@@ -380,6 +393,22 @@ async def _startup_log() -> None:
     print(process_message, flush=True)
     logger.info(process_message)
 
+    runtime = await create_bot_runtime()
+    app.state.bot_runtime = runtime
+
+    bot_ready_message = f"🤖 BOT READY — VERSION {VERSION}"
+    print(bot_ready_message, flush=True)
+    logger.info(bot_ready_message)
+
+
+@app.on_event("shutdown")
+async def _shutdown_bot_runtime() -> None:
+    runtime = _get_bot_runtime()
+    if runtime is None:
+        return
+    await close_bot_runtime(runtime)
+    app.state.bot_runtime = None
+
 
 @app.exception_handler(RequestValidationError)
 async def request_validation_exception_handler(_request: Request, exc: RequestValidationError) -> JSONResponse:
@@ -390,8 +419,28 @@ async def request_validation_exception_handler(_request: Request, exc: RequestVa
 
 @app.get("/health")
 @app.get("/api/health")
-def health() -> dict[str, bool | str]:
-    return {"ok": True, "version": VERSION}
+def health() -> dict[str, str]:
+    return {"status": "ok", "version": VERSION}
+
+
+@app.post("/telegram/webhook")
+async def telegram_webhook(request: Request) -> JSONResponse:
+    runtime = _get_bot_runtime()
+    if runtime is None:
+        return JSONResponse(status_code=503, content={"error": "Bot runtime is not ready."})
+
+    try:
+        payload = await request.json()
+    except json.JSONDecodeError:
+        return JSONResponse(status_code=400, content={"error": "Invalid JSON body."})
+
+    try:
+        update = Update.model_validate(payload, context={"bot": runtime.bot})
+    except ValidationError:
+        return JSONResponse(status_code=400, content={"error": "Invalid Telegram update payload."})
+
+    asyncio.create_task(_process_webhook_update(runtime, update))
+    return JSONResponse(status_code=200, content={"ok": True})
 
 
 @app.post("/chat")
