@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import asyncio
 import logging
 import os
 from dataclasses import dataclass
@@ -9,8 +10,9 @@ from aiogram import Bot, Dispatcher
 from aiogram.client.default import DefaultBotProperties
 from aiogram.client.session.aiohttp import AiohttpSession
 from aiogram.enums import ParseMode
-from aiogram.exceptions import TelegramBadRequest, TelegramForbiddenError
+from aiogram.exceptions import TelegramBadRequest, TelegramForbiddenError, TelegramNetworkError
 from aiogram.types import MenuButtonCommands, MenuButtonWebApp, Update, WebAppInfo
+from aiohttp import ClientConnectorError
 
 from bot.config import load_settings
 from bot.error_handler import register_error_handler
@@ -34,6 +36,8 @@ RESTART_BROADCAST_TEXT = (
     "Bot was restarted with updates.\n"
     "Please send /restart to refresh your session."
 )
+TELEGRAM_STARTUP_RETRY_DELAYS_SECONDS = (5, 15, 30, 60)
+TELEGRAM_STARTUP_MAX_ATTEMPTS = len(TELEGRAM_STARTUP_RETRY_DELAYS_SECONDS)
 
 
 @dataclass(slots=True)
@@ -41,6 +45,9 @@ class BotRuntime:
     bot: Bot
     dispatcher: Dispatcher
     token_env_var: str
+    session_manager: SessionManager
+    miniapp_url: str | None
+    miniapp_api_base: str | None
 
 
 def _build_miniapp_url(miniapp_url: str | None, api_base: str | None) -> str | None:
@@ -56,7 +63,12 @@ def _build_miniapp_url(miniapp_url: str | None, api_base: str | None) -> str | N
     return urlunparse(rebuilt)
 
 
-async def _configure_chat_menu_button(bot: Bot, miniapp_url: str | None, miniapp_api_base: str | None) -> None:
+def _env_flag_enabled(name: str) -> bool:
+    value = os.getenv(name, "").strip().lower()
+    return value in {"1", "true", "yes", "on"}
+
+
+async def _configure_chat_menu_button(bot: Bot, miniapp_url: str | None, miniapp_api_base: str | None) -> bool:
     try:
         resolved_miniapp_url = _build_miniapp_url(miniapp_url, miniapp_api_base)
         if resolved_miniapp_url:
@@ -67,17 +79,25 @@ async def _configure_chat_menu_button(bot: Bot, miniapp_url: str | None, miniapp
         else:
             await bot.set_chat_menu_button(menu_button=MenuButtonCommands())
             logger.info("Configured Telegram chat menu button as command list.")
+        return True
+    except (TelegramNetworkError, ClientConnectorError, asyncio.TimeoutError) as exc:
+        logger.warning("Telegram network unavailable while setting chat menu button: %s", exc)
+        return False
     except Exception:
         logger.warning("Failed to configure Telegram chat menu button.", exc_info=True)
+        return True
 
 
-async def _notify_known_users_on_restart(bot: Bot, session_manager: SessionManager) -> None:
+async def _notify_known_users_on_restart(bot: Bot, session_manager: SessionManager) -> bool:
     sent_count = 0
     failed_count = 0
     for user_id in session_manager.known_user_ids:
         try:
             await bot.send_message(chat_id=user_id, text=RESTART_BROADCAST_TEXT)
             sent_count += 1
+        except (TelegramNetworkError, ClientConnectorError, asyncio.TimeoutError) as exc:
+            logger.warning("Telegram network unavailable while sending restart notifications: %s", exc)
+            return False
         except (TelegramForbiddenError, TelegramBadRequest):
             failed_count += 1
         except Exception:
@@ -91,6 +111,51 @@ async def _notify_known_users_on_restart(bot: Bot, session_manager: SessionManag
             failed_count,
             sent_count + failed_count,
         )
+    return True
+
+
+async def _run_telegram_startup_tasks_once(runtime: BotRuntime) -> bool:
+    menu_ready = await _configure_chat_menu_button(runtime.bot, runtime.miniapp_url, runtime.miniapp_api_base)
+    notifications_sent = await _notify_known_users_on_restart(runtime.bot, runtime.session_manager)
+    return menu_ready and notifications_sent
+
+
+async def run_telegram_startup_tasks_with_backoff(runtime: BotRuntime) -> None:
+    if _env_flag_enabled("DISABLE_TELEGRAM_STARTUP_TASKS"):
+        logger.info("Telegram startup tasks skipped (DISABLE_TELEGRAM_STARTUP_TASKS=1).")
+        return
+
+    max_attempts = TELEGRAM_STARTUP_MAX_ATTEMPTS
+    for attempt in range(1, max_attempts + 1):
+        try:
+            completed = await _run_telegram_startup_tasks_once(runtime)
+        except asyncio.CancelledError:
+            raise
+        except Exception:
+            completed = False
+            logger.warning("Unexpected error while running Telegram startup tasks.", exc_info=True)
+
+        if completed:
+            logger.info("Telegram startup tasks completed on attempt %s.", attempt)
+            return
+
+        if attempt >= max_attempts:
+            break
+
+        delay_seconds = TELEGRAM_STARTUP_RETRY_DELAYS_SECONDS[min(attempt - 1, len(TELEGRAM_STARTUP_RETRY_DELAYS_SECONDS) - 1)]
+        logger.warning(
+            "Telegram startup tasks attempt %s/%s failed. Retrying in %s seconds.",
+            attempt,
+            max_attempts,
+            delay_seconds,
+        )
+        await asyncio.sleep(delay_seconds)
+
+    logger.warning("Telegram startup tasks failed after %s attempts; will retry later.", max_attempts)
+
+
+def start_telegram_startup_tasks(runtime: BotRuntime) -> asyncio.Task[None]:
+    return asyncio.create_task(run_telegram_startup_tasks_with_backoff(runtime), name="telegram-startup-tasks")
 
 
 async def create_bot_runtime() -> BotRuntime:
@@ -134,12 +199,15 @@ async def create_bot_runtime() -> BotRuntime:
     dispatcher.include_router(fallback_router)
     register_error_handler(dispatcher)
 
-    await _configure_chat_menu_button(bot, settings.miniapp_url, settings.miniapp_api_base)
-    await _notify_known_users_on_restart(bot, session_manager)
-
-    me = await bot.get_me()
-    logger.info("Webhook runtime ready for @%s (id=%s).", me.username or "unknown", me.id)
-    return BotRuntime(bot=bot, dispatcher=dispatcher, token_env_var=settings.bot_token_env_var)
+    logger.info("Webhook runtime initialized (startup tasks scheduled separately).")
+    return BotRuntime(
+        bot=bot,
+        dispatcher=dispatcher,
+        token_env_var=settings.bot_token_env_var,
+        session_manager=session_manager,
+        miniapp_url=settings.miniapp_url,
+        miniapp_api_base=settings.miniapp_api_base,
+    )
 
 
 async def process_telegram_update(runtime: BotRuntime, update: Update) -> None:

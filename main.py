@@ -7,6 +7,7 @@ import json
 import logging
 import os
 import socket
+from contextlib import suppress
 from dataclasses import dataclass
 from functools import lru_cache
 from pathlib import Path
@@ -15,7 +16,13 @@ from typing import Any
 import requests
 import uvicorn
 from aiogram.types import Update
-from bot.app import BotRuntime, close_bot_runtime, create_bot_runtime, process_telegram_update
+from bot.app import (
+    BotRuntime,
+    close_bot_runtime,
+    create_bot_runtime,
+    process_telegram_update,
+    start_telegram_startup_tasks,
+)
 from dotenv import load_dotenv
 from fastapi import FastAPI, Request
 from fastapi.exceptions import RequestValidationError
@@ -361,6 +368,7 @@ def _find_open_port(start_port: int = 8000, host: str = "0.0.0.0", max_attempts:
 
 app = FastAPI(title="Telegram Bot + Miniapp Backend", version="1.0.0")
 app.state.bot_runtime = None
+app.state.telegram_startup_task = None
 
 app.add_middleware(
     CORSMiddleware,
@@ -395,6 +403,7 @@ async def _startup_log() -> None:
 
     runtime = await create_bot_runtime()
     app.state.bot_runtime = runtime
+    app.state.telegram_startup_task = start_telegram_startup_tasks(runtime)
 
     bot_ready_message = f"🤖 BOT READY — VERSION {VERSION}"
     print(bot_ready_message, flush=True)
@@ -403,6 +412,13 @@ async def _startup_log() -> None:
 
 @app.on_event("shutdown")
 async def _shutdown_bot_runtime() -> None:
+    telegram_startup_task = getattr(app.state, "telegram_startup_task", None)
+    if isinstance(telegram_startup_task, asyncio.Task):
+        telegram_startup_task.cancel()
+        with suppress(asyncio.CancelledError):
+            await telegram_startup_task
+    app.state.telegram_startup_task = None
+
     runtime = _get_bot_runtime()
     if runtime is None:
         return
@@ -420,7 +436,13 @@ async def request_validation_exception_handler(_request: Request, exc: RequestVa
 @app.get("/health")
 @app.get("/api/health")
 def health() -> dict[str, str]:
+    logger.info("HEALTH CHECK OK — VERSION %s", VERSION)
     return {"status": "ok", "version": VERSION}
+
+
+@app.get("/")
+def root() -> dict[str, str]:
+    return {"message": "Telegram bot API is running.", "version": VERSION}
 
 
 @app.post("/telegram/webhook")
