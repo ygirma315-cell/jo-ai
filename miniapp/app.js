@@ -6,7 +6,7 @@
   const API_BASE_STORAGE_KEY = "jo_api_base";
   const HOME_ENTRY_STORAGE_KEY = "jo_home_entered";
   const HISTORY_PREFIX = "jo_history_";
-  const FRONTEND_VERSION = "v1.2.1";
+  const FRONTEND_VERSION = "v1.2.2";
   const SITE_BASE_URL = "https://ygirma315-cell.github.io/jo-ai/";
   const MAX_HISTORY_ITEMS = 18;
   const MAX_UPLOAD_BYTES = 8 * 1024 * 1024;
@@ -19,6 +19,15 @@
   ];
 
   const updates = [
+    {
+      version: "v1.2.2",
+      title: "Mobile webview stability and tighter chat layout",
+      items: [
+        "Telegram mobile startup now guards viewport and WebApp calls more defensively",
+        "Chat header pills are compact in the upper-right so conversation starts sooner",
+        "Mobile chat keeps the conversation visible more reliably while the keyboard is open",
+      ],
+    },
     {
       version: "v1.2.1",
       title: "Telegram launch fix and cleaner layout",
@@ -364,6 +373,55 @@
 
   function createId() {
     return `${Date.now()}-${Math.random().toString(16).slice(2, 8)}`;
+  }
+
+  function scheduleFrame(task) {
+    const runner = () => {
+      try {
+        task();
+      } catch (error) {
+        reportStartupError("frame task", error);
+      }
+    };
+
+    if (typeof window.requestAnimationFrame === "function") {
+      window.requestAnimationFrame(runner);
+      return;
+    }
+
+    window.setTimeout(runner, 16);
+  }
+
+  function syncViewportState() {
+    if (bootDebug && typeof bootDebug.syncViewportMetrics === "function") {
+      bootDebug.syncViewportMetrics();
+    }
+  }
+
+  function scrollComposerIntoView(immediate = false) {
+    const card = document.querySelector(".tool-page .prompt-card");
+    if (!card) {
+      return;
+    }
+
+    const runner = () => {
+      try {
+        card.scrollIntoView({
+          block: "end",
+          inline: "nearest",
+          behavior: immediate ? "auto" : "smooth",
+        });
+      } catch (_error) {
+        card.scrollIntoView(false);
+      }
+    };
+
+    if (immediate) {
+      runner();
+      return;
+    }
+
+    window.setTimeout(runner, 120);
   }
   function ensureGlobalUi() {
     if (!byId("versionBadge")) {
@@ -989,7 +1047,7 @@
 
     updateLatestOutputFromHistory();
     syncOutputButtons();
-    window.requestAnimationFrame(() => {
+    scheduleFrame(() => {
       if (elements.historyList) {
         elements.historyList.scrollTop = elements.historyList.scrollHeight;
       }
@@ -1087,10 +1145,25 @@
     syncOutputButtons();
   }
   async function fetchJsonWithTimeout(url, options, timeoutMs = 60000) {
-    const controller = new AbortController();
-    const timer = setTimeout(() => controller.abort(), timeoutMs);
+    if (typeof fetch !== "function") {
+      throw new Error("This Telegram webview cannot make network requests.");
+    }
+
+    const controller = typeof AbortController === "function" ? new AbortController() : null;
+    let timer = 0;
     try {
-      const response = await fetch(url, { ...options, signal: controller.signal });
+      const request = fetch(url, controller ? { ...options, signal: controller.signal } : { ...options });
+      const response = controller
+        ? await (() => {
+            timer = setTimeout(() => controller.abort(), timeoutMs);
+            return request;
+          })()
+        : await Promise.race([
+            request,
+            new Promise((_resolve, reject) => {
+              timer = setTimeout(() => reject(new Error("The assistant is taking longer than expected.")), timeoutMs);
+            }),
+          ]);
       const raw = await response.text();
       let data = {};
       if (raw) {
@@ -1591,6 +1664,37 @@
     document.body.removeChild(link);
   }
 
+  function bindComposerViewportBehavior() {
+    if (!elements.aiInput) {
+      return;
+    }
+
+    const handleFocus = () => {
+      syncViewportState();
+      scrollComposerIntoView();
+    };
+
+    const handleBlur = () => {
+      window.setTimeout(syncViewportState, 90);
+    };
+
+    elements.aiInput.addEventListener("focus", handleFocus);
+    elements.aiInput.addEventListener("blur", handleBlur);
+
+    if (window.visualViewport) {
+      window.visualViewport.addEventListener(
+        "resize",
+        () => {
+          syncViewportState();
+          if (document.activeElement === elements.aiInput) {
+            scrollComposerIntoView(true);
+          }
+        },
+        { passive: true }
+      );
+    }
+  }
+
   function bindToolPage() {
     if (elements.useExampleBtn) {
       elements.useExampleBtn.addEventListener("click", fillExample);
@@ -1628,6 +1732,8 @@
     if (elements.kimiImage) {
       elements.kimiImage.addEventListener("change", updateKimiSelection);
     }
+
+    bindComposerViewportBehavior();
   }
   function initHomePage() {
     const seen = safeStorageGet(getSessionStorage(), HOME_ENTRY_STORAGE_KEY) === "yes";
@@ -1649,6 +1755,7 @@
     loadHistory();
     renderHistory();
     bindToolPage();
+    syncViewportState();
     setApiState("idle", "muted");
     setLoadingHint("Ready when you are.");
   }

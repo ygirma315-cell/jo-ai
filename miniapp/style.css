@@ -21,10 +21,23 @@
   --radius-sm: 14px;
   --shadow-1: 0 18px 40px rgba(39, 55, 71, 0.1);
   --shadow-2: 0 28px 70px rgba(25, 42, 58, 0.14);
+  --safe-top: env(safe-area-inset-top, 0px);
+  --safe-bottom: env(safe-area-inset-bottom, 0px);
+  --keyboard-inset: 0px;
+  --app-height: 100vh;
+  --viewport-height: 100vh;
+  --viewport-stable-height: 100vh;
+  --viewport-offset-top: 0px;
+  --viewport-offset-bottom: 0px;
+  color-scheme: light;
 }
 
 * {
   box-sizing: border-box;
+}
+
+[hidden] {
+  display: none !important;
 }
 
 html,
@@ -32,6 +45,7 @@ body {
   height: 100%;
   min-height: 100%;
   width: 100%;
+  background-color: var(--tg-bg, var(--bg-soft));
 }
 
 #app,
@@ -42,9 +56,10 @@ body {
 
 body {
   margin: 0;
-  color: var(--ink-0);
+  min-height: var(--app-height);
+  color: var(--tg-text, var(--ink-0));
   font-family: "DM Sans", "Segoe UI", sans-serif;
-  background-color: var(--bg-soft);
+  background-color: var(--tg-bg, var(--bg-soft));
   background:
     radial-gradient(circle at 12% 14%, rgba(255, 203, 112, 0.46), transparent 28%),
     radial-gradient(circle at 86% 10%, rgba(152, 239, 227, 0.46), transparent 24%),
@@ -52,6 +67,9 @@ body {
     linear-gradient(180deg, var(--bg-soft), var(--bg-base));
   overflow-x: hidden;
   overflow-y: auto;
+  overscroll-behavior-y: none;
+  -webkit-text-size-adjust: 100%;
+  text-size-adjust: 100%;
 }
 
 body::before,
@@ -100,8 +118,8 @@ textarea {
 }
 
 .page-shell {
-  min-height: 100%;
-  padding: 24px;
+  min-height: max(100%, var(--app-height));
+  padding: calc(24px + var(--safe-top)) 24px calc(24px + var(--safe-bottom));
 }
 
 .app-fallback {
@@ -144,6 +162,7 @@ textarea {
   background: linear-gradient(180deg, rgba(255, 255, 255, 0.8), rgba(255, 255, 255, 0.68));
   box-shadow: var(--shadow-2);
   backdrop-filter: blur(18px);
+  isolation: isolate;
 }
 
 .shell > * + * {
@@ -256,6 +275,7 @@ textarea {
   box-shadow: var(--shadow-1);
   backdrop-filter: blur(18px);
   padding: 22px;
+  color: var(--tg-text, var(--ink-0));
 }
 
 .hero-card {
@@ -401,14 +421,52 @@ textarea {
 .tool-page .shell {
   display: flex;
   flex-direction: column;
-  min-height: calc(100% - 48px);
+  min-height: calc(var(--app-height) - 48px - var(--safe-top) - var(--safe-bottom));
+  gap: 12px;
 }
 
 .tool-page .tool-layout {
   flex: 1;
   min-height: 0;
-  flex-direction: column;
+  display: grid;
+  grid-template-rows: minmax(260px, 1fr) auto;
   gap: 12px;
+  margin-top: 0;
+}
+
+.tool-page .site-header {
+  position: relative;
+  min-height: 102px;
+  padding-right: 172px;
+  gap: 10px;
+}
+
+.tool-page .site-header > :first-child {
+  min-width: 0;
+}
+
+.tool-page .site-header .subtitle {
+  margin: 0;
+  max-width: 620px;
+}
+
+.tool-page .status-cluster {
+  position: absolute;
+  top: 0;
+  right: 0;
+  max-width: 168px;
+  align-items: flex-end;
+  gap: 6px;
+}
+
+.tool-page .status-cluster .chip {
+  max-width: 100%;
+  justify-content: center;
+  padding: 6px 10px;
+  font-size: 11px;
+  line-height: 1.2;
+  white-space: normal;
+  text-align: center;
 }
 
 .prompt-card {
@@ -419,11 +477,13 @@ textarea {
 .tool-page .prompt-card {
   order: 2;
   position: sticky;
-  bottom: max(12px, env(safe-area-inset-bottom));
+  bottom: calc(12px + var(--safe-bottom) + var(--keyboard-inset));
   z-index: 12;
   min-width: 0;
   padding: 14px;
   background: rgba(255, 255, 255, 0.96);
+  max-height: min(48vh, 380px);
+  overflow: auto;
 }
 
 .tool-page .prompt-card .section-kicker,
@@ -445,11 +505,13 @@ textarea {
 }
 
 .tool-page .prompt-input {
+  height: 132px;
   min-height: 96px;
   max-height: 180px;
 }
 
 .tool-page[data-tool="code"] .prompt-input {
+  height: 220px;
   min-height: 150px;
   max-height: 280px;
 }
@@ -480,6 +542,7 @@ textarea {
 .tool-page .response-controls {
   justify-content: flex-end;
   align-items: center;
+  gap: 8px;
 }
 
 .field-stack {
@@ -613,10 +676,12 @@ select:focus {
 
 .tool-page .conversation-list {
   flex: 1;
-  min-height: 0;
+  min-height: 220px;
   max-height: none;
   padding-right: 2px;
   padding-bottom: 8px;
+  overscroll-behavior: contain;
+  scroll-padding-bottom: 92px;
 }
 
 .empty-state {
@@ -632,6 +697,12 @@ select:focus {
 
 .empty-state h3 {
   margin-bottom: 8px;
+}
+
+.tool-page .empty-state {
+  min-height: 170px;
+  align-content: start;
+  padding-top: 20px;
 }
 
 .message {
@@ -1006,6 +1077,57 @@ body[data-page="help"] .page-title::before {
   background: rgba(185, 28, 28, 0.94);
 }
 
+body[data-telegram-mobile="true"]::before,
+body[data-telegram-mobile="true"]::after {
+  display: none;
+}
+
+body[data-telegram-mobile="true"] .shell,
+body[data-telegram-mobile="true"] .card,
+body[data-telegram-mobile="true"] .welcome-overlay,
+body[data-telegram-mobile="true"] .updates-modal {
+  backdrop-filter: none;
+}
+
+body[data-telegram-mobile="true"] .shell {
+  background: linear-gradient(180deg, rgba(255, 255, 255, 0.96), rgba(255, 255, 255, 0.92));
+}
+
+body[data-telegram-mobile="true"] .card {
+  background: rgba(255, 255, 255, 0.96);
+}
+
+body[data-telegram-mobile="true"] .welcome-overlay {
+  background: rgba(247, 241, 231, 0.94);
+}
+
+body[data-telegram-mobile="true"] .welcome-card,
+body[data-telegram-mobile="true"] .updates-card {
+  background: rgba(255, 255, 255, 0.98);
+}
+
+body[data-telegram-mobile="true"] .updates-modal {
+  background: rgba(27, 32, 40, 0.56);
+}
+
+body[data-keyboard-open="true"] .tool-page .tool-layout {
+  grid-template-rows: minmax(150px, 1fr) auto;
+}
+
+body[data-keyboard-open="true"] .tool-page .conversation-list {
+  min-height: 140px;
+}
+
+body[data-keyboard-open="true"] .tool-page .prompt-card {
+  max-height: min(58vh, 420px);
+}
+
+body[data-keyboard-open="true"] .tool-page .prompt-input {
+  height: 112px;
+  min-height: 88px;
+  max-height: 150px;
+}
+
 @media (max-width: 980px) {
   .tool-layout,
   .hero-split {
@@ -1028,7 +1150,7 @@ body[data-page="help"] .page-title::before {
 
 @media (max-width: 720px) {
   .page-shell {
-    padding: 12px;
+    padding: calc(12px + var(--safe-top)) 12px calc(12px + var(--safe-bottom));
   }
 
   .shell {
@@ -1044,6 +1166,27 @@ body[data-page="help"] .page-title::before {
 
   .status-cluster {
     align-items: flex-start;
+  }
+
+  .tool-page .site-header {
+    min-height: 96px;
+    padding-right: 128px;
+  }
+
+  .tool-page .status-cluster {
+    max-width: 124px;
+    align-items: flex-end;
+  }
+
+  .tool-page .status-cluster .chip {
+    padding: 5px 9px;
+    font-size: 10px;
+  }
+
+  .tool-page .site-header .subtitle {
+    max-width: calc(100% - 24px);
+    padding-right: 12px;
+    font-size: 14px;
   }
 
   .page-title {
@@ -1073,11 +1216,12 @@ body[data-page="help"] .page-title::before {
   }
 
   .tool-page .prompt-card {
-    bottom: max(8px, env(safe-area-inset-bottom));
+    bottom: calc(8px + var(--safe-bottom) + var(--keyboard-inset));
     padding: 12px;
   }
 
   .tool-page .prompt-input {
+    height: 118px;
     min-height: 84px;
   }
 
@@ -1115,6 +1259,21 @@ body[data-page="help"] .page-title::before {
     min-height: 320px;
   }
 
+  .tool-page .conversation-card,
+  .tool-page .prompt-card {
+    border-radius: 18px;
+  }
+
+  .tool-page .conversation-list {
+    min-height: 190px;
+    scroll-padding-bottom: 82px;
+  }
+
+  .tool-page .response-controls {
+    width: 100%;
+    justify-content: flex-start;
+  }
+
   .version-badge {
     right: 14px;
     bottom: 14px;
@@ -1129,5 +1288,21 @@ body[data-page="help"] .page-title::before {
   .hero-actions .btn,
   .footer-links .btn {
     width: 100%;
+  }
+
+  .tool-page .site-header {
+    padding-right: 116px;
+  }
+
+  .tool-page .status-cluster {
+    max-width: 112px;
+  }
+
+  .tool-page .tool-layout {
+    grid-template-rows: minmax(210px, 1fr) auto;
+  }
+
+  body[data-keyboard-open="true"] .tool-page .tool-layout {
+    grid-template-rows: minmax(132px, 1fr) auto;
   }
 }

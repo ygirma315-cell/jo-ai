@@ -5,10 +5,17 @@
   state.errors = Array.isArray(state.errors) ? state.errors : [];
   state.startupComplete = false;
   state.telegramDetected = !!(window.Telegram && window.Telegram.WebApp);
+  state.viewportBound = false;
   state.rootMounted = false;
+  state.startupTimer = state.startupTimer || 0;
 
   function byId(id) {
     return document.getElementById(id);
+  }
+
+  function readNumber(value) {
+    const next = Number(value);
+    return Number.isFinite(next) && next > 0 ? next : 0;
   }
 
   function errorToMessage(error) {
@@ -43,7 +50,22 @@
     updateBanner();
   }
 
+  function clearStartupWatchdog() {
+    if (state.startupTimer) {
+      clearTimeout(state.startupTimer);
+      state.startupTimer = 0;
+    }
+  }
+
+  function setBodyFlag(name, value) {
+    if (!document.body) {
+      return;
+    }
+    document.body.dataset[name] = value;
+  }
+
   function showFallback(message) {
+    clearStartupWatchdog();
     const panel = byId("appFallback");
     const copy = byId("appFallbackMessage");
     if (copy) {
@@ -52,13 +74,16 @@
     if (panel) {
       panel.hidden = false;
     }
+    setBodyFlag("bootFailed", "true");
   }
 
   function hideFallback() {
+    clearStartupWatchdog();
     const panel = byId("appFallback");
     if (panel) {
       panel.hidden = true;
     }
+    setBodyFlag("bootFailed", "false");
   }
 
   function reportError(label, error) {
@@ -83,16 +108,102 @@
     document.documentElement.style.setProperty("--tg-text", foreground);
     document.documentElement.style.setProperty("--tg-card", card);
     document.documentElement.style.setProperty("--tg-hint", hint);
+    document.documentElement.style.backgroundColor = background;
 
-    if (document.body && theme) {
-      document.body.style.background = background;
+    if (document.body) {
+      document.body.style.backgroundColor = background;
       document.body.style.color = foreground;
     }
+  }
+
+  function detectTelegramMobile() {
+    const tg = window.Telegram && window.Telegram.WebApp ? window.Telegram.WebApp : null;
+    const platform = tg && typeof tg.platform === "string" ? tg.platform.toLowerCase() : "";
+    const ua = navigator.userAgent || "";
+    const isMobileUa = /android|iphone|ipad|ipod|mobile/i.test(ua);
+    return isMobileUa && (platform === "android" || platform === "ios" || /telegram/i.test(ua) || !!tg);
+  }
+
+  function readViewportMetrics() {
+    const tg = window.Telegram && window.Telegram.WebApp ? window.Telegram.WebApp : null;
+    const viewport = window.visualViewport || null;
+    const innerHeight = readNumber(window.innerHeight);
+    const viewportHeight = viewport ? readNumber(viewport.height) : 0;
+    const telegramHeight = tg ? readNumber(tg.viewportHeight) : 0;
+    const stableHeight = tg ? readNumber(tg.viewportStableHeight) : 0;
+    const height = Math.max(viewportHeight, telegramHeight, innerHeight);
+    const stable = Math.max(stableHeight, innerHeight, height);
+    const offsetTop = viewport ? readNumber(viewport.offsetTop) : 0;
+    const offsetBottom = viewport ? Math.max(0, innerHeight - viewportHeight - offsetTop) : 0;
+    const keyboardDelta = innerHeight > 0 && viewportHeight > 0 ? innerHeight - viewportHeight : 0;
+
+    return {
+      height: height || innerHeight || stable || 0,
+      stableHeight: stable || height || innerHeight || 0,
+      offsetTop,
+      offsetBottom,
+      keyboardOpen: keyboardDelta > 120,
+    };
+  }
+
+  function syncViewportMetrics() {
+    const metrics = readViewportMetrics();
+    if (!metrics.height) {
+      return;
+    }
+
+    document.documentElement.style.setProperty("--app-height", `${metrics.height}px`);
+    document.documentElement.style.setProperty("--viewport-height", `${metrics.height}px`);
+    document.documentElement.style.setProperty("--viewport-stable-height", `${metrics.stableHeight}px`);
+    document.documentElement.style.setProperty("--viewport-offset-top", `${metrics.offsetTop}px`);
+    document.documentElement.style.setProperty("--viewport-offset-bottom", `${metrics.offsetBottom}px`);
+    document.documentElement.style.setProperty("--keyboard-inset", metrics.keyboardOpen ? `${metrics.offsetBottom}px` : "0px");
+
+    setBodyFlag("telegramDetected", state.telegramDetected ? "true" : "false");
+    setBodyFlag("telegramMobile", detectTelegramMobile() ? "true" : "false");
+    setBodyFlag("keyboardOpen", metrics.keyboardOpen ? "true" : "false");
+  }
+
+  function bindViewportSync() {
+    if (state.viewportBound) {
+      syncViewportMetrics();
+      return;
+    }
+
+    const handler = () => {
+      try {
+        syncViewportMetrics();
+      } catch (error) {
+        reportError("viewport.sync", error);
+      }
+    };
+
+    state.viewportBound = true;
+    window.addEventListener("resize", handler, { passive: true });
+    window.addEventListener("orientationchange", handler);
+
+    if (window.visualViewport) {
+      window.visualViewport.addEventListener("resize", handler, { passive: true });
+      window.visualViewport.addEventListener("scroll", handler, { passive: true });
+    }
+
+    const tg = state.telegramDetected ? window.Telegram.WebApp : null;
+    if (tg && typeof tg.onEvent === "function") {
+      try {
+        tg.onEvent("viewportChanged", handler);
+      } catch (error) {
+        reportError("telegram.onEvent(viewportChanged)", error);
+      }
+    }
+
+    handler();
   }
 
   function safeTelegramInit() {
     state.telegramDetected = !!(window.Telegram && window.Telegram.WebApp);
     updateBanner();
+    setBodyFlag("telegramDetected", state.telegramDetected ? "true" : "false");
+    setBodyFlag("telegramMobile", detectTelegramMobile() ? "true" : "false");
 
     const tg = state.telegramDetected ? window.Telegram.WebApp : null;
     if (!tg) {
@@ -114,13 +225,18 @@
     } catch (error) {
       reportError("telegram.expand", error);
     }
+
+    window.setTimeout(syncViewportMetrics, 16);
+    window.setTimeout(syncViewportMetrics, 220);
   }
 
   function initMiniAppShell() {
     applyTheme();
     safeTelegramInit();
+    bindViewportSync();
     const hasRoot = Boolean(document.querySelector("#appRoot, #app, #root, .page-shell"));
     setRootMounted(hasRoot);
+    setBodyFlag("shellReady", "true");
     if (!hasRoot) {
       showFallback("Mini App container is missing.");
     }
@@ -132,7 +248,14 @@
   state.hideFallback = hideFallback;
   state.reportError = reportError;
   state.applyTheme = applyTheme;
+  state.syncViewportMetrics = syncViewportMetrics;
   state.safeTelegramInit = safeTelegramInit;
+
+  state.startupTimer = window.setTimeout(() => {
+    if (!state.startupComplete) {
+      showFallback("Mini App startup is taking longer than expected. Please reopen it.");
+    }
+  }, 4500);
 
   window.addEventListener("error", (event) => {
     reportError("window.onerror", event.error || event.message || "Unknown startup error.");
