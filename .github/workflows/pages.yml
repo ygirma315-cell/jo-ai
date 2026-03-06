@@ -11,32 +11,55 @@ on:
 
 permissions:
   contents: read
-  pages: write
-  id-token: write
 
 concurrency:
   group: pages
   cancel-in-progress: true
 
 jobs:
-  deploy:
+  build:
     runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    env:
+      # Optional: set a repository secret named PAGES_ADMIN_TOKEN only if GitHub Pages
+      # still has not been provisioned and you want the workflow to enable it automatically.
+      # This must be a PAT or GitHub App token with admin access to the repo.
+      PAGES_ADMIN_TOKEN: ${{ secrets.PAGES_ADMIN_TOKEN }}
+
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v5
+
+      - name: Enable GitHub Pages when an admin token is available
+        if: ${{ env.PAGES_ADMIN_TOKEN != '' }}
+        uses: actions/configure-pages@v5
+        with:
+          enablement: true
+          token: ${{ env.PAGES_ADMIN_TOKEN }}
+
+      - name: Prepare static mini app artifact
+        run: |
+          mkdir -p _site
+          cp -R miniapp/. _site/
+          touch _site/.nojekyll
+
+      - name: Upload GitHub Pages artifact
+        uses: actions/upload-pages-artifact@v4
+        with:
+          path: _site
+
+  deploy:
+    needs: build
+    runs-on: ubuntu-latest
+    permissions:
+      pages: write
+      id-token: write
     environment:
       name: github-pages
       url: ${{ steps.deployment.outputs.page_url }}
 
     steps:
-      - name: Check out repository
-        uses: actions/checkout@v4
-
-      - name: Configure GitHub Pages
-        uses: actions/configure-pages@v5
-
-      - name: Upload static mini app
-        uses: actions/upload-pages-artifact@v3
-        with:
-          path: miniapp
-
       - name: Deploy to GitHub Pages
         id: deployment
         uses: actions/deploy-pages@v4

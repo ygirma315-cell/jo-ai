@@ -137,12 +137,10 @@ def _workflow_contains_required_steps() -> bool:
     if not workflow_path.exists():
         return False
     text = _read_text(workflow_path)
-    required_markers = (
-        'path: miniapp',
-        'actions/upload-pages-artifact',
-        'actions/deploy-pages',
-    )
-    return all(marker in text for marker in required_markers)
+    has_upload = 'actions/upload-pages-artifact' in text
+    has_deploy = 'actions/deploy-pages' in text
+    uploads_miniapp_only = ('path: miniapp' in text) or ('cp -R miniapp/. _site/' in text and 'path: _site' in text)
+    return has_upload and has_deploy and uploads_miniapp_only
 
 
 def _validate_env(report: CheckReport, *, skip_env: bool) -> None:
