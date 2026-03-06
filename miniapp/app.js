@@ -4,7 +4,7 @@
 
   const tg = window.Telegram && window.Telegram.WebApp ? window.Telegram.WebApp : null;
   const API_BASE_STORAGE_KEY = "jo_api_base";
-  const FRONTEND_VERSION = "v1.0.1";
+  const FRONTEND_VERSION = "v1.0.2";
 
   const elements = {
     welcomeOverlay: document.getElementById("welcomeOverlay"),
@@ -16,7 +16,6 @@
     tabs: Array.from(document.querySelectorAll(".tab")),
     panels: Array.from(document.querySelectorAll(".panel")),
     modes: Array.from(document.querySelectorAll(".mode")),
-    modelProfile: document.getElementById("modelProfile"),
     runtimeInfoBtn: document.getElementById("runtimeInfoBtn"),
     runtimeInfo: document.getElementById("runtimeInfo"),
     inputLabel: document.getElementById("inputLabel"),
@@ -65,6 +64,10 @@
     code: {
       label: "Code request",
       placeholder: "Describe the code you need and include language/framework.",
+    },
+    deepseek: {
+      label: "DeepSeek request",
+      placeholder: "Ask for a sharper analytical answer with concise reasoning and a clear final result.",
     },
     research: {
       label: "Research question",
@@ -203,14 +206,6 @@
     return { version, models, deploy, service };
   }
 
-  function currentProfileLabel() {
-    if (!elements.modelProfile) {
-      return "";
-    }
-    const selectedOption = elements.modelProfile.options[elements.modelProfile.selectedIndex];
-    return selectedOption ? String(selectedOption.textContent || "").trim() : "";
-  }
-
   function formatModelLabel(key) {
     const labels = {
       chat: "JO AI Chat",
@@ -245,11 +240,6 @@
 
     if (state.runtimeInfo.deploy && state.runtimeInfo.deploy.commit) {
       rows.push(["Commit", state.runtimeInfo.deploy.commit.slice(0, 12)]);
-    }
-
-    const profileLabel = currentProfileLabel();
-    if (profileLabel) {
-      rows.push(["Active profile", profileLabel]);
     }
 
     if (state.runtimeInfo.service && state.runtimeInfo.service.public_base_url) {
@@ -749,8 +739,7 @@
   }
 
   function endpointAttempts(mode, payload) {
-    const profile = elements.modelProfile ? elements.modelProfile.value : "deepseek_reasoning";
-    const basePayload = { ...payload, model_profile: profile };
+    const basePayload = { ...payload };
 
     if (mode === "chat") {
       return [
@@ -762,6 +751,32 @@
       return [
         { path: "/api/code", payload: basePayload },
         { path: "/code", payload: basePayload },
+      ];
+    }
+    if (mode === "deepseek") {
+      return [
+        {
+          path: "/api/chat",
+          payload: {
+            ...basePayload,
+            message:
+              "DeepSeek mode.\n" +
+              "Respond with concise sections: Summary, Analysis, Final Answer.\n\n" +
+              `User request:\n${payload.message}`,
+          },
+        },
+        {
+          path: "/chat",
+          payload: {
+            ...basePayload,
+            message:
+              "DeepSeek mode.\n" +
+              "Respond with concise sections: Summary, Analysis, Final Answer.\n\n" +
+              `User request:\n${payload.message}`,
+          },
+        },
+        { path: "/api/research", payload: basePayload },
+        { path: "/research", payload: basePayload },
       ];
     }
     if (mode === "research") {
@@ -1229,11 +1244,6 @@
         } catch (error) {
           showToast(`Error: ${error instanceof Error ? error.message : "Runtime info unavailable."}`, "error");
         }
-      });
-    }
-    if (elements.modelProfile) {
-      elements.modelProfile.addEventListener("change", () => {
-        renderRuntimeInfo();
       });
     }
   }

@@ -56,20 +56,13 @@
       <section id="ai" class="panel active">
         <section class="hero-card card">
           <h2>Welcome startup</h2>
-          <p>Choose your model profile, then generate answers with structured output and quick-copy support.</p>
+          <p>Choose a tool, then generate answers with structured output and quick-copy support.</p>
           <div class="hero-hints">
             <span>✅ API health checks</span>
             <span>📋 Copy full output</span>
             <span>🛟 Support tools built in</span>
           </div>
         </section>
-
-        <div class="card">
-          <label for="modelProfile">Active Model</label>
-          <select id="modelProfile">
-            <option value="deepseek_reasoning">DeepSeek</option>
-          </select>
-        </div>
 
         <div class="card">
           <div class="section-head">
@@ -87,6 +80,7 @@
         <div class="mode-grid">
           <button class="mode active" data-mode="chat">💬 JO AI Chat</button>
           <button class="mode" data-mode="code">💻 Code Generator</button>
+          <button class="mode" data-mode="deepseek">🧠 DeepSeek</button>
           <button class="mode" data-mode="research">🔎 Research</button>
           <button class="mode" data-mode="prompt">🪄 Prompt Builder</button>
           <button class="mode" data-mode="image">🖼️ Image Generator</button>
@@ -184,7 +178,7 @@
     </section>
   </main>
 
-  <div id="versionBadge" class="version-badge">Version: v1.0.1</div>
+  <div id="versionBadge" class="version-badge">Version: v1.0.2</div>
   <div id="toast" class="toast" hidden></div>
 </body>
 </html>
