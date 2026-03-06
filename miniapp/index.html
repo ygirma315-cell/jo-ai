@@ -10,175 +10,479 @@
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
   <link
-    href="https://fonts.googleapis.com/css2?family=DM+Sans:wght@400;500;700&family=Space+Grotesk:wght@500;600;700&display=swap"
+    href="https://fonts.googleapis.com/css2?family=Instrument+Sans:wght@400;500;600;700&family=Sora:wght@500;600;700&display=swap"
     rel="stylesheet"
   >
   <link rel="stylesheet" href="style.css">
   <script src="https://telegram.org/js/telegram-web-app.js"></script>
   <script src="config.js"></script>
+  <script src="quiz-data.js"></script>
   <script src="app.js" defer></script>
 </head>
 <body>
   <div id="welcomeOverlay" class="welcome-overlay">
     <section class="welcome-card">
       <p class="welcome-tag">JO AI MINI APP</p>
-      <h2>Welcome to your AI cockpit 🤖</h2>
-      <p id="welcomeMessage">Loading Telegram session...</p>
+      <h2>One place for useful tools, games, and learning.</h2>
+      <p id="welcomeMessage">Preparing your mini app workspace...</p>
       <div class="welcome-points">
-        <span>🧠 Chat + Research</span>
-        <span>💻 Code + Prompt Builder</span>
-        <span>🖼️ Image + Kimi Vision</span>
+        <span>Smart apps</span>
+        <span>Offline-ready games</span>
+        <span>Replayable quiz sessions</span>
       </div>
-      <button id="openAppBtn" class="btn primary wide">🚀 Open JO AI</button>
+      <button id="openAppBtn" class="btn primary wide" type="button">Open workspace</button>
     </section>
   </div>
 
   <main class="page">
-    <section class="shell">
-      <header class="topbar">
-        <div>
-          <p class="eyebrow">JO AI WORKSPACE</p>
-          <h1>Build, ask, generate, and play.</h1>
-          <p class="subtitle">Fast responses, clean output, and reliable API fallback handling.</p>
+    <div class="shell">
+      <header class="hero">
+        <div class="hero-copy">
+          <p class="eyebrow">JO AI MINI APP</p>
+          <h1>Organized around Apps, Games, and Education.</h1>
+          <p class="subtitle">
+            Use the online assistant when it is available, then keep working with offline-first
+            tools, saved notes, and replayable quiz sessions.
+          </p>
         </div>
-        <div class="status-cluster">
-          <span id="status" class="chip">🔌 Starting...</span>
-          <span id="apiBaseLabel" class="chip muted">API: detecting...</span>
-          <span id="userInfo" class="chip muted">Guest mode</span>
+        <div class="hero-status">
+          <span id="sessionBadge" class="chip">Starting session...</span>
+          <span id="connectionBadge" class="chip muted">Checking assistant...</span>
+          <span id="storageBadge" class="chip muted">Saving notes and scores on this device</span>
         </div>
       </header>
 
-      <nav class="tabs">
-        <button class="tab active" data-target="ai">🤖 AI Tools</button>
-        <button class="tab" data-target="games">🎮 Games</button>
+      <section class="overview-grid" aria-label="Workspace overview">
+        <article class="overview-card">
+          <p class="card-eyebrow">Apps</p>
+          <h2>Helpful tools</h2>
+          <p>Calculator, notes, conversion, text cleanup, and the live assistant in one place.</p>
+        </article>
+        <article class="overview-card">
+          <p class="card-eyebrow">Games</p>
+          <h2>Quick play</h2>
+          <p>Tic-tac-toe, memory match, and rock paper scissors all work without a backend.</p>
+        </article>
+        <article class="overview-card">
+          <p class="card-eyebrow">Education</p>
+          <h2>Quiz lab</h2>
+          <p>Choose a topic, shuffle each session, and answer up to 50 questions at a time.</p>
+        </article>
+      </section>
+
+      <nav class="section-tabs" aria-label="Main sections">
+        <button class="section-tab active" data-section="apps" type="button">Apps</button>
+        <button class="section-tab" data-section="games" type="button">Games</button>
+        <button class="section-tab" data-section="education" type="button">Education</button>
       </nav>
 
-      <section id="ai" class="panel active">
-        <section class="hero-card card">
-          <h2>Welcome startup</h2>
-          <p>Choose a tool, then generate answers with structured output and quick-copy support.</p>
-          <div class="hero-hints">
-            <span>✅ API health checks</span>
-            <span>📋 Copy full output</span>
-            <span>🛟 Support tools built in</span>
-          </div>
-        </section>
+      <section id="appsSection" class="section-panel active" aria-labelledby="appsTitle">
+        <div class="section-heading">
+          <p class="section-kicker">Apps</p>
+          <h2 id="appsTitle">Connected help plus offline-friendly daily tools.</h2>
+          <p>
+            The assistant stays available inside this section, while the other tools keep working
+            even when you are offline.
+          </p>
+        </div>
 
-        <div class="card">
-          <div class="section-head">
-            <div>
-              <label>Build Info</label>
-              <p class="hint">Open the current app version and the backend model list.</p>
+        <div class="apps-layout">
+          <article class="card assistant-card">
+            <div class="card-head">
+              <div>
+                <p class="card-eyebrow">Connected app</p>
+                <h3>AI Studio</h3>
+              </div>
+              <span id="assistantStatus" class="chip muted">Checking assistant...</span>
             </div>
-            <button id="runtimeInfoBtn" class="btn small" type="button">Version / Models</button>
-          </div>
-          <div id="runtimeInfo" class="runtime-info" hidden>
-            <p class="hint">Version and model details will appear here after the backend check.</p>
-          </div>
-        </div>
 
-        <div class="mode-grid">
-          <button class="mode active" data-mode="chat">💬 JO AI Chat</button>
-          <button class="mode" data-mode="code">💻 Code Generator</button>
-          <button class="mode" data-mode="deepseek">🧠 DeepSeek</button>
-          <button class="mode" data-mode="research">🔎 Research</button>
-          <button class="mode" data-mode="prompt">🪄 Prompt Builder</button>
-          <button class="mode" data-mode="image">🖼️ Image Generator</button>
-          <button class="mode" data-mode="kimi">👁️ Kimi Describer</button>
-        </div>
-
-        <div class="card" id="promptTypeWrap" hidden>
-          <label for="promptType">Prompt type</label>
-          <input id="promptType" type="text" placeholder="e.g. coding prompt, marketing prompt, video prompt">
-        </div>
-
-        <div class="card" id="imageTypeWrap" hidden>
-          <label for="imageType">Image style</label>
-          <select id="imageType">
-            <option value="realistic">Realistic Image</option>
-            <option value="ai_art">AI Art</option>
-            <option value="anime">Anime Style</option>
-            <option value="cyberpunk">Cyberpunk Style</option>
-            <option value="logo_icon">Logo / Icon</option>
-            <option value="render_3d">3D Render</option>
-            <option value="concept_art">Concept Art</option>
-          </select>
-        </div>
-
-        <div class="card" id="kimiImageWrap" hidden>
-          <label for="kimiImage">Upload image for Kimi</label>
-          <input id="kimiImage" type="file" accept="image/*">
-          <p id="uploadInfo" class="hint">No image selected.</p>
-        </div>
-
-        <div class="card">
-          <label for="aiInput" id="inputLabel">Message</label>
-          <textarea id="aiInput" rows="7" placeholder="Type your request here..."></textarea>
-          <div class="actions">
-            <button id="sendBtn" class="btn primary">⚡ Generate</button>
-            <button id="clearBtn" class="btn">🧹 Clear</button>
-          </div>
-          <p id="loadingHint" class="hint">Ready when you are.</p>
-        </div>
-
-        <div class="card response-card">
-          <div class="response-head">
-            <h2>Response</h2>
-            <div class="response-controls">
-              <span id="apiState" class="chip muted">idle</span>
-              <button id="copyBtn" class="btn small">📋 Copy</button>
-              <button id="downloadImageBtn" class="btn small" disabled>⬇️ Save Image</button>
+            <div class="assistant-mode-grid" role="tablist" aria-label="Assistant modes">
+              <button class="assistant-mode active" data-mode="chat" type="button">Chat</button>
+              <button class="assistant-mode" data-mode="code" type="button">Code</button>
+              <button class="assistant-mode" data-mode="deepseek" type="button">Deep analysis</button>
+              <button class="assistant-mode" data-mode="research" type="button">Research</button>
+              <button class="assistant-mode" data-mode="prompt" type="button">Prompt builder</button>
+              <button class="assistant-mode" data-mode="image" type="button">Image idea</button>
+              <button class="assistant-mode" data-mode="kimi" type="button">Image explain</button>
             </div>
-          </div>
-          <div id="aiOutput" class="rich-output">
-            <p class="placeholder">Your AI response will appear here.</p>
-          </div>
-          <figure id="imageWrap" class="image-wrap" hidden>
-            <img id="imagePreview" class="image-preview" alt="Generated AI image preview">
-            <figcaption id="imageCaption">Generated image preview</figcaption>
-          </figure>
-        </div>
 
-        <div class="card support-card">
-          <h2>Help & Support</h2>
-          <p>If anything fails, report it quickly with diagnostics so the issue can be fixed faster.</p>
-          <div class="actions">
-            <a id="contactBtn" class="btn" href="https://t.me/JO_CHAT_AI_BOT" target="_blank" rel="noopener noreferrer">
-              💬 Contact Developer
-            </a>
-            <button id="reportBtn" class="btn">🐞 Report Problem</button>
-          </div>
-        </div>
-      </section>
+            <div id="promptTypeWrap" class="stack-field" hidden>
+              <label for="promptType">Prompt type</label>
+              <input id="promptType" type="text" placeholder="Example: product copy, coding prompt, lesson plan">
+            </div>
 
-      <section id="games" class="panel">
-        <div class="games-grid">
-          <article class="card">
-            <h2>Tic-Tac-Toe</h2>
-            <p>Play against a simple bot with animated board feedback.</p>
-            <div id="tttBoard" class="ttt-board"></div>
+            <div id="imageTypeWrap" class="stack-field" hidden>
+              <label for="imageType">Image style</label>
+              <select id="imageType">
+                <option value="realistic">Realistic</option>
+                <option value="ai_art">AI art</option>
+                <option value="anime">Anime</option>
+                <option value="cyberpunk">Cyberpunk</option>
+                <option value="logo_icon">Logo or icon</option>
+                <option value="render_3d">3D render</option>
+                <option value="concept_art">Concept art</option>
+              </select>
+            </div>
+
+            <div id="kimiImageWrap" class="stack-field" hidden>
+              <label for="kimiImage">Upload an image</label>
+              <input id="kimiImage" type="file" accept="image/*">
+              <p id="uploadInfo" class="support-copy">No image selected yet.</p>
+            </div>
+
+            <label for="assistantInput" id="assistantInputLabel">Message</label>
+            <textarea
+              id="assistantInput"
+              rows="7"
+              placeholder="Ask a question, request code, or describe what you want to create."
+            ></textarea>
             <div class="actions">
-              <button id="tttReset" class="btn">Restart</button>
+              <button id="assistantSendBtn" class="btn primary" type="button">Generate</button>
+              <button id="assistantClearBtn" class="btn" type="button">Clear</button>
+              <button id="assistantCopyBtn" class="btn" type="button">Copy reply</button>
+              <button id="assistantDownloadImageBtn" class="btn" type="button" disabled>Save image</button>
             </div>
-            <p id="tttStatus" class="game-status">Your turn (X).</p>
+            <p id="assistantHint" class="support-copy">Choose a mode and then generate a reply.</p>
+
+            <div class="response-card">
+              <div class="response-head">
+                <h4>Assistant response</h4>
+                <span id="assistantState" class="chip muted">Idle</span>
+              </div>
+              <div id="assistantOutput" class="rich-output">
+                <p class="placeholder">Your reply will appear here.</p>
+              </div>
+              <figure id="imageWrap" class="image-wrap" hidden>
+                <img id="imagePreview" class="image-preview" alt="Generated preview">
+                <figcaption id="imageCaption">Generated preview</figcaption>
+              </figure>
+            </div>
           </article>
 
-          <article class="card">
-            <h2>Guess the Number</h2>
-            <p>Guess the hidden number between 1 and 100.</p>
-            <div class="guess-wrap">
-              <input id="guessInput" type="number" min="1" max="100" placeholder="Enter guess">
-              <button id="guessBtn" class="btn primary">Try</button>
-              <button id="guessReset" class="btn">New Game</button>
+          <div class="tools-grid">
+            <article class="card tool-card calculator-card">
+              <div class="card-head compact">
+                <div>
+                  <p class="card-eyebrow">Offline app</p>
+                  <h3>Calculator</h3>
+                </div>
+                <span class="pill">History saved</span>
+              </div>
+              <input id="calcDisplay" class="calc-display" type="text" inputmode="decimal" placeholder="0" readonly>
+              <div class="calc-grid" aria-label="Calculator keys">
+                <button class="calc-key utility" data-action="clear" type="button">AC</button>
+                <button class="calc-key utility" data-action="backspace" type="button">DEL</button>
+                <button class="calc-key utility" data-value="(" type="button">(</button>
+                <button class="calc-key operator" data-value="/" type="button">/</button>
+
+                <button class="calc-key" data-value="7" type="button">7</button>
+                <button class="calc-key" data-value="8" type="button">8</button>
+                <button class="calc-key" data-value="9" type="button">9</button>
+                <button class="calc-key operator" data-value="*" type="button">*</button>
+
+                <button class="calc-key" data-value="4" type="button">4</button>
+                <button class="calc-key" data-value="5" type="button">5</button>
+                <button class="calc-key" data-value="6" type="button">6</button>
+                <button class="calc-key operator" data-value="-" type="button">-</button>
+
+                <button class="calc-key" data-value="1" type="button">1</button>
+                <button class="calc-key" data-value="2" type="button">2</button>
+                <button class="calc-key" data-value="3" type="button">3</button>
+                <button class="calc-key operator" data-value="+" type="button">+</button>
+
+                <button class="calc-key" data-value="0" type="button">0</button>
+                <button class="calc-key" data-value="." type="button">.</button>
+                <button class="calc-key" data-value=")" type="button">)</button>
+                <button class="calc-key equals" data-action="equals" type="button">=</button>
+              </div>
+              <div class="history-panel">
+                <div class="panel-topline">
+                  <strong>Recent calculations</strong>
+                  <button id="calcHistoryClearBtn" class="mini-action" type="button">Clear</button>
+                </div>
+                <div id="calcHistory" class="history-list">
+                  <p class="empty-copy">No calculations yet.</p>
+                </div>
+              </div>
+            </article>
+
+            <article class="card tool-card notes-card">
+              <div class="card-head compact">
+                <div>
+                  <p class="card-eyebrow">Offline app</p>
+                  <h3>Quick Notes</h3>
+                </div>
+                <span id="notesCount" class="pill">0 saved</span>
+              </div>
+              <div class="notes-layout">
+                <div class="notes-list-wrap">
+                  <div class="panel-topline">
+                    <strong>Saved notes</strong>
+                    <button id="newNoteBtn" class="mini-action" type="button">New note</button>
+                  </div>
+                  <div id="notesList" class="notes-list">
+                    <p class="empty-copy">Start your first note.</p>
+                  </div>
+                </div>
+                <div class="notes-editor">
+                  <label for="noteTitle">Title</label>
+                  <input id="noteTitle" type="text" placeholder="Quick idea">
+                  <label for="noteBody">Note</label>
+                  <textarea id="noteBody" rows="8" placeholder="Write something useful here..."></textarea>
+                  <div class="actions">
+                    <button id="saveNoteBtn" class="btn primary" type="button">Save note</button>
+                    <button id="deleteNoteBtn" class="btn" type="button">Delete note</button>
+                  </div>
+                  <p id="notesMeta" class="support-copy">Notes are stored on this device.</p>
+                </div>
+              </div>
+            </article>
+
+            <article class="card tool-card converter-card">
+              <div class="card-head compact">
+                <div>
+                  <p class="card-eyebrow">Offline app</p>
+                  <h3>Unit Converter</h3>
+                </div>
+                <span class="pill">Length, weight, temperature</span>
+              </div>
+              <div class="form-grid">
+                <div class="stack-field">
+                  <label for="converterCategory">Category</label>
+                  <select id="converterCategory"></select>
+                </div>
+                <div class="stack-field">
+                  <label for="converterValue">Value</label>
+                  <input id="converterValue" type="number" inputmode="decimal" placeholder="Enter a value">
+                </div>
+                <div class="stack-field">
+                  <label for="converterFrom">From</label>
+                  <select id="converterFrom"></select>
+                </div>
+                <div class="stack-field">
+                  <label for="converterTo">To</label>
+                  <select id="converterTo"></select>
+                </div>
+              </div>
+              <div class="actions">
+                <button id="converterSwapBtn" class="btn" type="button">Swap units</button>
+              </div>
+              <div class="result-panel">
+                <p class="support-copy">Converted result</p>
+                <h4 id="converterResult">Enter a value to convert.</h4>
+              </div>
+            </article>
+
+            <article class="card tool-card text-card">
+              <div class="card-head compact">
+                <div>
+                  <p class="card-eyebrow">Offline app</p>
+                  <h3>Text Utility</h3>
+                </div>
+                <span class="pill">Clean, count, transform</span>
+              </div>
+              <label for="textLabInput">Text</label>
+              <textarea id="textLabInput" rows="8" placeholder="Paste or write text to transform it."></textarea>
+              <div class="stats-grid">
+                <article class="mini-stat">
+                  <span>Characters</span>
+                  <strong id="textCharCount">0</strong>
+                </article>
+                <article class="mini-stat">
+                  <span>Words</span>
+                  <strong id="textWordCount">0</strong>
+                </article>
+                <article class="mini-stat">
+                  <span>Reading time</span>
+                  <strong id="textReadTime">0 min</strong>
+                </article>
+              </div>
+              <div class="actions">
+                <button id="textUpperBtn" class="btn" type="button">UPPERCASE</button>
+                <button id="textLowerBtn" class="btn" type="button">lowercase</button>
+                <button id="textTitleBtn" class="btn" type="button">Title Case</button>
+                <button id="textTrimBtn" class="btn" type="button">Trim spaces</button>
+                <button id="textCopyBtn" class="btn" type="button">Copy text</button>
+                <button id="textClearBtn" class="btn" type="button">Clear</button>
+              </div>
+            </article>
+          </div>
+        </div>
+      </section>
+
+      <section id="gamesSection" class="section-panel" aria-labelledby="gamesTitle">
+        <div class="section-heading">
+          <p class="section-kicker">Games</p>
+          <h2 id="gamesTitle">Three simple games that work offline.</h2>
+          <p>
+            Open a game, keep score, and restart instantly. These browser-based games do not need
+            the assistant to work.
+          </p>
+        </div>
+
+        <div class="games-grid">
+          <article class="card game-card">
+            <div class="card-head compact">
+              <div>
+                <p class="card-eyebrow">Game 1</p>
+                <h3>Tic-Tac-Toe</h3>
+              </div>
+              <span id="tttScore" class="pill">You 0 | Bot 0 | Draw 0</span>
             </div>
-            <p id="guessStatus" class="game-status">Game ready.</p>
+            <div id="tttBoard" class="ttt-board" aria-label="Tic-tac-toe board"></div>
+            <div class="actions">
+              <button id="tttResetBtn" class="btn" type="button">Restart round</button>
+            </div>
+            <p id="tttStatus" class="support-copy">Your move starts the round.</p>
+          </article>
+
+          <article class="card game-card">
+            <div class="card-head compact">
+              <div>
+                <p class="card-eyebrow">Game 2</p>
+                <h3>Memory Match</h3>
+              </div>
+              <span id="memoryBest" class="pill">Best: --</span>
+            </div>
+            <div class="panel-topline">
+              <strong id="memoryStatus">Find all matching pairs.</strong>
+              <span id="memoryMoves" class="support-copy">Moves: 0</span>
+            </div>
+            <div id="memoryBoard" class="memory-board" aria-label="Memory game board"></div>
+            <div class="actions">
+              <button id="memoryResetBtn" class="btn" type="button">Shuffle again</button>
+            </div>
+          </article>
+
+          <article class="card game-card">
+            <div class="card-head compact">
+              <div>
+                <p class="card-eyebrow">Game 3</p>
+                <h3>Rock Paper Scissors</h3>
+              </div>
+              <span id="rpsScore" class="pill">You 0 | Bot 0 | Draw 0</span>
+            </div>
+            <div class="choice-row" role="group" aria-label="Rock paper scissors choices">
+              <button class="choice-btn" data-choice="rock" type="button">Rock</button>
+              <button class="choice-btn" data-choice="paper" type="button">Paper</button>
+              <button class="choice-btn" data-choice="scissors" type="button">Scissors</button>
+            </div>
+            <div class="result-panel">
+              <p class="support-copy">Round result</p>
+              <h4 id="rpsResult">Choose one option to start.</h4>
+            </div>
+            <div class="actions">
+              <button id="rpsResetBtn" class="btn" type="button">Reset score</button>
+            </div>
           </article>
         </div>
       </section>
-    </section>
+
+      <section id="educationSection" class="section-panel" aria-labelledby="educationTitle">
+        <div class="section-heading">
+          <p class="section-kicker">Education</p>
+          <h2 id="educationTitle">A cleaner quiz lab with replayable random sessions.</h2>
+          <p>
+            Choose a topic and question count, then answer multiple-choice questions with clear
+            feedback, score tracking, and fresh random sets every time.
+          </p>
+        </div>
+
+        <div class="education-layout">
+          <article class="card quiz-setup-card">
+            <div class="card-head compact">
+              <div>
+                <p class="card-eyebrow">Quiz setup</p>
+                <h3>Start a session</h3>
+              </div>
+              <span id="questionBankCount" class="pill">0 questions</span>
+            </div>
+            <div class="form-grid">
+              <div class="stack-field">
+                <label for="quizCategory">Topic</label>
+                <select id="quizCategory"></select>
+              </div>
+              <div class="stack-field">
+                <label for="quizCount">Questions</label>
+                <select id="quizCount">
+                  <option value="10">10</option>
+                  <option value="20">20</option>
+                  <option value="30">30</option>
+                  <option value="50">50</option>
+                </select>
+              </div>
+            </div>
+            <div class="actions">
+              <button id="quizStartBtn" class="btn primary" type="button">Start new quiz</button>
+              <button id="quizRestartBtn" class="btn" type="button">Shuffle another session</button>
+            </div>
+            <div class="stats-grid">
+              <article class="mini-stat">
+                <span>Best score</span>
+                <strong id="quizBestScore">0%</strong>
+              </article>
+              <article class="mini-stat">
+                <span>Latest score</span>
+                <strong id="quizLastScore">Not started</strong>
+              </article>
+              <article class="mini-stat">
+                <span>Stored bank</span>
+                <strong id="quizTopicCount">0 topics</strong>
+              </article>
+            </div>
+            <p id="quizSetupHint" class="support-copy">
+              Questions are randomized each session, with a maximum of 50 questions in one run.
+            </p>
+          </article>
+
+          <article class="card quiz-card">
+            <div class="quiz-progress">
+              <div>
+                <p class="card-eyebrow">Current quiz</p>
+                <h3 id="quizProgressLabel">Choose a topic and start.</h3>
+              </div>
+              <span id="quizScoreBadge" class="chip muted">Score: 0</span>
+            </div>
+            <div class="progress-bar" aria-hidden="true">
+              <span id="quizProgressBar"></span>
+            </div>
+            <div id="quizQuestionWrap" class="quiz-question-wrap">
+              <p class="empty-copy">Your next question will appear here.</p>
+            </div>
+            <div class="actions">
+              <button id="quizSubmitBtn" class="btn primary" type="button" disabled>Check answer</button>
+              <button id="quizNextBtn" class="btn" type="button" disabled>Next question</button>
+            </div>
+            <div id="quizFeedback" class="feedback-panel" hidden></div>
+          </article>
+        </div>
+      </section>
+
+      <footer class="page-footer">
+        <div>
+          <p class="card-eyebrow">Support</p>
+          <h3>Need help with the mini app?</h3>
+          <p class="support-copy">
+            Use the contact option for feedback. Offline tools, notes, scores, and quiz sessions stay available on this device.
+          </p>
+        </div>
+        <div class="actions">
+          <a
+            id="contactBtn"
+            class="btn"
+            href="https://t.me/JO_CHAT_AI_BOT"
+            target="_blank"
+            rel="noopener noreferrer"
+          >
+            Contact support
+          </a>
+          <button id="feedbackBtn" class="btn" type="button">Copy feedback note</button>
+        </div>
+      </footer>
+    </div>
   </main>
 
-  <div id="versionBadge" class="version-badge">Version: v1.0.2</div>
+  <div id="versionBadge" class="version-badge">v1.1.0</div>
   <div id="toast" class="toast" hidden></div>
 </body>
 </html>
