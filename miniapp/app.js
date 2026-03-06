@@ -640,14 +640,26 @@
     }
   }
 
+  function isLocalHost() {
+    const hostname = String(window.location.hostname || "").toLowerCase();
+    return hostname === "127.0.0.1" || hostname === "localhost";
+  }
+
+  function shouldTrySameOriginApi() {
+    if (!window.location.protocol.startsWith("http")) {
+      return false;
+    }
+    if (window.JO_USE_SAME_ORIGIN_API === true) {
+      return true;
+    }
+    return /^https?:\/\/(?:127\.0\.0\.1|localhost):8000$/i.test(window.location.origin);
+  }
+
   function buildApiBaseCandidates() {
     const queryBase = normalizeBase(getQueryParam("api_base"));
     const explicitBase = normalizeBase(window.JO_API_BASE);
     const storedBase = normalizeBase(window.localStorage.getItem(API_BASE_STORAGE_KEY));
-    const sameOriginBase =
-      window.location.protocol.startsWith("http") && window.location.origin
-        ? normalizeBase(window.location.origin)
-        : "";
+    const sameOriginBase = shouldTrySameOriginApi() ? normalizeBase(window.location.origin) : "";
     const localhost8000 = normalizeBase("http://127.0.0.1:8000");
     const localhostAlt = normalizeBase("http://localhost:8000");
 
@@ -658,10 +670,10 @@
     return unique([
       queryBase,
       explicitBase,
-      sameOriginBase,
       storedBase,
-      localhost8000,
-      localhostAlt,
+      sameOriginBase,
+      isLocalHost() ? localhost8000 : "",
+      isLocalHost() ? localhostAlt : "",
     ]);
   }
 

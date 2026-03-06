@@ -1,0 +1,92 @@
+{
+  "version": "2.0.0",
+  "tasks": [
+    {
+      "label": "JO AI: Validate Local Setup",
+      "type": "shell",
+      "command": "python",
+      "args": [
+        "scripts/validate_setup.py"
+      ],
+      "options": {
+        "cwd": "${workspaceFolder}"
+      },
+      "presentation": {
+        "reveal": "always",
+        "panel": "shared",
+        "clear": true
+      },
+      "problemMatcher": []
+    },
+    {
+      "label": "JO AI: Validate Deployment Config",
+      "type": "shell",
+      "command": "python",
+      "args": [
+        "scripts/validate_setup.py",
+        "--deployment",
+        "--skip-env"
+      ],
+      "options": {
+        "cwd": "${workspaceFolder}"
+      },
+      "presentation": {
+        "reveal": "always",
+        "panel": "shared",
+        "clear": true
+      },
+      "problemMatcher": []
+    },
+    {
+      "label": "JO AI: Run Backend",
+      "type": "shell",
+      "command": "python",
+      "args": [
+        "main.py"
+      ],
+      "options": {
+        "cwd": "${workspaceFolder}"
+      },
+      "presentation": {
+        "reveal": "always",
+        "panel": "dedicated",
+        "clear": true
+      },
+      "problemMatcher": []
+    },
+    {
+      "label": "JO AI: Serve Mini App",
+      "type": "shell",
+      "command": "python",
+      "args": [
+        "scripts/serve_miniapp.py"
+      ],
+      "options": {
+        "cwd": "${workspaceFolder}"
+      },
+      "presentation": {
+        "reveal": "always",
+        "panel": "dedicated",
+        "clear": true
+      },
+      "problemMatcher": []
+    },
+    {
+      "label": "JO AI: Prepare Deploy",
+      "type": "shell",
+      "command": "python",
+      "args": [
+        "scripts/prepare_deploy.py"
+      ],
+      "options": {
+        "cwd": "${workspaceFolder}"
+      },
+      "presentation": {
+        "reveal": "always",
+        "panel": "shared",
+        "clear": true
+      },
+      "problemMatcher": []
+    }
+  ]
+}

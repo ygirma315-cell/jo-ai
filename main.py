@@ -11,6 +11,7 @@ from contextlib import suppress
 from functools import lru_cache
 from pathlib import Path
 from typing import Any
+from urllib.parse import urlparse
 
 import requests
 import uvicorn
@@ -19,8 +20,7 @@ from dotenv import load_dotenv
 from fastapi import FastAPI, Request
 from fastapi.exceptions import RequestValidationError
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import JSONResponse, RedirectResponse
-from fastapi.staticfiles import StaticFiles
+from fastapi.responses import JSONResponse
 from pydantic import BaseModel, ConfigDict, Field, ValidationError, model_validator
 
 from bot.app import (
@@ -36,7 +36,13 @@ from bot.runtime_info import build_runtime_info
 from version import VERSION
 
 PROJECT_ROOT = Path(__file__).resolve().parent
-MINIAPP_DIR = PROJECT_ROOT / "miniapp"
+DEFAULT_GITHUB_PAGES_URL = "https://ygirma315-cell.github.io/jo-ai/"
+DEFAULT_LOCAL_ORIGINS = (
+    "http://127.0.0.1:8000",
+    "http://localhost:8000",
+    "http://127.0.0.1:5500",
+    "http://localhost:5500",
+)
 load_dotenv(dotenv_path=PROJECT_ROOT / ".env")
 logger = logging.getLogger(__name__)
 
@@ -98,12 +104,45 @@ def _read_env(name: str) -> str:
     return os.getenv(name, "").strip()
 
 
+def _origin_from_url(value: str | None) -> str | None:
+    raw = str(value or "").strip()
+    if not raw:
+        return None
+
+    parsed = urlparse(raw)
+    if not parsed.scheme or not parsed.netloc:
+        return None
+    return f"{parsed.scheme}://{parsed.netloc}"
+
+
 def _cors_origins_from_env() -> list[str]:
     raw = _read_env("ALLOWED_ORIGINS")
-    if not raw:
-        return ["*"]
+    values: list[str] = []
 
-    values = [item.strip() for item in raw.split(",") if item.strip()]
+    if raw:
+        for item in raw.split(","):
+            candidate = item.strip()
+            if not candidate:
+                continue
+            if candidate == "*":
+                return ["*"]
+            origin = _origin_from_url(candidate)
+            if origin and origin not in values:
+                values.append(origin)
+
+    for candidate in (
+        _read_env("PUBLIC_BASE_URL"),
+        _read_env("RENDER_EXTERNAL_URL"),
+        _read_env("MINIAPP_URL") or DEFAULT_GITHUB_PAGES_URL,
+    ):
+        origin = _origin_from_url(candidate)
+        if origin and origin not in values:
+            values.append(origin)
+
+    for origin in DEFAULT_LOCAL_ORIGINS:
+        if origin not in values:
+            values.append(origin)
+
     return values or ["*"]
 
 
@@ -381,7 +420,7 @@ def _runtime_info_payload() -> dict[str, Any]:
     )
 
 
-app = FastAPI(title="JO AI Bot + Mini App", version=VERSION)
+app = FastAPI(title="JO AI Backend + Telegram Bot", version=VERSION)
 app.state.bot_runtime = None
 app.state.telegram_startup_task = None
 app.state.started_at = time.time()
@@ -394,17 +433,11 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-app.mount("/miniapp", StaticFiles(directory=MINIAPP_DIR, html=True), name="miniapp")
-
 
 @app.middleware("http")
 async def _response_headers_middleware(request: Request, call_next):
     response = await call_next(request)
     response.headers.setdefault("X-Content-Type-Options", "nosniff")
-    if request.url.path.startswith("/miniapp"):
-        response.headers["Cache-Control"] = "no-store, max-age=0"
-        response.headers["Pragma"] = "no-cache"
-        response.headers["Expires"] = "0"
     return response
 
 
@@ -425,7 +458,6 @@ async def _startup() -> None:
     app.state.started_at = time.time()
     logger.info("API STARTED | version=%s", VERSION)
     logger.info("[RENDER] PROCESS=%s ENTRYPOINT=main.py VERSION=%s", role, VERSION)
-    logger.info("Mini app directory: %s", MINIAPP_DIR)
 
     runtime = await create_bot_runtime()
     app.state.bot_runtime = runtime
@@ -456,8 +488,16 @@ async def request_validation_exception_handler(_request: Request, exc: RequestVa
 
 
 @app.get("/")
-def root() -> RedirectResponse:
-    return RedirectResponse(url="/miniapp/", status_code=307)
+def root() -> dict[str, Any]:
+    settings = get_settings()
+    return {
+        "ok": True,
+        "service": "jo-ai-backend",
+        "version": VERSION,
+        "miniapp_url": settings.miniapp_url,
+        "health_url": "/api/health",
+        "webhook_url": "/telegram/webhook",
+    }
 
 
 @app.get("/health")

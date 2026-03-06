@@ -62,13 +62,18 @@ class BotRuntime:
 def _build_miniapp_url(miniapp_url: str | None, api_base: str | None) -> str | None:
     if not miniapp_url:
         return None
-    if not api_base:
-        return miniapp_url
 
     parsed = urlparse(miniapp_url)
+    path = parsed.path
+    if path and path != "/" and not path.endswith("/"):
+        last_segment = path.rsplit("/", maxsplit=1)[-1]
+        if "." not in last_segment:
+            path = f"{path}/"
+
     query = dict(parse_qsl(parsed.query, keep_blank_values=True))
-    query["api_base"] = api_base
-    rebuilt = parsed._replace(query=urlencode(query))
+    if api_base:
+        query["api_base"] = api_base
+    rebuilt = parsed._replace(path=path, query=urlencode(query))
     return urlunparse(rebuilt)
 
 

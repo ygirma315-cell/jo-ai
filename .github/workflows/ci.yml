@@ -22,8 +22,11 @@ jobs:
       - name: Install dependencies
         run: pip install -r requirements.txt
 
+      - name: Validate repository setup
+        run: python scripts/validate_setup.py --ci
+
       - name: Compile Python sources
-        run: python -m compileall bot main.py
+        run: python -m compileall bot main.py scripts
 
       - name: Import application
         run: python -c "import main; print(main.app.title)"

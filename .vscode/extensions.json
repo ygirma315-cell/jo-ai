@@ -3,8 +3,12 @@
     "eamodio.gitlens",
     "mhutchie.git-graph",
     "github.vscode-pull-request-github",
+    "github.vscode-github-actions",
     "github.copilot",
     "github.copilot-chat",
+    "ms-python.python",
+    "ms-python.vscode-pylance",
+    "charliermarsh.ruff",
     "redhat.vscode-yaml"
   ]
 }

@@ -13,7 +13,13 @@ DEFAULT_CHAT_MODEL = "meta/llama-3.1-8b-instruct"
 DEFAULT_DEEPSEEK_MODEL = "deepseek-ai/deepseek-v3.2"
 DEFAULT_KIMI_MODEL = "moonshotai/kimi-k2.5"
 DEFAULT_AI_BASE_URL = "https://integrate.api.nvidia.com/v1"
-DEFAULT_LOCAL_ORIGINS = ("http://127.0.0.1:8000", "http://localhost:8000")
+DEFAULT_GITHUB_REPOSITORY = "ygirma315-cell/jo-ai"
+DEFAULT_LOCAL_ORIGINS = (
+    "http://127.0.0.1:8000",
+    "http://localhost:8000",
+    "http://127.0.0.1:5500",
+    "http://localhost:5500",
+)
 
 
 @dataclass(frozen=True)
@@ -75,12 +81,51 @@ def _normalize_public_url(value: str | None) -> str | None:
     return normalized.geturl().rstrip("/")
 
 
+def _normalize_directory_url(value: str | None) -> str | None:
+    raw = str(value or "").strip()
+    if not raw:
+        return None
+
+    parsed = urlparse(raw)
+    if not parsed.scheme or not parsed.netloc:
+        return None
+
+    path = parsed.path or ""
+    if path in {"", "/"}:
+        path = ""
+    elif not path.endswith("/"):
+        last_segment = path.rsplit("/", maxsplit=1)[-1]
+        if "." not in last_segment:
+            path = f"{path}/"
+
+    normalized = parsed._replace(path=path, params="", query="", fragment="")
+    return normalized.geturl() if path else normalized.geturl().rstrip("/")
+
+
 def _origin_from_url(value: str | None) -> str | None:
     normalized = _normalize_public_url(value)
     if not normalized:
         return None
     parsed = urlparse(normalized)
     return f"{parsed.scheme}://{parsed.netloc}"
+
+
+def _default_repository_slug() -> str:
+    return _read_env("GITHUB_REPOSITORY") or _read_env("RENDER_GIT_REPO_SLUG") or DEFAULT_GITHUB_REPOSITORY
+
+
+def _derive_github_pages_url(repository_slug: str | None) -> str | None:
+    slug = str(repository_slug or "").strip().strip("/")
+    if not slug or "/" not in slug:
+        return None
+
+    owner, repo = slug.split("/", maxsplit=1)
+    if not owner or not repo:
+        return None
+
+    if repo.lower() == f"{owner.lower()}.github.io":
+        return _normalize_directory_url(f"https://{repo}/")
+    return _normalize_directory_url(f"https://{owner}.github.io/{repo}/")
 
 
 def _join_public_url(base_url: str | None, path: str) -> str | None:
@@ -93,7 +138,9 @@ def _join_public_url(base_url: str | None, path: str) -> str | None:
     return joined
 
 
-def _parse_allowed_origins(raw_value: str | None, public_base_url: str | None) -> tuple[str, ...]:
+def _parse_allowed_origins(
+    raw_value: str | None, public_base_url: str | None, miniapp_url: str | None
+) -> tuple[str, ...]:
     if raw_value:
         values: list[str] = []
         for item in raw_value.split(","):
@@ -105,13 +152,16 @@ def _parse_allowed_origins(raw_value: str | None, public_base_url: str | None) -
             origin = _origin_from_url(candidate)
             if origin and origin not in values:
                 values.append(origin)
-        if values:
-            return tuple(values)
+    else:
+        values = []
 
-    defaults: list[str] = []
+    defaults = values
     public_origin = _origin_from_url(public_base_url)
-    if public_origin:
+    if public_origin and public_origin not in defaults:
         defaults.append(public_origin)
+    miniapp_origin = _origin_from_url(miniapp_url)
+    if miniapp_origin and miniapp_origin not in defaults:
+        defaults.append(miniapp_origin)
     for origin in DEFAULT_LOCAL_ORIGINS:
         if origin not in defaults:
             defaults.append(origin)
@@ -159,14 +209,16 @@ def load_settings() -> Settings:
         or _normalize_public_url(_read_env("RENDER_EXTERNAL_URL"))
         or _normalize_public_url(_read_env("MINIAPP_API_BASE"))
     )
-    legacy_miniapp_url = _normalize_public_url(_read_env("MINIAPP_URL"))
-    miniapp_url = _join_public_url(public_base_url, "/miniapp/") or legacy_miniapp_url
-    miniapp_api_base = public_base_url or _normalize_public_url(_read_env("MINIAPP_API_BASE"))
+    miniapp_url = (
+        _normalize_directory_url(_read_env("MINIAPP_URL"))
+        or _derive_github_pages_url(_default_repository_slug())
+    )
+    miniapp_api_base = _normalize_public_url(_read_env("MINIAPP_API_BASE")) or public_base_url
     telegram_webhook_url = _normalize_public_url(_read_env("TELEGRAM_WEBHOOK_URL")) or _join_public_url(
         public_base_url, "/telegram/webhook"
     )
     telegram_webhook_secret = _read_env("TELEGRAM_WEBHOOK_SECRET") or None
-    allowed_origins = _parse_allowed_origins(_read_env("ALLOWED_ORIGINS"), public_base_url)
+    allowed_origins = _parse_allowed_origins(_read_env("ALLOWED_ORIGINS"), public_base_url, miniapp_url)
     request_timeout_seconds = _parse_timeout_seconds(_read_env("REQUEST_TIMEOUT_SECONDS"))
 
     validation_errors: list[str] = []
@@ -180,9 +232,9 @@ def load_settings() -> Settings:
         validation_warnings.append(
             "No PUBLIC_BASE_URL/RENDER_EXTERNAL_URL detected. Telegram webhook auto-configuration is disabled until a public URL is available."
         )
-    if public_base_url and legacy_miniapp_url and legacy_miniapp_url != miniapp_url:
+    if not miniapp_url:
         validation_warnings.append(
-            "Legacy MINIAPP_URL is ignored on public deployments. The mini app now comes from the same service at /miniapp/."
+            "Mini app URL is not configured. Set MINIAPP_URL if the default GitHub Pages URL should be overridden."
         )
     if not deepseek_api_key:
         validation_warnings.append("DEEPSEEK_API_KEY is missing. DeepSeek profile requests will fail until it is set.")

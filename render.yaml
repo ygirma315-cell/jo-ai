@@ -20,6 +20,9 @@ services:
         value: deepseek-ai/deepseek-v3.2
       - key: KIMI_MODEL
         value: moonshotai/kimi-k2.5
+      # Manual check: keep this aligned with the final GitHub Pages URL for ygirma315-cell/jo-ai.
+      - key: MINIAPP_URL
+        value: https://ygirma315-cell.github.io/jo-ai/
       - key: BOT_TOKEN
         sync: false
       - key: NVIDIA_API_KEY

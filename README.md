@@ -1,153 +1,192 @@
-# JO AI Telegram Bot
+# JO AI
 
-This repository now uses one deployment path:
+Single production repository: `ygirma315-cell/jo-ai`
 
-- GitHub repo: `ygirma315-cell/jo-ai`
-- Production branch: `main`
-- Hosting: one Render web service
-- Frontend: served by FastAPI at `/miniapp/`
-- Backend API: served by FastAPI at `/api/*`
-- Telegram bot: webhook-based, handled by the same FastAPI service
+This repo now uses one codebase with two frontends and one shared backend:
 
-## What Was Removed
+- Telegram bot frontend: chat commands, menus, callbacks, and Telegram-side responses in `bot/`
+- Telegram mini app frontend: static HTML/CSS/JS in `miniapp/`
+- Shared backend/API: FastAPI app in `main.py`, used by both the bot and the mini app
 
-- No separate Render worker
-- No polling runtime
-- No separate `miniapp/server.py`
-- No separate `run_bot.py`
-- No GitHub Pages dependency for the mini app
+## Hosting Model
 
-## Project Structure
+- GitHub Pages hosts the static mini app from `miniapp/`
+- Render hosts the FastAPI backend/API
+- Render also runs the Telegram bot webhook runtime
 
-- `main.py`: FastAPI app, mini-app hosting, health endpoints, Telegram webhook
-- `bot/`: Telegram bot handlers, services, config, logging
-- `miniapp/`: frontend assets served by FastAPI
-- `render.yaml`: single Render blueprint
+Expected production URLs:
 
-## Required Environment Variables
+- GitHub Pages mini app: `https://ygirma315-cell.github.io/jo-ai/`
+- Render backend/API: `https://jo-ai.onrender.com` if the Render service keeps the `jo-ai` hostname
 
-Copy `.env.example` to `.env` for local work.
+If your actual Render hostname differs, update `miniapp/config.js`.
+
+## Repository Structure
+
+- `main.py`: shared FastAPI backend, health endpoints, API routes, Telegram webhook
+- `bot/`: Telegram bot frontend logic, handlers, keyboards, services, config
+- `miniapp/`: static web frontend for Telegram Mini App / browser use
+- `scripts/`: safe local helper scripts for validation, mini app serving, and deploy prep
+- `.vscode/`: VS Code tasks, launch config, and workspace recommendations
+- `.github/workflows/ci.yml`: smoke check for Python app
+- `.github/workflows/pages.yml`: deploys `miniapp/` to GitHub Pages
+- `render.yaml`: Render web service blueprint for backend + bot runtime
+
+## What Changed
+
+- Render no longer serves the mini app files directly
+- The backend root no longer redirects to `/miniapp/`
+- The bot now defaults to the GitHub Pages mini app URL instead of the Render URL
+- The bot still appends the Render backend URL to the mini app as `?api_base=...`
+- `miniapp/config.js` provides the public backend base for direct browser visits to GitHub Pages
+- GitHub Actions now deploys `miniapp/` to GitHub Pages from this same repo
+
+## Local Development
+
+1. Install dependencies:
+
+```bash
+pip install -r requirements.txt
+```
+
+2. Copy `.env.example` to `.env` and fill in the required secrets:
+
+- `BOT_TOKEN`
+- `NVIDIA_API_KEY`
+
+3. Run the backend/API:
+
+```bash
+python main.py
+```
+
+4. Serve the static mini app locally from `miniapp/`:
+
+```bash
+python scripts/serve_miniapp.py
+```
+
+Local URLs:
+
+- Backend/API: `http://127.0.0.1:8000`
+- Mini app: `http://127.0.0.1:5500`
+- Health: `http://127.0.0.1:8000/api/health`
+
+For local mini app testing, either:
+
+- keep `miniapp/config.js` pointed at `http://127.0.0.1:8000`, or
+- open the page with `?api_base=http://127.0.0.1:8000`
+
+## Safe Automation
+
+VS Code workspace automation:
+
+- Task: `JO AI: Validate Local Setup`
+- Task: `JO AI: Validate Deployment Config`
+- Task: `JO AI: Run Backend`
+- Task: `JO AI: Serve Mini App`
+- Task: `JO AI: Prepare Deploy`
+- Launch config: `JO AI: Debug Backend`
+- Launch config: `JO AI: Debug Setup Validation`
+
+Helper scripts:
+
+- `python scripts/validate_setup.py`: checks local env, repo structure, Pages workflow, and URL config
+- `python scripts/validate_setup.py --deployment --skip-env`: checks deployment-facing config without requiring local secrets
+- `python scripts/serve_miniapp.py`: serves the static mini app on `http://127.0.0.1:5500`
+- `python scripts/prepare_deploy.py`: runs deploy-safe validation, compile checks, imports the app, then shows git status
+
+These tools do not push commits or sync branches. You still review changes yourself before committing or pushing.
+
+## Environment Variables
 
 Required:
 
 - `BOT_TOKEN`
 - `NVIDIA_API_KEY`
 
-Optional but recommended:
+Optional:
 
 - `DEEPSEEK_API_KEY`
 - `KIMI_API_KEY`
-- `NVIDIA_CHAT_MODEL`
-- `IMAGE_MODEL`
-- `DEEPSEEK_MODEL`
-- `KIMI_MODEL`
 - `PUBLIC_BASE_URL`
+- `MINIAPP_URL`
+- `MINIAPP_API_BASE`
+- `ALLOWED_ORIGINS`
+- `TELEGRAM_WEBHOOK_URL`
 - `TELEGRAM_WEBHOOK_SECRET`
 
-Notes:
+Defaults:
 
-- On Render, the app can use `RENDER_EXTERNAL_URL` automatically.
-- `PUBLIC_BASE_URL` is only needed when you want to force a custom public base URL.
-- The old `MINIAPP_URL` and `MINIAPP_API_BASE` flow is obsolete.
-
-## Local Development
-
-Install dependencies:
-
-```bash
-pip install -r requirements.txt
-```
-
-Run the app:
-
-```bash
-python main.py
-```
-
-Local URLs:
-
-- Mini app: `http://127.0.0.1:8000/miniapp/`
-- Health: `http://127.0.0.1:8000/health`
-- Runtime info: `http://127.0.0.1:8000/api/runtime-info`
+- `MINIAPP_URL` defaults to `https://ygirma315-cell.github.io/jo-ai/`
+- `MINIAPP_API_BASE` defaults to Render's public backend URL when available
 
 Important:
 
-- Telegram bot updates only work when the webhook URL is publicly reachable.
-- For local Telegram testing, use a tunnel and set `PUBLIC_BASE_URL` or `TELEGRAM_WEBHOOK_URL`.
+- If your local `.env` still contains a `MINIAPP_URL` from the old `my-miniapp` repo, remove it or replace it with the `jo-ai` GitHub Pages URL.
 
-## Production Deploy Flow
+## Deployments
 
-1. Push changes to `main` on GitHub.
-2. Render detects the push from `render.yaml`.
-3. Render redeploys the single web service automatically.
-4. The new service starts `uvicorn main:app`.
-5. On startup, the app:
-   - validates environment variables
-   - creates the Telegram bot runtime
-   - serves the mini app from `/miniapp/`
-   - reconfigures the Telegram webhook
-   - reconfigures the Telegram menu button
-6. The bot restarts as part of the Render redeploy.
+### Render
 
-## One-Time Render Setup
+Render deploys the shared backend and Telegram bot runtime from `render.yaml`.
 
-In Render:
+The Render service should:
 
-1. Open the service connected to this repo.
-2. Make sure it is a `Web Service`, not a `Worker`.
-3. Make sure the repo is `ygirma315-cell/jo-ai`.
-4. Make sure the branch is `main`.
-5. Confirm the service uses `render.yaml`.
-6. Delete the old worker service if it still exists.
-7. Set the required environment variables.
-8. Leave auto-deploy enabled for pushes to `main`.
+- run `uvicorn main:app --host 0.0.0.0 --port $PORT`
+- expose the API and health routes
+- receive Telegram webhooks at `/telegram/webhook`
+- not serve the static mini app
 
-Recommended health check:
+### GitHub Pages
 
-- `/health`
+GitHub Pages deploys the `miniapp/` folder using `.github/workflows/pages.yml`.
 
-## One-Time Telegram Cleanup
+The workflow:
 
-The bot should now open the mini app from the same Render service.
+- runs on pushes to `main` when `miniapp/` changes
+- uploads `miniapp/` as the Pages artifact
+- deploys the static site to `https://ygirma315-cell.github.io/jo-ai/`
 
-If you previously used GitHub Pages for the mini app:
+## Update Flow
 
-1. Remove the old `MINIAPP_URL` value from Render if it points to GitHub Pages.
-2. Redeploy the Render web service.
-3. Open the bot and verify the menu button opens the Render-hosted mini app.
+When you push to `main`:
 
-## VS Code Git Workflow
+- Render redeploys the backend/API + bot runtime
+- GitHub Pages redeploys the static mini app if `miniapp/` changed
 
-Recommended approach:
+That keeps one repo while separating responsibilities cleanly:
 
-1. Open the Source Control panel.
-2. Review changed files.
-3. Stage the files you want.
-4. Write a commit message in the Source Control input.
-5. If GitHub Copilot is installed, use commit message generation as a suggestion only.
-6. Click `Commit`.
-7. Click `Sync Changes`.
-8. Confirm the sync when VS Code asks.
+- bot + API uptime concerns stay on Render
+- mini app loading stays on GitHub Pages
 
-Safety choices already set in `.vscode/settings.json`:
+## How To Update
 
-- auto-fetch is enabled
-- sync still asks for confirmation
-- smart commit is disabled
+Simple future workflow:
 
-## Health Endpoints
+1. Make code changes in VS Code
+2. Run `JO AI: Validate Local Setup`
+3. If you changed mini app hosting or deployment config, run `JO AI: Validate Deployment Config`
+4. Before committing, run `JO AI: Prepare Deploy`
+5. Review the diff in Source Control
+6. Commit manually
+7. Push manually
+8. Confirm Render and GitHub Pages deployments complete successfully
 
-- `GET /health`
-- `GET /api/health`
-- `GET /uptime`
-- `GET /api/uptime`
-- `GET /runtime-info`
-- `GET /api/runtime-info`
+## Manual Setup Checklist
 
-## CI
+1. In GitHub repo settings, enable Pages with source `GitHub Actions`
+2. Push this repo to `main`
+3. Let `.github/workflows/pages.yml` publish `miniapp/`
+4. Confirm the live Pages URL is `https://ygirma315-cell.github.io/jo-ai/`
+5. Confirm the Render backend public URL
+6. If the Render URL is not `https://jo-ai.onrender.com`, edit `miniapp/config.js`
+7. Redeploy Render if you want `MINIAPP_URL` from `render.yaml` applied to the service environment
+8. Open the Telegram bot and verify the menu button opens the GitHub Pages URL
 
-GitHub Actions now runs a lightweight smoke check on pushes to `main` and on pull requests:
+## Secrets Hygiene
 
-- installs dependencies
-- compiles Python sources
-- imports the FastAPI app
+- `.env` is gitignored
+- `.env.example` contains examples only
+- No bot token or provider secret is stored in `miniapp/`
+- `miniapp/config.js` contains only a public backend URL, not a secret
