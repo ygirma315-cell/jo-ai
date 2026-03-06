@@ -14,20 +14,6 @@ DEFAULT_DEEPSEEK_MODEL = "deepseek-ai/deepseek-v3.2"
 DEFAULT_KIMI_MODEL = "moonshotai/kimi-k2.5"
 DEFAULT_AI_BASE_URL = "https://integrate.api.nvidia.com/v1"
 DEFAULT_MINIAPP_URL = "https://ygirma315-cell.github.io/jo-ai/"
-LEGACY_MINIAPP_URL_ALIASES = {
-    "https://ygirma315-cell.github.io/my-miniapp": DEFAULT_MINIAPP_URL,
-    "https://ygirma315-cell.github.io/my-miniapp/": DEFAULT_MINIAPP_URL,
-    "https://ygirma315-cell.github.io/jo-ai": DEFAULT_MINIAPP_URL,
-    "https://ygirma315-cell.github.io/jo-ai/index.html": DEFAULT_MINIAPP_URL,
-}
-DEFAULT_LOCAL_ORIGINS = (
-    "http://127.0.0.1:8000",
-    "http://localhost:8000",
-    "http://127.0.0.1:5500",
-    "http://localhost:5500",
-)
-
-
 @dataclass(frozen=True)
 class Settings:
     bot_token: str
@@ -111,17 +97,15 @@ def _normalize_directory_url(value: str | None) -> str | None:
 def _resolve_miniapp_url(raw_value: str | None) -> tuple[str | None, str | None]:
     normalized = _normalize_directory_url(raw_value)
     if not normalized:
-        return None, None
-
-    migrated = LEGACY_MINIAPP_URL_ALIASES.get(normalized)
-    if not migrated:
-        return normalized, None
+        return DEFAULT_MINIAPP_URL, None
+    if normalized == DEFAULT_MINIAPP_URL:
+        return DEFAULT_MINIAPP_URL, None
 
     warning = (
-        f"MINIAPP_URL uses deprecated Pages path {normalized}. "
-        f"Using {migrated} instead."
+        f"MINIAPP_URL must stay pinned to {DEFAULT_MINIAPP_URL}. "
+        f"Ignoring {normalized}."
     )
-    return migrated, warning
+    return DEFAULT_MINIAPP_URL, warning
 
 
 def _origin_from_url(value: str | None) -> str | None:
@@ -165,9 +149,6 @@ def _parse_allowed_origins(
     miniapp_origin = _origin_from_url(miniapp_url)
     if miniapp_origin and miniapp_origin not in defaults:
         defaults.append(miniapp_origin)
-    for origin in DEFAULT_LOCAL_ORIGINS:
-        if origin not in defaults:
-            defaults.append(origin)
     return tuple(defaults)
 
 
@@ -213,7 +194,6 @@ def load_settings() -> Settings:
         or _normalize_public_url(_read_env("MINIAPP_API_BASE"))
     )
     miniapp_url, miniapp_url_warning = _resolve_miniapp_url(_read_env("MINIAPP_URL"))
-    miniapp_url = miniapp_url or DEFAULT_MINIAPP_URL
     miniapp_api_base = _normalize_public_url(_read_env("MINIAPP_API_BASE")) or public_base_url
     telegram_webhook_url = _normalize_public_url(_read_env("TELEGRAM_WEBHOOK_URL")) or _join_public_url(
         public_base_url, "/telegram/webhook"
@@ -236,9 +216,7 @@ def load_settings() -> Settings:
     if miniapp_url_warning:
         validation_warnings.append(miniapp_url_warning)
     if not miniapp_url:
-        validation_warnings.append(
-            "Mini app URL is not configured. Set MINIAPP_URL if the default GitHub Pages URL should be overridden."
-        )
+        validation_errors.append("Mini app URL is missing.")
     if not deepseek_api_key:
         validation_warnings.append("DEEPSEEK_API_KEY is missing. DeepSeek profile requests will fail until it is set.")
     if not kimi_api_key:

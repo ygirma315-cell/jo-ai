@@ -275,6 +275,7 @@
       uploadInfo: byId("uploadInfo"),
       sendBtn: byId("sendBtn"),
       clearBtn: byId("clearBtn"),
+      pastChatsBtn: byId("pastChatsBtn"),
       copyBtn: byId("copyBtn"),
       downloadImageBtn: byId("downloadImageBtn"),
       loadingHint: byId("loadingHint"),
@@ -287,6 +288,8 @@
       versionBadge: byId("versionBadge"),
       updatesModal: byId("updatesModal"),
       updatesClose: byId("updatesClose"),
+      comingSoonModal: byId("comingSoonModal"),
+      comingSoonClose: byId("comingSoonClose"),
       toast: byId("toast"),
     };
   }
@@ -424,6 +427,44 @@
       document.body.appendChild(modal);
     }
 
+    if (!byId("comingSoonModal")) {
+      const modal = document.createElement("div");
+      modal.id = "comingSoonModal";
+      modal.className = "updates-modal";
+
+      const card = document.createElement("section");
+      card.className = "updates-card";
+
+      const head = document.createElement("div");
+      head.className = "panel-head";
+
+      const copy = document.createElement("div");
+      const eyebrow = document.createElement("p");
+      eyebrow.className = "section-kicker";
+      eyebrow.textContent = "PAST CHATS";
+      const title = document.createElement("h2");
+      title.textContent = "Coming soon";
+      copy.appendChild(eyebrow);
+      copy.appendChild(title);
+
+      const close = document.createElement("button");
+      close.id = "comingSoonClose";
+      close.type = "button";
+      close.className = "btn small";
+      close.textContent = "Close";
+
+      const note = document.createElement("p");
+      note.className = "hint";
+      note.textContent = "Past chats here. Coming soon.";
+
+      head.appendChild(copy);
+      head.appendChild(close);
+      card.appendChild(head);
+      card.appendChild(note);
+      modal.appendChild(card);
+      document.body.appendChild(modal);
+    }
+
     if (!byId("toast")) {
       const toast = document.createElement("div");
       toast.id = "toast";
@@ -442,6 +483,9 @@
     if (elements.updatesClose) {
       elements.updatesClose.addEventListener("click", closeUpdatesModal);
     }
+    if (elements.comingSoonClose) {
+      elements.comingSoonClose.addEventListener("click", closeComingSoonModal);
+    }
     if (elements.updatesModal) {
       elements.updatesModal.addEventListener("click", (event) => {
         if (event.target === elements.updatesModal) {
@@ -449,9 +493,17 @@
         }
       });
     }
+    if (elements.comingSoonModal) {
+      elements.comingSoonModal.addEventListener("click", (event) => {
+        if (event.target === elements.comingSoonModal) {
+          closeComingSoonModal();
+        }
+      });
+    }
     document.addEventListener("keydown", (event) => {
       if (event.key === "Escape") {
         closeUpdatesModal();
+        closeComingSoonModal();
       }
     });
   }
@@ -465,6 +517,18 @@
   function closeUpdatesModal() {
     if (elements.updatesModal) {
       elements.updatesModal.classList.remove("open");
+    }
+  }
+
+  function openComingSoonModal() {
+    if (elements.comingSoonModal) {
+      elements.comingSoonModal.classList.add("open");
+    }
+  }
+
+  function closeComingSoonModal() {
+    if (elements.comingSoonModal) {
+      elements.comingSoonModal.classList.remove("open");
     }
   }
 
@@ -1047,19 +1111,11 @@
     }
   }
 
-  function isLocalHost() {
-    const hostname = String(window.location.hostname || "").toLowerCase();
-    return hostname === "127.0.0.1" || hostname === "localhost";
-  }
-
   function shouldTrySameOriginApi() {
     if (!window.location.protocol.startsWith("http")) {
       return false;
     }
-    if (window.JO_USE_SAME_ORIGIN_API === true) {
-      return true;
-    }
-    return /^https?:\/\/(?:127\.0\.0\.1|localhost):8000$/i.test(window.location.origin);
+    return window.JO_USE_SAME_ORIGIN_API === true;
   }
 
   function buildApiBaseCandidates() {
@@ -1077,8 +1133,6 @@
       explicitBase,
       storedBase,
       sameOriginBase,
-      isLocalHost() ? normalizeBase("http://127.0.0.1:8000") : "",
-      isLocalHost() ? normalizeBase("http://localhost:8000") : "",
     ]);
   }
 
@@ -1463,6 +1517,10 @@
     }
 
     pushHistory(buildUserEntry(payload));
+    if (elements.aiInput) {
+      elements.aiInput.value = "";
+      elements.aiInput.focus();
+    }
     insertPendingMessage();
     setBusy(true);
 
@@ -1552,6 +1610,9 @@
           showToast(error instanceof Error ? error.message : "Copy failed.", "error");
         }
       });
+    }
+    if (elements.pastChatsBtn) {
+      elements.pastChatsBtn.addEventListener("click", openComingSoonModal);
     }
     if (elements.downloadImageBtn) {
       elements.downloadImageBtn.addEventListener("click", saveLatestImage);

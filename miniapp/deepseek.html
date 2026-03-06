@@ -104,8 +104,8 @@
             <textarea id="aiInput" class="prompt-input" rows="8" placeholder="Ask for comparison, reasoning, tradeoffs, or a more structured decision."></textarea>
 
             <div class="actions">
-              <button id="sendBtn" class="btn primary" type="submit">Generate</button>
-              <button id="clearBtn" class="btn" type="button">Clear history</button>
+              <button id="sendBtn" class="btn primary" type="submit">Send</button>
+              <button id="clearBtn" class="btn" type="button">New chat</button>
             </div>
             <p id="loadingHint" class="hint">Ready when you are.</p>
           </form>
@@ -118,6 +118,7 @@
               <h2 id="historyTitle">Analysis thread</h2>
             </div>
             <div class="response-controls">
+              <button id="pastChatsBtn" class="btn small" type="button">Past chats here</button>
               <span id="apiState" class="chip muted">idle</span>
               <button id="copyBtn" class="btn small" type="button">Copy last</button>
               <button id="downloadImageBtn" class="btn small" type="button" disabled>Save image</button>

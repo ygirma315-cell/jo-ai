@@ -415,14 +415,88 @@ textarea {
   margin-top: 18px;
 }
 
+.tool-page .shell {
+  display: flex;
+  flex-direction: column;
+  min-height: calc(100% - 48px);
+}
+
+.tool-page .tool-layout {
+  flex: 1;
+  min-height: 0;
+  flex-direction: column;
+  gap: 12px;
+}
+
 .prompt-card {
   flex: 0 0 36%;
   min-width: 300px;
 }
 
+.tool-page .prompt-card {
+  order: 2;
+  position: sticky;
+  bottom: max(12px, env(safe-area-inset-bottom));
+  z-index: 12;
+  min-width: 0;
+  padding: 14px;
+  background: rgba(255, 255, 255, 0.96);
+}
+
+.tool-page .prompt-card .section-kicker,
+.tool-page .example-line {
+  display: none;
+}
+
+.tool-page .prompt-card .panel-head {
+  align-items: center;
+  margin-bottom: 6px;
+}
+
+.tool-page .prompt-card h2 {
+  font-size: 16px;
+}
+
+.tool-page .field-stack {
+  gap: 10px;
+}
+
+.tool-page .prompt-input {
+  min-height: 96px;
+  max-height: 180px;
+}
+
+.tool-page[data-tool="code"] .prompt-input {
+  min-height: 150px;
+  max-height: 280px;
+}
+
+.tool-page .actions {
+  justify-content: flex-end;
+}
+
 .conversation-card {
   flex: 1;
   min-width: 0;
+}
+
+.tool-page .conversation-card {
+  order: 1;
+  display: flex;
+  flex-direction: column;
+  flex: 1;
+  min-height: 0;
+}
+
+.tool-page .conversation-card .panel-head {
+  align-items: center;
+  padding-bottom: 10px;
+  border-bottom: 1px solid rgba(88, 109, 127, 0.12);
+}
+
+.tool-page .response-controls {
+  justify-content: flex-end;
+  align-items: center;
 }
 
 .field-stack {
@@ -554,6 +628,14 @@ select:focus {
   padding-right: 6px;
 }
 
+.tool-page .conversation-list {
+  flex: 1;
+  min-height: 0;
+  max-height: none;
+  padding-right: 2px;
+  padding-bottom: 8px;
+}
+
 .empty-state {
   display: grid;
   place-items: center;
@@ -573,6 +655,14 @@ select:focus {
   padding: 16px;
   border-radius: 20px;
   border: 1px solid transparent;
+}
+
+.tool-page .message.user {
+  max-width: min(82%, 620px);
+}
+
+.tool-page .message.assistant {
+  max-width: min(88%, 760px);
 }
 
 .message.user {
@@ -819,6 +909,10 @@ select:focus {
   display: none;
 }
 
+.tool-page .footer-links {
+  display: none;
+}
+
 .tool-page .tool-hero,
 body[data-page="help"] .tool-hero,
 .tool-page .footer-links a[href="index.html"] {
@@ -993,6 +1087,15 @@ body[data-page="help"] .page-title::before {
   .tool-grid {
     grid-template-columns: repeat(2, minmax(0, 1fr));
     gap: 10px;
+  }
+
+  .tool-page .prompt-card {
+    bottom: max(8px, env(safe-area-inset-bottom));
+    padding: 12px;
+  }
+
+  .tool-page .prompt-input {
+    min-height: 84px;
   }
 
   .secondary-grid {
