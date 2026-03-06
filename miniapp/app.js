@@ -4,6 +4,7 @@
 
   const tg = window.Telegram && window.Telegram.WebApp ? window.Telegram.WebApp : null;
   const API_BASE_STORAGE_KEY = "jo_api_base";
+  const FRONTEND_VERSION = "v1.0.1";
 
   const elements = {
     welcomeOverlay: document.getElementById("welcomeOverlay"),
@@ -166,7 +167,7 @@
     }
     const safeVersion = String(version || "").trim();
     if (!safeVersion) {
-      elements.versionBadge.textContent = "Version: unknown";
+      elements.versionBadge.textContent = `Version: ${FRONTEND_VERSION}`;
       return;
     }
     elements.versionBadge.textContent = `Version: ${safeVersion}`;
@@ -212,11 +213,9 @@
 
   function formatModelLabel(key) {
     const labels = {
-      chat: "Chat",
-      code: "Code",
-      image: "Image",
+      chat: "JO AI Chat",
+      code: "Code Generator",
       deepseek: "DeepSeek",
-      kimi: "Kimi",
     };
     return labels[key] || key;
   }
@@ -234,8 +233,10 @@
     }
 
     const rows = [];
+    rows.push(["Mini App Version", FRONTEND_VERSION]);
+
     if (state.runtimeInfo.version) {
-      rows.push(["Version", state.runtimeInfo.version]);
+      rows.push(["Backend Version", state.runtimeInfo.version]);
     }
 
     if (state.runtimeInfo.deploy && state.runtimeInfo.deploy.branch) {
@@ -255,16 +256,10 @@
       rows.push(["Public URL", state.runtimeInfo.service.public_base_url]);
     }
 
-    const orderedKeys = ["chat", "code", "image", "deepseek", "kimi"];
+    const orderedKeys = ["chat", "code", "deepseek"];
     for (const key of orderedKeys) {
       if (state.runtimeInfo.models[key]) {
         rows.push([formatModelLabel(key), state.runtimeInfo.models[key]]);
-      }
-    }
-
-    for (const [key, value] of Object.entries(state.runtimeInfo.models)) {
-      if (!orderedKeys.includes(key)) {
-        rows.push([formatModelLabel(key), value]);
       }
     }
 
@@ -303,9 +298,7 @@
       return;
     }
     state.runtimeInfo = info;
-    if (info.version) {
-      setVersionBadge(info.version);
-    }
+    setVersionBadge(FRONTEND_VERSION);
     renderRuntimeInfo();
   }
 
@@ -1396,6 +1389,7 @@
     showPanel("ai");
     clearOutput();
     hideImage();
+    setVersionBadge(FRONTEND_VERSION);
     setApiState("idle", "muted");
     await resolveApiBase();
   }
