@@ -104,26 +104,9 @@ textarea {
   padding: 24px;
 }
 
-.startup-banner {
-  position: fixed;
-  top: 10px;
-  left: 10px;
-  z-index: 110;
-  display: grid;
-  gap: 2px;
-  padding: 8px 10px;
-  border-radius: 12px;
-  background: rgba(17, 24, 39, 0.88);
-  color: #f8fafc;
-  font-size: 11px;
-  line-height: 1.35;
-  box-shadow: 0 10px 24px rgba(15, 23, 42, 0.18);
-  pointer-events: none;
-}
-
 .app-fallback {
   position: fixed;
-  inset: 70px 12px 12px;
+  inset: 16px 12px 12px;
   z-index: 120;
   display: grid;
   align-content: start;

@@ -35,15 +35,7 @@
   }
 
   function updateBanner() {
-    const telegram = byId("startupTelegramStatus");
-    if (telegram) {
-      telegram.textContent = `Telegram detected: ${state.telegramDetected ? "yes" : "no"}`;
-    }
-
-    const root = byId("startupRootStatus");
-    if (root) {
-      root.textContent = `Root mounted: ${state.rootMounted ? "yes" : "no"}`;
-    }
+    // Production keeps startup state in memory and console logs only.
   }
 
   function setRootMounted(value) {
@@ -124,10 +116,14 @@
     }
   }
 
-  function initDebugUi() {
+  function initMiniAppShell() {
     applyTheme();
     safeTelegramInit();
-    setRootMounted(Boolean(document.querySelector("#appRoot, #app, #root, .page-shell")));
+    const hasRoot = Boolean(document.querySelector("#appRoot, #app, #root, .page-shell"));
+    setRootMounted(hasRoot);
+    if (!hasRoot) {
+      showFallback("Mini App container is missing.");
+    }
   }
 
   state.updateBanner = updateBanner;
@@ -146,5 +142,5 @@
     reportError("window.onunhandledrejection", event.reason || "Unhandled promise rejection.");
   });
 
-  document.addEventListener("DOMContentLoaded", initDebugUi);
+  document.addEventListener("DOMContentLoaded", initMiniAppShell);
 })();

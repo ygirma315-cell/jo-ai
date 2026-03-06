@@ -3,6 +3,7 @@ from __future__ import annotations
 from aiogram.types import InlineKeyboardMarkup, KeyboardButton, ReplyKeyboardMarkup, WebAppInfo
 from aiogram.utils.keyboard import InlineKeyboardBuilder
 
+from bot.config import DEFAULT_MINIAPP_URL
 from bot.constants import (
     MENU_AI_CODE,
     MENU_AI_CHAT,
@@ -22,9 +23,8 @@ from bot.constants import (
 
 
 def main_menu_keyboard(miniapp_url: str | None = None) -> ReplyKeyboardMarkup:
-    rows = []
-    if miniapp_url:
-        rows.append([KeyboardButton(text="Open App", web_app=WebAppInfo(url=miniapp_url))])
+    _ = miniapp_url
+    rows = [[KeyboardButton(text="Open App", web_app=WebAppInfo(url=DEFAULT_MINIAPP_URL))]]
 
     rows.extend([
         [KeyboardButton(text=MENU_AI_TOOLS), KeyboardButton(text=MENU_UTILITIES)],

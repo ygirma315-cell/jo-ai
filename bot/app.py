@@ -4,7 +4,6 @@ import asyncio
 import logging
 import os
 from dataclasses import dataclass, field
-from urllib.parse import urlparse, urlunparse
 
 from aiogram import Bot, Dispatcher
 from aiogram.client.default import DefaultBotProperties
@@ -14,7 +13,7 @@ from aiogram.exceptions import TelegramBadRequest, TelegramForbiddenError, Teleg
 from aiogram.types import MenuButtonCommands, MenuButtonWebApp, Update, WebAppInfo
 from aiohttp import ClientConnectorError
 
-from bot.config import load_settings
+from bot.config import DEFAULT_MINIAPP_URL, load_settings
 from bot.error_handler import register_error_handler
 from bot.handlers.calculator import router as calculator_router
 from bot.handlers.common import router as common_router
@@ -60,19 +59,8 @@ class BotRuntime:
 
 
 def _build_miniapp_url(miniapp_url: str | None, api_base: str | None) -> str | None:
-    _ = api_base
-    if not miniapp_url:
-        return None
-
-    parsed = urlparse(miniapp_url)
-    path = parsed.path
-    if path and path != "/" and not path.endswith("/"):
-        last_segment = path.rsplit("/", maxsplit=1)[-1]
-        if "." not in last_segment:
-            path = f"{path}/"
-
-    rebuilt = parsed._replace(path=path, query="", fragment="")
-    return urlunparse(rebuilt)
+    _ = (miniapp_url, api_base)
+    return DEFAULT_MINIAPP_URL
 
 
 def _env_flag_enabled(name: str) -> bool:
@@ -129,7 +117,7 @@ async def _configure_chat_menu_button(runtime: BotRuntime) -> bool:
             await runtime.bot.set_chat_menu_button(
                 menu_button=MenuButtonWebApp(text="Open", web_app=WebAppInfo(url=resolved_miniapp_url))
             )
-            logger.info("Configured Telegram chat menu button as WebApp 'Open'.")
+            logger.info("Configured Telegram chat menu button as WebApp 'Open' -> %s", resolved_miniapp_url)
         else:
             await runtime.bot.set_chat_menu_button(menu_button=MenuButtonCommands())
             logger.info("Configured Telegram chat menu button as command list.")
