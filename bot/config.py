@@ -17,6 +17,8 @@ DEFAULT_MINIAPP_URL = "https://ygirma315-cell.github.io/jo-ai/"
 LEGACY_MINIAPP_URL_ALIASES = {
     "https://ygirma315-cell.github.io/my-miniapp": DEFAULT_MINIAPP_URL,
     "https://ygirma315-cell.github.io/my-miniapp/": DEFAULT_MINIAPP_URL,
+    "https://ygirma315-cell.github.io/jo-ai": DEFAULT_MINIAPP_URL,
+    "https://ygirma315-cell.github.io/jo-ai/index.html": DEFAULT_MINIAPP_URL,
 }
 DEFAULT_LOCAL_ORIGINS = (
     "http://127.0.0.1:8000",

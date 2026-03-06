@@ -7,6 +7,14 @@
   <meta http-equiv="Pragma" content="no-cache">
   <meta http-equiv="Expires" content="0">
   <title>JO AI Chat Bot</title>
+  <script>
+    if (window.location.hostname === "ygirma315-cell.github.io") {
+      const base = document.createElement("base");
+      base.href = "https://ygirma315-cell.github.io/jo-ai/";
+      document.head.appendChild(base);
+    }
+  </script>
+  <link rel="canonical" href="https://ygirma315-cell.github.io/jo-ai/">
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
   <link
@@ -21,17 +29,18 @@
 <body data-page="home">
   <div id="welcomeOverlay" class="welcome-overlay">
     <section class="welcome-card">
+      <div class="welcome-icon" aria-hidden="true">&#128065;</div>
       <p class="welcome-tag">JO AI CHAT BOT</p>
       <h1>Free, fast, flexible AI tools.</h1>
       <p id="welcomeMessage">
-        Clean chat, code, research, prompt, image, and vision tools inside one polished mini app.
+        A smooth mini app for quick answers, sharp prompts, clean code help, and easy image workflows.
       </p>
       <div class="welcome-points">
-        <span>Free</span>
-        <span>Fast</span>
-        <span>Flexible</span>
+        <span>&#10024; Free</span>
+        <span>&#9889; Fast</span>
+        <span>&#129504; Flexible</span>
       </div>
-      <button id="openAppBtn" class="btn primary wide" type="button">Enter JO AI</button>
+      <button id="openAppBtn" class="btn primary wide" type="button">&#128640; Open App</button>
     </section>
   </div>
 
@@ -40,8 +49,8 @@
       <header class="site-header">
         <div>
           <p class="eyebrow">JO AI CHAT BOT</p>
-          <h2 class="page-title">Choose your AI workspace.</h2>
-          <p class="subtitle">A clean model menu built for quick switching and focused pages.</p>
+          <h1 class="page-title">Choose your AI workspace.</h1>
+          <p class="subtitle">Open the exact tool you want from one clean, compact menu.</p>
         </div>
         <div class="status-cluster">
           <span id="status" class="chip">Checking studio...</span>
@@ -52,24 +61,24 @@
       <section class="hero-card card hero-split">
         <div class="hero-copy">
           <p class="section-kicker">WELCOME</p>
-          <h1>JO AI tools, organized for real use.</h1>
+          <h2>Vibey AI tools, ready in one tap.</h2>
           <p>
-            Open a dedicated page for the exact tool you want and keep the experience focused, modern,
-            and easy to navigate.
+            Start with chat or jump straight into a dedicated page for code, research, prompts, images,
+            or vision.
           </p>
           <div class="hero-actions">
-            <a class="btn primary" href="chat.html">🤖 Start with Chat</a>
-            <a class="btn" href="help.html">🛟 Open Help</a>
+            <a class="btn primary" href="chat.html">&#129302; Start with Chat</a>
+            <a class="btn" href="help.html">&#10067; Help</a>
           </div>
         </div>
         <div class="hero-stack">
           <div class="hero-stat">
             <strong>7</strong>
-            <span>AI tools</span>
+            <span>focused pages</span>
           </div>
           <div class="hero-stat">
             <strong>1</strong>
-            <span>clean menu</span>
+            <span>clean home</span>
           </div>
           <div class="hero-stat">
             <strong>0</strong>
@@ -83,49 +92,49 @@
           <div>
             <p class="section-kicker">MODEL MENU</p>
             <h2>Pick a focused page</h2>
-            <p class="hint">Each tool opens on its own page with examples, input space, and clean output.</p>
+            <p class="hint">Each tool opens on its own page with a prompt area, live history, and clean output.</p>
           </div>
         </div>
 
         <div class="tool-grid">
           <a class="tool-card" href="chat.html">
-            <span class="tool-emoji">🤖</span>
+            <span class="tool-emoji">&#129302;</span>
             <h3>JO AI Chat</h3>
             <p>General chat for quick questions, writing help, and everyday answers.</p>
             <span class="tool-link">Open page</span>
           </a>
           <a class="tool-card" href="code.html">
-            <span class="tool-emoji">💻</span>
+            <span class="tool-emoji">&#128187;</span>
             <h3>Code Generator</h3>
             <p>Build snippets, explain logic, and work through longer technical prompts.</p>
             <span class="tool-link">Open page</span>
           </a>
           <a class="tool-card" href="deepseek.html">
-            <span class="tool-emoji">🧠</span>
+            <span class="tool-emoji">&#129504;</span>
             <h3>Deep Analysis</h3>
             <p>Use a sharper reasoning flow for more structured and thoughtful answers.</p>
             <span class="tool-link">Open page</span>
           </a>
           <a class="tool-card" href="research.html">
-            <span class="tool-emoji">📚</span>
+            <span class="tool-emoji">&#128218;</span>
             <h3>Research</h3>
             <p>Ask for detailed breakdowns, tradeoffs, summaries, and next steps.</p>
             <span class="tool-link">Open page</span>
           </a>
           <a class="tool-card" href="prompt.html">
-            <span class="tool-emoji">✍️</span>
+            <span class="tool-emoji">&#9997;&#65039;</span>
             <h3>Prompt Builder</h3>
             <p>Create cleaner prompts for coding, writing, lessons, marketing, and more.</p>
             <span class="tool-link">Open page</span>
           </a>
           <a class="tool-card" href="image.html">
-            <span class="tool-emoji">🎨</span>
+            <span class="tool-emoji">&#127912;</span>
             <h3>Image Generator</h3>
             <p>Describe visuals, choose a style, and keep image output easy to save.</p>
             <span class="tool-link">Open page</span>
           </a>
           <a class="tool-card" href="kimi.html">
-            <span class="tool-emoji">🖼️</span>
+            <span class="tool-emoji">&#128444;&#65039;</span>
             <h3>Kimi Vision</h3>
             <p>Upload an image and ask for a clean explanation of what it contains.</p>
             <span class="tool-link">Open page</span>

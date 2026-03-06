@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from aiogram.types import InlineKeyboardMarkup, KeyboardButton, ReplyKeyboardMarkup
+from aiogram.types import InlineKeyboardMarkup, KeyboardButton, ReplyKeyboardMarkup, WebAppInfo
 from aiogram.utils.keyboard import InlineKeyboardBuilder
 
 from bot.constants import (
@@ -22,12 +22,15 @@ from bot.constants import (
 
 
 def main_menu_keyboard(miniapp_url: str | None = None) -> ReplyKeyboardMarkup:
-    _ = miniapp_url
-    rows = [
+    rows = []
+    if miniapp_url:
+        rows.append([KeyboardButton(text="Open App", web_app=WebAppInfo(url=miniapp_url))])
+
+    rows.extend([
         [KeyboardButton(text=MENU_AI_TOOLS), KeyboardButton(text=MENU_UTILITIES)],
         [KeyboardButton(text=MENU_HELP), KeyboardButton(text=MENU_VERSION_MODELS)],
         [KeyboardButton(text=MENU_CANCEL)],
-    ]
+    ])
 
     return ReplyKeyboardMarkup(
         keyboard=rows,

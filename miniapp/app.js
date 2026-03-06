@@ -5,7 +5,8 @@
   const API_BASE_STORAGE_KEY = "jo_api_base";
   const HOME_ENTRY_STORAGE_KEY = "jo_home_entered";
   const HISTORY_PREFIX = "jo_history_";
-  const FRONTEND_VERSION = "v1.2.0";
+  const FRONTEND_VERSION = "v1.2.1";
+  const SITE_BASE_URL = "https://ygirma315-cell.github.io/jo-ai/";
   const MAX_HISTORY_ITEMS = 18;
   const MAX_UPLOAD_BYTES = 8 * 1024 * 1024;
 
@@ -17,6 +18,15 @@
   ];
 
   const updates = [
+    {
+      version: "v1.2.1",
+      title: "Telegram launch fix and cleaner layout",
+      items: [
+        "Telegram Open App paths now use the exact JO AI GitHub Pages URL",
+        "Homepage grid is tighter and more responsive on Telegram-sized screens",
+        "Tool pages open with less clutter and clearer back navigation",
+      ],
+    },
     {
       version: "v1.2.0",
       title: "Multi-page JO AI refresh",
@@ -40,7 +50,7 @@
   const toolConfig = {
     chat: {
       title: "JO AI Chat",
-      description: "Fast, general-purpose chat for everyday requests.",
+      description: "Fast chat for questions, ideas, and everyday help.",
       lead: "Ask clearly, keep the thread clean, and copy the last reply in one click.",
       example: "Explain recursion like I am new to programming.",
       label: "Message",
@@ -50,7 +60,7 @@
     },
     code: {
       title: "Code Generator",
-      description: "Longer prompts, clearer code output, and a roomier workspace.",
+      description: "A roomier page for longer prompts and cleaner code answers.",
       lead: "Use a taller input area, paste detailed requirements, and review code comfortably.",
       example: "Create a Python function that validates emails and returns clear error messages.",
       label: "Code request",
@@ -60,7 +70,7 @@
     },
     deepseek: {
       title: "Deep Analysis",
-      description: "Structured reasoning with clearer summaries, analysis, and final answers.",
+      description: "Structured thinking for comparisons, decisions, and deeper answers.",
       lead: "Use this when you want a more deliberate breakdown instead of a quick reply.",
       example: "Compare SQL and NoSQL for a fast-growing product and explain the tradeoffs.",
       label: "Deep analysis request",
@@ -70,7 +80,7 @@
     },
     research: {
       title: "Research",
-      description: "Ask for summaries, details, risks, and next steps on one page.",
+      description: "Focused breakdowns, summaries, tradeoffs, and next steps.",
       lead: "Use this page for detailed explanations, practical context, and next-step guidance.",
       example: "Explain the pros and cons of remote teams for a startup and suggest best practices.",
       label: "Research question",
@@ -80,7 +90,7 @@
     },
     prompt: {
       title: "Prompt Builder",
-      description: "Create clearer prompts with a focused page and a clean response thread.",
+      description: "Build a stronger prompt without extra clutter.",
       lead: "Choose a prompt type, describe your goal, and keep the final output easy to copy.",
       example: "Create a concise onboarding prompt for a customer support assistant.",
       label: "Prompt details",
@@ -92,7 +102,7 @@
     },
     image: {
       title: "Image Generator",
-      description: "Describe the visual, pick a style, and keep the result easy to save.",
+      description: "Describe the look, choose a style, and save the latest image.",
       lead: "Set the style, describe the scene, and save the latest image with one click.",
       example: "A cinematic night city street with rain reflections and soft neon lighting.",
       label: "Image description",
@@ -105,7 +115,7 @@
     },
     kimi: {
       title: "Kimi Vision",
-      description: "Upload an image and ask for a clean description in a friendlier workspace.",
+      description: "Upload an image and ask for a clear read of what it shows.",
       lead: "Use the upload area, preview the image, and keep each response in a clean history.",
       example: "Describe the image and point out the main objects and the setting.",
       label: "Image request",
@@ -147,6 +157,51 @@
 
   function currentTool() {
     return toolConfig[getToolId()] || null;
+  }
+
+  function normalizeHostedHomeUrl() {
+    if (getPage() !== "home") {
+      return;
+    }
+
+    try {
+      const current = new URL(window.location.href);
+      const normalizedPath = current.pathname.replace(/\/+$/, "");
+      if (current.hostname !== "ygirma315-cell.github.io") {
+        return;
+      }
+      if (normalizedPath !== "/jo-ai" && normalizedPath !== "/jo-ai/index.html") {
+        return;
+      }
+
+      const next = new URL(SITE_BASE_URL);
+      next.search = current.search;
+      next.hash = current.hash;
+      if (current.href !== next.href) {
+        window.history.replaceState(null, "", next.toString());
+      }
+    } catch (_error) {
+      // ignore URL parsing failures
+    }
+  }
+
+  function polishStaticUi() {
+    document.querySelectorAll(".back-link").forEach((link) => {
+      link.textContent = "Back";
+      link.setAttribute("aria-label", "Back");
+    });
+
+    document.querySelectorAll(".tool-hero").forEach((section) => {
+      section.remove();
+    });
+
+    document.querySelectorAll('.footer-links a[href="help.html"]').forEach((link) => {
+      link.textContent = "Help";
+    });
+
+    document.querySelectorAll('.footer-links a[href="index.html"]').forEach((link) => {
+      link.remove();
+    });
   }
 
   function collectElements() {
@@ -1475,6 +1530,8 @@
   }
 
   async function boot() {
+    normalizeHostedHomeUrl();
+    polishStaticUi();
     ensureGlobalUi();
     bindGlobalUi();
     collectElements();
