@@ -13,7 +13,7 @@ DEFAULT_CHAT_MODEL = "meta/llama-3.1-8b-instruct"
 DEFAULT_DEEPSEEK_MODEL = "deepseek-ai/deepseek-v3.2"
 DEFAULT_KIMI_MODEL = "moonshotai/kimi-k2.5"
 DEFAULT_AI_BASE_URL = "https://integrate.api.nvidia.com/v1"
-DEFAULT_GITHUB_REPOSITORY = "ygirma315-cell/jo-ai"
+DEFAULT_MINIAPP_URL = "https://ygirma315-cell.github.io/jo-ai/"
 DEFAULT_LOCAL_ORIGINS = (
     "http://127.0.0.1:8000",
     "http://localhost:8000",
@@ -109,25 +109,6 @@ def _origin_from_url(value: str | None) -> str | None:
     parsed = urlparse(normalized)
     return f"{parsed.scheme}://{parsed.netloc}"
 
-
-def _default_repository_slug() -> str:
-    return _read_env("GITHUB_REPOSITORY") or _read_env("RENDER_GIT_REPO_SLUG") or DEFAULT_GITHUB_REPOSITORY
-
-
-def _derive_github_pages_url(repository_slug: str | None) -> str | None:
-    slug = str(repository_slug or "").strip().strip("/")
-    if not slug or "/" not in slug:
-        return None
-
-    owner, repo = slug.split("/", maxsplit=1)
-    if not owner or not repo:
-        return None
-
-    if repo.lower() == f"{owner.lower()}.github.io":
-        return _normalize_directory_url(f"https://{repo}/")
-    return _normalize_directory_url(f"https://{owner}.github.io/{repo}/")
-
-
 def _join_public_url(base_url: str | None, path: str) -> str | None:
     normalized_base = _normalize_public_url(base_url)
     if not normalized_base:
@@ -211,7 +192,7 @@ def load_settings() -> Settings:
     )
     miniapp_url = (
         _normalize_directory_url(_read_env("MINIAPP_URL"))
-        or _derive_github_pages_url(_default_repository_slug())
+        or DEFAULT_MINIAPP_URL
     )
     miniapp_api_base = _normalize_public_url(_read_env("MINIAPP_API_BASE")) or public_base_url
     telegram_webhook_url = _normalize_public_url(_read_env("TELEGRAM_WEBHOOK_URL")) or _join_public_url(

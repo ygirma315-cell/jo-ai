@@ -221,13 +221,9 @@ def _validate_urls(report: CheckReport, *, deployment: bool, include_local_overr
     if miniapp_override:
         if _is_valid_url(miniapp_override, require_public_https=require_public_https):
             report.ok(f"MINIAPP_URL override is valid: {miniapp_override}")
-            if "my-miniapp" in miniapp_override:
+            if miniapp_override != DEFAULT_GITHUB_PAGES_URL:
                 report.fail(
-                    "MINIAPP_URL override still points to the old my-miniapp site. Remove it or update it to the jo-ai GitHub Pages URL."
-                )
-            elif miniapp_override != DEFAULT_GITHUB_PAGES_URL:
-                report.warn(
-                    "MINIAPP_URL override differs from the default jo-ai GitHub Pages URL. Keep it only if you intentionally use a custom Pages URL."
+                    "MINIAPP_URL override does not match the required jo-ai GitHub Pages URL."
                 )
         else:
             report.fail("MINIAPP_URL override exists but is not a valid URL.")

@@ -37,7 +37,7 @@ If your actual Render hostname differs, update `miniapp/config.js`.
 - Render no longer serves the mini app files directly
 - The backend root no longer redirects to `/miniapp/`
 - The bot now defaults to the GitHub Pages mini app URL instead of the Render URL
-- The bot still appends the Render backend URL to the mini app as `?api_base=...`
+- The bot now opens the exact GitHub Pages mini app URL everywhere
 - `miniapp/config.js` provides the public backend base for direct browser visits to GitHub Pages
 - GitHub Actions now deploys `miniapp/` to GitHub Pages from this same repo
 
@@ -123,7 +123,7 @@ Defaults:
 
 Important:
 
-- If your local `.env` still contains a `MINIAPP_URL` from the old `my-miniapp` repo, remove it or replace it with the `jo-ai` GitHub Pages URL.
+- Keep `MINIAPP_URL` set to `https://ygirma315-cell.github.io/jo-ai/` for a consistent Telegram mini app URL.
 
 ## Deployments
 

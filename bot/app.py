@@ -4,7 +4,7 @@ import asyncio
 import logging
 import os
 from dataclasses import dataclass, field
-from urllib.parse import parse_qsl, urlencode, urlparse, urlunparse
+from urllib.parse import urlparse, urlunparse
 
 from aiogram import Bot, Dispatcher
 from aiogram.client.default import DefaultBotProperties
@@ -60,6 +60,7 @@ class BotRuntime:
 
 
 def _build_miniapp_url(miniapp_url: str | None, api_base: str | None) -> str | None:
+    _ = api_base
     if not miniapp_url:
         return None
 
@@ -70,10 +71,7 @@ def _build_miniapp_url(miniapp_url: str | None, api_base: str | None) -> str | N
         if "." not in last_segment:
             path = f"{path}/"
 
-    query = dict(parse_qsl(parsed.query, keep_blank_values=True))
-    if api_base:
-        query["api_base"] = api_base
-    rebuilt = parsed._replace(path=path, query=urlencode(query))
+    rebuilt = parsed._replace(path=path, query="", fragment="")
     return urlunparse(rebuilt)
 
 
