@@ -206,6 +206,17 @@ label {
   font-weight: 700;
 }
 
+.section-head {
+  display: flex;
+  justify-content: space-between;
+  align-items: flex-start;
+  gap: 12px;
+}
+
+.section-head .hint {
+  margin-top: 4px;
+}
+
 textarea,
 input[type="text"],
 input[type="number"],
@@ -299,6 +310,53 @@ input:focus {
   margin: 10px 0 0;
   color: var(--ink-1);
   font-size: 13px;
+}
+
+.runtime-info {
+  margin-top: 12px;
+  border: 1px solid #d9e6e4;
+  border-radius: 14px;
+  padding: 12px;
+  background: linear-gradient(180deg, #fcfffe, #f2faf7);
+}
+
+.runtime-row {
+  display: flex;
+  justify-content: space-between;
+  align-items: flex-start;
+  gap: 12px;
+  padding: 8px 0;
+  border-bottom: 1px solid #e3edeb;
+}
+
+.runtime-row:first-child {
+  padding-top: 0;
+}
+
+.runtime-row:last-child {
+  padding-bottom: 0;
+  border-bottom: none;
+}
+
+.runtime-key {
+  font-weight: 700;
+  color: var(--ink-0);
+}
+
+.runtime-value {
+  text-align: right;
+  word-break: break-word;
+}
+
+.runtime-value code {
+  display: inline-block;
+  border: 1px solid #d7e4e1;
+  border-radius: 999px;
+  background: #eef8f6;
+  color: #19453f;
+  padding: 4px 10px;
+  font-size: 12px;
+  font-family: "Space Grotesk", "DM Sans", sans-serif;
 }
 
 .response-card {
@@ -623,6 +681,14 @@ input:focus {
   .response-head {
     flex-direction: column;
     align-items: flex-start;
+  }
+
+  .runtime-row {
+    flex-direction: column;
+  }
+
+  .runtime-value {
+    text-align: left;
   }
 
   .ttt-board {

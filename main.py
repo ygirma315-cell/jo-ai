@@ -6,9 +6,8 @@ import binascii
 import json
 import logging
 import os
-import socket
+import time
 from contextlib import suppress
-from dataclasses import dataclass
 from functools import lru_cache
 from pathlib import Path
 from typing import Any
@@ -16,6 +15,14 @@ from typing import Any
 import requests
 import uvicorn
 from aiogram.types import Update
+from dotenv import load_dotenv
+from fastapi import FastAPI, Request
+from fastapi.exceptions import RequestValidationError
+from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import JSONResponse, RedirectResponse
+from fastapi.staticfiles import StaticFiles
+from pydantic import BaseModel, ConfigDict, Field, ValidationError, model_validator
+
 from bot.app import (
     BotRuntime,
     close_bot_runtime,
@@ -23,15 +30,13 @@ from bot.app import (
     process_telegram_update,
     start_telegram_startup_tasks,
 )
-from dotenv import load_dotenv
-from fastapi import FastAPI, Request
-from fastapi.exceptions import RequestValidationError
-from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import JSONResponse
-from pydantic import BaseModel, ConfigDict, Field, ValidationError, model_validator
+from bot.config import load_settings
+from bot.logging_config import setup_logging
+from bot.runtime_info import build_runtime_info
 from version import VERSION
 
 PROJECT_ROOT = Path(__file__).resolve().parent
+MINIAPP_DIR = PROJECT_ROOT / "miniapp"
 load_dotenv(dotenv_path=PROJECT_ROOT / ".env")
 logger = logging.getLogger(__name__)
 
@@ -41,18 +46,6 @@ class BackendError(RuntimeError):
         super().__init__(message)
         self.message = message
         self.status_code = status_code
-
-
-@dataclass(frozen=True)
-class Settings:
-    ai_api_key: str
-    ai_base_url: str
-    chat_model: str
-    code_model: str
-    image_model: str
-    kimi_api_key: str
-    kimi_model: str
-    timeout_seconds: int
 
 
 class ChatRequest(BaseModel):
@@ -105,34 +98,18 @@ def _read_env(name: str) -> str:
     return os.getenv(name, "").strip()
 
 
+def _cors_origins_from_env() -> list[str]:
+    raw = _read_env("ALLOWED_ORIGINS")
+    if not raw:
+        return ["*"]
+
+    values = [item.strip() for item in raw.split(",") if item.strip()]
+    return values or ["*"]
+
+
 @lru_cache(maxsize=1)
-def get_settings() -> Settings:
-    timeout_raw = _read_env("REQUEST_TIMEOUT_SECONDS") or "30"
-    try:
-        timeout_seconds = max(5, int(timeout_raw))
-    except ValueError:
-        timeout_seconds = 30
-
-    ai_api_key = _read_env("AI_API_KEY") or _read_env("NVIDIA_API_KEY") or _read_env("OPENAI_API_KEY")
-    ai_base_url = _read_env("AI_BASE_URL") or "https://integrate.api.nvidia.com/v1"
-    ai_base_url = ai_base_url.rstrip("/")
-
-    chat_model = _read_env("CHAT_MODEL") or _read_env("NVIDIA_CHAT_MODEL") or "meta/llama-3.1-8b-instruct"
-    code_model = _read_env("CODE_MODEL") or chat_model
-    image_model = _read_env("IMAGE_MODEL") or "black-forest-labs/flux.1-dev"
-    kimi_api_key = _read_env("KIMI_API_KEY") or ai_api_key
-    kimi_model = _read_env("KIMI_MODEL") or "moonshotai/kimi-k2.5"
-
-    return Settings(
-        ai_api_key=ai_api_key,
-        ai_base_url=ai_base_url,
-        chat_model=chat_model,
-        code_model=code_model,
-        image_model=image_model,
-        kimi_api_key=kimi_api_key,
-        kimi_model=kimi_model,
-        timeout_seconds=timeout_seconds,
-    )
+def get_settings():
+    return load_settings()
 
 
 def _extract_provider_error(payload: object) -> str | None:
@@ -152,9 +129,9 @@ def _extract_provider_error(payload: object) -> str | None:
 
 def _provider_post(path: str, payload: dict[str, Any], api_key_override: str | None = None) -> dict[str, Any]:
     settings = get_settings()
-    api_key = (api_key_override or settings.ai_api_key).strip()
+    api_key = (api_key_override or settings.ai_api_key or "").strip()
     if not api_key:
-        raise BackendError("AI API key is missing. Set AI_API_KEY (or NVIDIA_API_KEY) in .env.", status_code=500)
+        raise BackendError("AI API key is missing. Set AI_API_KEY or NVIDIA_API_KEY in the environment.", status_code=500)
 
     url = f"{settings.ai_base_url}{path}"
     headers = {
@@ -164,9 +141,10 @@ def _provider_post(path: str, payload: dict[str, Any], api_key_override: str | N
     }
 
     try:
-        response = requests.post(url, headers=headers, json=payload, timeout=settings.timeout_seconds)
-    except requests.RequestException:
-        raise BackendError("Failed to reach AI provider.", status_code=502)
+        response = requests.post(url, headers=headers, json=payload, timeout=settings.request_timeout_seconds)
+    except requests.RequestException as exc:
+        logger.warning("AI provider request failed for %s: %s", path, exc)
+        raise BackendError("Failed to reach AI provider.", status_code=502) from exc
 
     try:
         body: object = response.json()
@@ -210,7 +188,7 @@ def _extract_text_response(payload: dict[str, Any]) -> str:
 
 def _chat_completion(user_message: str, mode: str) -> str:
     settings = get_settings()
-    model = settings.code_model if mode == "code" else settings.chat_model
+    model = settings.code_model if mode == "code" else settings.nvidia_chat_model
 
     prompts = {
         "chat": "You are a concise, practical assistant.",
@@ -263,8 +241,8 @@ def _decode_base64_image(raw_image: str) -> bytes:
 
     try:
         return base64.b64decode(compact, validate=True)
-    except (binascii.Error, ValueError):
-        raise BackendError("Invalid base64 image payload.", status_code=400)
+    except (binascii.Error, ValueError) as exc:
+        raise BackendError("Invalid base64 image payload.", status_code=400) from exc
 
 
 def _describe_image_with_kimi(message: str, image_base64: str) -> str:
@@ -298,10 +276,10 @@ def _describe_image_with_kimi(message: str, image_base64: str) -> str:
 def _download_image_as_base64(url: str) -> str:
     settings = get_settings()
     try:
-        response = requests.get(url, timeout=settings.timeout_seconds)
+        response = requests.get(url, timeout=settings.request_timeout_seconds)
         response.raise_for_status()
-    except requests.RequestException:
-        raise BackendError("Generated image URL could not be downloaded.")
+    except requests.RequestException as exc:
+        raise BackendError("Generated image URL could not be downloaded.") from exc
     return base64.b64encode(response.content).decode("utf-8")
 
 
@@ -331,57 +309,103 @@ def _generate_image(prompt: str, size: str) -> str:
     raise BackendError("AI provider did not return a usable image.")
 
 
-def _allowed_origins() -> list[str]:
-    raw = _read_env("ALLOWED_ORIGINS") or "*"
-    origins = [item.strip() for item in raw.split(",") if item.strip()]
-    return origins or ["*"]
+def _get_bot_runtime() -> BotRuntime | None:
+    runtime = getattr(app.state, "bot_runtime", None)
+    return runtime if isinstance(runtime, BotRuntime) else None
 
 
-def _parse_port(raw_port: str | None, fallback: int = 8000) -> int:
-    try:
-        return int((raw_port or str(fallback)).strip())
-    except (TypeError, ValueError):
-        return fallback
+def _uptime_seconds() -> float:
+    started_at = getattr(app.state, "started_at", None)
+    if not isinstance(started_at, (int, float)):
+        return 0.0
+    return max(0.0, time.time() - float(started_at))
 
 
-def _is_port_free(port: int, host: str = "0.0.0.0") -> bool:
-    with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as sock:
-        try:
-            sock.bind((host, port))
-        except OSError:
-            return False
-    return True
+def _deployment_info() -> dict[str, Any]:
+    payload = {
+        "provider": "render" if _read_env("RENDER") or _read_env("RENDER_SERVICE_NAME") else "local",
+        "repo": _read_env("RENDER_GIT_REPO_SLUG") or _read_env("GITHUB_REPOSITORY"),
+        "branch": _read_env("RENDER_GIT_BRANCH") or _read_env("GITHUB_REF_NAME"),
+        "commit": _read_env("RENDER_GIT_COMMIT") or _read_env("GITHUB_SHA"),
+        "service_name": _read_env("RENDER_SERVICE_NAME"),
+    }
+    return {key: value for key, value in payload.items() if value}
 
 
-def _find_open_port(start_port: int = 8000, host: str = "0.0.0.0", max_attempts: int = 100) -> int:
-    first_port = max(1, start_port)
-    last_port = min(65535, first_port + max_attempts)
+def _health_checks() -> dict[str, Any]:
+    settings = get_settings()
+    runtime = _get_bot_runtime()
+    telegram_status = "ok" if runtime and runtime.telegram_ready else "starting"
+    if runtime and runtime.last_startup_error:
+        telegram_status = "degraded"
 
-    for port in range(first_port, last_port + 1):
-        if _is_port_free(port, host=host):
-            return port
+    return {
+        "config": {
+            "status": "ok" if not settings.validation_errors else "error",
+            "warnings": list(settings.validation_warnings),
+        },
+        "telegram": {
+            "status": telegram_status,
+            "webhook_configured": runtime.webhook_configured if runtime else False,
+            "menu_button_configured": runtime.menu_button_configured if runtime else False,
+            "last_error": runtime.last_startup_error if runtime else None,
+        },
+    }
 
-    with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as sock:
-        sock.bind((host, 0))
-        return int(sock.getsockname()[1])
+
+def _service_info() -> dict[str, Any]:
+    settings = get_settings()
+    runtime = _get_bot_runtime()
+    payload = {
+        "process_role": _read_env("PROCESS_ROLE") or "web",
+        "public_base_url": settings.public_base_url,
+        "miniapp_url": settings.miniapp_url,
+        "webhook_url": settings.telegram_webhook_url,
+        "telegram_ready": runtime.telegram_ready if runtime else False,
+    }
+    return {key: value for key, value in payload.items() if value is not None}
 
 
-app = FastAPI(title="Telegram Bot + Miniapp Backend", version="1.0.0")
+def _runtime_info_payload() -> dict[str, Any]:
+    settings = get_settings()
+    return build_runtime_info(
+        chat_model=settings.nvidia_chat_model,
+        code_model=settings.code_model,
+        image_model=settings.image_model,
+        deepseek_model=settings.deepseek_model,
+        kimi_model=settings.kimi_model,
+        deploy=_deployment_info(),
+        service=_service_info(),
+        checks=_health_checks(),
+        uptime_seconds=_uptime_seconds(),
+    )
+
+
+app = FastAPI(title="JO AI Bot + Mini App", version=VERSION)
 app.state.bot_runtime = None
 app.state.telegram_startup_task = None
+app.state.started_at = time.time()
 
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=_allowed_origins(),
+    allow_origins=_cors_origins_from_env(),
     allow_credentials=False,
     allow_methods=["GET", "POST", "OPTIONS"],
     allow_headers=["*"],
 )
 
+app.mount("/miniapp", StaticFiles(directory=MINIAPP_DIR, html=True), name="miniapp")
 
-def _get_bot_runtime() -> BotRuntime | None:
-    runtime = getattr(app.state, "bot_runtime", None)
-    return runtime if isinstance(runtime, BotRuntime) else None
+
+@app.middleware("http")
+async def _response_headers_middleware(request: Request, call_next):
+    response = await call_next(request)
+    response.headers.setdefault("X-Content-Type-Options", "nosniff")
+    if request.url.path.startswith("/miniapp"):
+        response.headers["Cache-Control"] = "no-store, max-age=0"
+        response.headers["Pragma"] = "no-cache"
+        response.headers["Expires"] = "0"
+    return response
 
 
 async def _process_webhook_update(runtime: BotRuntime, update: Update) -> None:
@@ -392,26 +416,24 @@ async def _process_webhook_update(runtime: BotRuntime, update: Update) -> None:
 
 
 @app.on_event("startup")
-async def _startup_log() -> None:
+async def _startup() -> None:
+    settings = get_settings()
+    setup_logging(settings.log_level)
+    settings.require_valid()
+
     role = _read_env("PROCESS_ROLE") or "web"
-    startup_message = f"🚀 API STARTED — VERSION {VERSION}"
-    process_message = f"[RENDER] PROCESS={role} ENTRYPOINT=main.py VERSION={VERSION}"
-    print(startup_message, flush=True)
-    logger.info(startup_message)
-    print(process_message, flush=True)
-    logger.info(process_message)
+    app.state.started_at = time.time()
+    logger.info("API STARTED | version=%s", VERSION)
+    logger.info("[RENDER] PROCESS=%s ENTRYPOINT=main.py VERSION=%s", role, VERSION)
+    logger.info("Mini app directory: %s", MINIAPP_DIR)
 
     runtime = await create_bot_runtime()
     app.state.bot_runtime = runtime
     app.state.telegram_startup_task = start_telegram_startup_tasks(runtime)
 
-    bot_ready_message = f"🤖 BOT READY — VERSION {VERSION}"
-    print(bot_ready_message, flush=True)
-    logger.info(bot_ready_message)
-
 
 @app.on_event("shutdown")
-async def _shutdown_bot_runtime() -> None:
+async def _shutdown() -> None:
     telegram_startup_task = getattr(app.state, "telegram_startup_task", None)
     if isinstance(telegram_startup_task, asyncio.Task):
         telegram_startup_task.cancel()
@@ -433,16 +455,32 @@ async def request_validation_exception_handler(_request: Request, exc: RequestVa
     return JSONResponse(status_code=422, content={"error": message})
 
 
+@app.get("/")
+def root() -> RedirectResponse:
+    return RedirectResponse(url="/miniapp/", status_code=307)
+
+
 @app.get("/health")
 @app.get("/api/health")
-def health() -> dict[str, str]:
-    logger.info("HEALTH CHECK OK — VERSION %s", VERSION)
-    return {"status": "ok", "version": VERSION}
+def health() -> dict[str, Any]:
+    return _runtime_info_payload()
 
 
-@app.get("/")
-def root() -> dict[str, str]:
-    return {"message": "Telegram bot API is running.", "version": VERSION}
+@app.get("/uptime")
+@app.get("/api/uptime")
+def uptime() -> dict[str, Any]:
+    return {
+        "ok": True,
+        "status": "ok",
+        "version": VERSION,
+        "uptime_seconds": round(_uptime_seconds(), 2),
+    }
+
+
+@app.get("/runtime-info")
+@app.get("/api/runtime-info")
+def runtime_info() -> dict[str, Any]:
+    return _runtime_info_payload()
 
 
 @app.post("/telegram/webhook")
@@ -450,6 +488,11 @@ async def telegram_webhook(request: Request) -> JSONResponse:
     runtime = _get_bot_runtime()
     if runtime is None:
         return JSONResponse(status_code=503, content={"error": "Bot runtime is not ready."})
+
+    if runtime.telegram_webhook_secret:
+        received_secret = request.headers.get("x-telegram-bot-api-secret-token", "")
+        if received_secret != runtime.telegram_webhook_secret:
+            return JSONResponse(status_code=403, content={"error": "Invalid webhook secret."})
 
     try:
         payload = await request.json()
@@ -533,8 +576,9 @@ def kimi_image_describer_endpoint(payload: KimiImageDescribeRequest) -> JSONResp
 
 
 if __name__ == "__main__":
-    host = os.getenv("HOST", "0.0.0.0").strip() or "0.0.0.0"
-    preferred_port = _parse_port(os.getenv("PORT"), fallback=8000)
-    selected_port = _find_open_port(start_port=preferred_port, host=host)
-    print(f"Starting FastAPI server on {host}:{selected_port}")
-    uvicorn.run("main:app", host=host, port=selected_port)
+    host = _read_env("HOST") or "0.0.0.0"
+    try:
+        port = int(_read_env("PORT") or "8000")
+    except ValueError:
+        port = 8000
+    uvicorn.run("main:app", host=host, port=port)

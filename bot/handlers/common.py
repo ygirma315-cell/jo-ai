@@ -4,13 +4,19 @@ from aiogram import F, Router
 from aiogram.filters import Command, CommandStart
 from aiogram.types import CallbackQuery, Message
 
-from bot.constants import MENU_AI_TOOLS, MENU_CANCEL, MENU_HELP, MENU_UTILITIES
+from bot.constants import MENU_AI_TOOLS, MENU_CANCEL, MENU_HELP, MENU_UTILITIES, MENU_VERSION_MODELS
 from bot.keyboards.menu import ai_tools_keyboard, main_menu_keyboard, utilities_keyboard
-from bot.models.session import Feature
+from bot.models.session import AIModelProfile, Feature
+from bot.runtime_info import format_runtime_info_html
 from bot.services.session_manager import SessionManager
 from version import VERSION
 
 router = Router(name="common")
+
+PROFILE_LABELS = {
+    AIModelProfile.DEEPSEEK_REASONING: "DeepSeek Reasoning",
+    AIModelProfile.DEEPSEEK_THINKING: "DeepSeek Thinking",
+}
 
 WELCOME_TEXT = (
     "✨ <b>Welcome to JO AI Assistant</b>\n\n"
@@ -36,6 +42,7 @@ HELP_TEXT = (
     "🛠️ <b>Other Features</b>\n"
     "• /calculator - safe calculator\n"
     "• /games - Tic-Tac-Toe and Guess Number\n"
+    "• /version - show version and model info\n"
     "• /menu - return to main menu\n\n"
     "📌 Tip: You can switch modes any time. Need a quick check? Use /ping."
 )
@@ -62,7 +69,8 @@ async def handle_start(message: Message, session_manager: SessionManager, miniap
     await message.answer(
         "🎯 <b>Quick Start</b>\n\n"
         "• Tap <b>🤖 AI Tools</b> to chat, code, research, generate prompts, or create images.\n"
-        "• Tap <b>🛠️ Utilities</b> for calculator and games.\n\n"
+        "• Tap <b>🛠️ Utilities</b> for calculator and games.\n"
+        "• Tap <b>ℹ️ Version / Models</b> to inspect the current build.\n\n"
         "🧠 Ask me anything when you're ready.",
         reply_markup=main_menu_keyboard(miniapp_url),
     )
@@ -97,8 +105,18 @@ async def handle_ping(message: Message) -> None:
 
 
 @router.message(Command("version"))
-async def handle_version(message: Message) -> None:
-    await message.answer(VERSION)
+@router.message(Command("models"))
+@router.message(F.text == MENU_VERSION_MODELS)
+async def handle_version(
+    message: Message,
+    session_manager: SessionManager,
+    runtime_info: dict[str, object],
+) -> None:
+    active_profile: str | None = None
+    if message.from_user:
+        async with session_manager.lock(message.from_user.id) as session:
+            active_profile = PROFILE_LABELS.get(session.ai_model_profile, session.ai_model_profile.value)
+    await message.answer(format_runtime_info_html(runtime_info, active_profile=active_profile))
 
 
 @router.message(Command("aitools"))

@@ -3,6 +3,9 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <meta http-equiv="Cache-Control" content="no-store, max-age=0">
+  <meta http-equiv="Pragma" content="no-cache">
+  <meta http-equiv="Expires" content="0">
   <title>JO AI Mini App</title>
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
@@ -66,6 +69,19 @@
             <option value="deepseek_reasoning">DeepSeek Reasoning</option>
             <option value="deepseek_thinking">DeepSeek Thinking</option>
           </select>
+        </div>
+
+        <div class="card">
+          <div class="section-head">
+            <div>
+              <label>Build Info</label>
+              <p class="hint">Open the current app version and the backend model list.</p>
+            </div>
+            <button id="runtimeInfoBtn" class="btn small" type="button">Version / Models</button>
+          </div>
+          <div id="runtimeInfo" class="runtime-info" hidden>
+            <p class="hint">Version and model details will appear here after the backend check.</p>
+          </div>
         </div>
 
         <div class="mode-grid">
@@ -168,7 +184,7 @@
     </section>
   </main>
 
-  <div id="versionBadge" class="version-badge">Version: v1.0.0</div>
+  <div id="versionBadge" class="version-badge">Version: loading...</div>
   <div id="toast" class="toast" hidden></div>
 </body>
 </html>

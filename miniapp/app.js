@@ -3,7 +3,6 @@
   "use strict";
 
   const tg = window.Telegram && window.Telegram.WebApp ? window.Telegram.WebApp : null;
-  const DEFAULT_REMOTE_BASE = "https://jo-ai.onrender.com";
   const API_BASE_STORAGE_KEY = "jo_api_base";
 
   const elements = {
@@ -17,6 +16,8 @@
     panels: Array.from(document.querySelectorAll(".panel")),
     modes: Array.from(document.querySelectorAll(".mode")),
     modelProfile: document.getElementById("modelProfile"),
+    runtimeInfoBtn: document.getElementById("runtimeInfoBtn"),
+    runtimeInfo: document.getElementById("runtimeInfo"),
     inputLabel: document.getElementById("inputLabel"),
     aiInput: document.getElementById("aiInput"),
     promptTypeWrap: document.getElementById("promptTypeWrap"),
@@ -51,6 +52,7 @@
     isBusy: false,
     lastOutputText: "",
     lastImageDataUrl: "",
+    runtimeInfo: null,
     toastTimer: null,
   };
 
@@ -168,6 +170,143 @@
       return;
     }
     elements.versionBadge.textContent = `Version: ${safeVersion}`;
+  }
+
+  function extractRuntimeInfo(data) {
+    const version = data && typeof data.version === "string" ? data.version.trim() : "";
+    const models = {};
+    const deploy = {};
+    const service = {};
+    const rawModels = data && typeof data.models === "object" && data.models ? data.models : {};
+    const rawDeploy = data && typeof data.deploy === "object" && data.deploy ? data.deploy : {};
+    const rawService = data && typeof data.service === "object" && data.service ? data.service : {};
+
+    for (const [key, value] of Object.entries(rawModels)) {
+      if (typeof value === "string" && value.trim()) {
+        models[key] = value.trim();
+      }
+    }
+
+    for (const [key, value] of Object.entries(rawDeploy)) {
+      if (typeof value === "string" && value.trim()) {
+        deploy[key] = value.trim();
+      }
+    }
+
+    for (const [key, value] of Object.entries(rawService)) {
+      if (typeof value === "string" && value.trim()) {
+        service[key] = value.trim();
+      }
+    }
+
+    return { version, models, deploy, service };
+  }
+
+  function currentProfileLabel() {
+    if (!elements.modelProfile) {
+      return "";
+    }
+    const selectedOption = elements.modelProfile.options[elements.modelProfile.selectedIndex];
+    return selectedOption ? String(selectedOption.textContent || "").trim() : "";
+  }
+
+  function formatModelLabel(key) {
+    const labels = {
+      chat: "Chat",
+      code: "Code",
+      image: "Image",
+      deepseek: "DeepSeek",
+      kimi: "Kimi",
+    };
+    return labels[key] || key;
+  }
+
+  function renderRuntimeInfo() {
+    if (!elements.runtimeInfo) {
+      return;
+    }
+
+    elements.runtimeInfo.innerHTML = "";
+    if (!state.runtimeInfo) {
+      elements.runtimeInfo.innerHTML =
+        '<p class="hint">Version and model info is not available yet. Try again after the backend connects.</p>';
+      return;
+    }
+
+    const rows = [];
+    if (state.runtimeInfo.version) {
+      rows.push(["Version", state.runtimeInfo.version]);
+    }
+
+    if (state.runtimeInfo.deploy && state.runtimeInfo.deploy.branch) {
+      rows.push(["Branch", state.runtimeInfo.deploy.branch]);
+    }
+
+    if (state.runtimeInfo.deploy && state.runtimeInfo.deploy.commit) {
+      rows.push(["Commit", state.runtimeInfo.deploy.commit.slice(0, 12)]);
+    }
+
+    const profileLabel = currentProfileLabel();
+    if (profileLabel) {
+      rows.push(["Active profile", profileLabel]);
+    }
+
+    if (state.runtimeInfo.service && state.runtimeInfo.service.public_base_url) {
+      rows.push(["Public URL", state.runtimeInfo.service.public_base_url]);
+    }
+
+    const orderedKeys = ["chat", "code", "image", "deepseek", "kimi"];
+    for (const key of orderedKeys) {
+      if (state.runtimeInfo.models[key]) {
+        rows.push([formatModelLabel(key), state.runtimeInfo.models[key]]);
+      }
+    }
+
+    for (const [key, value] of Object.entries(state.runtimeInfo.models)) {
+      if (!orderedKeys.includes(key)) {
+        rows.push([formatModelLabel(key), value]);
+      }
+    }
+
+    if (!rows.length) {
+      elements.runtimeInfo.innerHTML = '<p class="hint">No runtime details were returned by the backend.</p>';
+      return;
+    }
+
+    const fragment = document.createDocumentFragment();
+    for (const [label, value] of rows) {
+      const row = document.createElement("div");
+      row.className = "runtime-row";
+
+      const keyEl = document.createElement("span");
+      keyEl.className = "runtime-key";
+      keyEl.textContent = label;
+
+      const valueWrap = document.createElement("span");
+      valueWrap.className = "runtime-value";
+
+      const valueEl = document.createElement("code");
+      valueEl.textContent = value;
+      valueWrap.appendChild(valueEl);
+
+      row.appendChild(keyEl);
+      row.appendChild(valueWrap);
+      fragment.appendChild(row);
+    }
+
+    elements.runtimeInfo.appendChild(fragment);
+  }
+
+  function setRuntimeInfo(data) {
+    const info = extractRuntimeInfo(data);
+    if (!info.version && !Object.keys(info.models).length && !Object.keys(info.deploy).length && !Object.keys(info.service).length) {
+      return;
+    }
+    state.runtimeInfo = info;
+    if (info.version) {
+      setVersionBadge(info.version);
+    }
+    renderRuntimeInfo();
   }
 
   function setApiState(text, variant = "muted") {
@@ -503,15 +642,14 @@
 
   function buildApiBaseCandidates() {
     const queryBase = normalizeBase(getQueryParam("api_base"));
-    const storedBase = normalizeBase(window.localStorage.getItem(API_BASE_STORAGE_KEY));
     const explicitBase = normalizeBase(window.JO_API_BASE);
+    const storedBase = normalizeBase(window.localStorage.getItem(API_BASE_STORAGE_KEY));
     const sameOriginBase =
       window.location.protocol.startsWith("http") && window.location.origin
         ? normalizeBase(window.location.origin)
         : "";
     const localhost8000 = normalizeBase("http://127.0.0.1:8000");
     const localhostAlt = normalizeBase("http://localhost:8000");
-    const localhostMini = normalizeBase("http://127.0.0.1:8080");
 
     if (queryBase) {
       window.localStorage.setItem(API_BASE_STORAGE_KEY, queryBase);
@@ -520,12 +658,10 @@
     return unique([
       queryBase,
       explicitBase,
-      storedBase,
       sameOriginBase,
+      storedBase,
       localhost8000,
       localhostAlt,
-      localhostMini,
-      DEFAULT_REMOTE_BASE,
     ]);
   }
 
@@ -534,15 +670,50 @@
     for (const path of checks) {
       try {
         const { response, data } = await fetchJsonWithTimeout(`${base}${path}`, { method: "GET" }, 5500);
-        if (response.ok && data && data.ok) {
-          const version = data && typeof data.version === "string" ? data.version : "";
-          return { ok: true, version };
+        const info = extractRuntimeInfo(data);
+        if (response.ok && data && (data.ok === true || data.status === "ok")) {
+          return { ok: true, version: info.version, models: info.models };
         }
       } catch (_error) {
         // try next path
       }
     }
-    return { ok: false, version: "" };
+    return { ok: false, version: "", models: {} };
+  }
+
+  async function fetchRuntimeInfo() {
+    if (!state.apiBase) {
+      await resolveApiBase();
+    }
+    if (!state.apiBase) {
+      throw new Error("API base is not configured.");
+    }
+
+    const paths = ["/api/runtime-info", "/runtime-info", "/api/health", "/health"];
+    const errors = [];
+
+    for (const path of paths) {
+      try {
+        const { response, data } = await fetchJsonWithTimeout(`${state.apiBase}${path}`, { method: "GET" }, 5500);
+        if (!response.ok) {
+          errors.push(`${path} -> HTTP ${response.status}`);
+          continue;
+        }
+
+        const info = extractRuntimeInfo(data);
+        if (data && (data.ok === true || data.status === "ok" || info.version || Object.keys(info.models).length)) {
+          setRuntimeInfo(data);
+          return state.runtimeInfo;
+        }
+
+        errors.push(`${path} -> runtime info missing`);
+      } catch (error) {
+        const message = error instanceof Error ? error.message : String(error);
+        errors.push(`${path} -> ${message}`);
+      }
+    }
+
+    throw new Error(errors[errors.length - 1] || "Runtime info is unavailable.");
   }
 
   async function resolveApiBase() {
@@ -561,9 +732,7 @@
         state.apiBase = candidate;
         window.localStorage.setItem(API_BASE_STORAGE_KEY, candidate);
         setApiBaseLabel(candidate);
-        if (health.version) {
-          setVersionBadge(health.version);
-        }
+        setRuntimeInfo(health);
         setStatus(tg ? "✅ Connected + API ready" : "✅ API ready");
         return;
       }
@@ -1040,7 +1209,30 @@
         elements.uploadInfo.textContent = `📎 ${file.name} (${sizeMb} MB)`;
       });
     }
+    if (elements.runtimeInfoBtn) {
+      elements.runtimeInfoBtn.addEventListener("click", async () => {
+        try {
+          if (!state.runtimeInfo) {
+            await fetchRuntimeInfo();
+          }
+          renderRuntimeInfo();
+          if (elements.runtimeInfo) {
+            const nextHidden = !elements.runtimeInfo.hidden;
+            elements.runtimeInfo.hidden = nextHidden;
+            elements.runtimeInfoBtn.textContent = nextHidden ? "Version / Models" : "Hide Info";
+          }
+        } catch (error) {
+          showToast(`Error: ${error instanceof Error ? error.message : "Runtime info unavailable."}`, "error");
+        }
+      });
+    }
+    if (elements.modelProfile) {
+      elements.modelProfile.addEventListener("change", () => {
+        renderRuntimeInfo();
+      });
+    }
   }
+
   function initTicTacToe() {
     const boardEl = document.getElementById("tttBoard");
     const statusEl = document.getElementById("tttStatus");

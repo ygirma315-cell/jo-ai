@@ -11,6 +11,7 @@ MENU_AI_IMAGE = "🎨 Image Generator"
 MENU_AI_DEEPSEEK = "🧠 DeepSeek Models"
 MENU_AI_KIMI = "🖼️ Kimi Image Describer"
 MENU_HELP = "💡 Help"
+MENU_VERSION_MODELS = "ℹ️ Version / Models"
 MENU_CANCEL = "↩️ Cancel / Back to Menu"
 
 _PRIMARY_MENU_BUTTON_TEXTS = {
@@ -27,6 +28,7 @@ _PRIMARY_MENU_BUTTON_TEXTS = {
     MENU_AI_DEEPSEEK,
     MENU_AI_KIMI,
     MENU_HELP,
+    MENU_VERSION_MODELS,
     MENU_CANCEL,
 }
 
@@ -44,6 +46,7 @@ _LEGACY_MENU_BUTTON_TEXTS = {
     "DeepSeek Models",
     "Kimi Image Describer",
     "Help",
+    "Version / Models",
     "Cancel / Back to Menu",
 }
 

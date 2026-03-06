@@ -1,0 +1,6 @@
+{
+  "git.autofetch": true,
+  "git.confirmSync": true,
+  "git.enableSmartCommit": false,
+  "git.openRepositoryInParentFolders": "never"
+}

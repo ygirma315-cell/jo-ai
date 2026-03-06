@@ -17,6 +17,7 @@ from bot.constants import (
     MENU_GAMES,
     MENU_HELP,
     MENU_UTILITIES,
+    MENU_VERSION_MODELS,
 )
 
 
@@ -24,7 +25,7 @@ def main_menu_keyboard(miniapp_url: str | None = None) -> ReplyKeyboardMarkup:
     _ = miniapp_url
     rows = [
         [KeyboardButton(text=MENU_AI_TOOLS), KeyboardButton(text=MENU_UTILITIES)],
-        [KeyboardButton(text=MENU_HELP)],
+        [KeyboardButton(text=MENU_HELP), KeyboardButton(text=MENU_VERSION_MODELS)],
         [KeyboardButton(text=MENU_CANCEL)],
     ]
 
