@@ -14,6 +14,10 @@ DEFAULT_DEEPSEEK_MODEL = "deepseek-ai/deepseek-v3.2"
 DEFAULT_KIMI_MODEL = "moonshotai/kimi-k2.5"
 DEFAULT_AI_BASE_URL = "https://integrate.api.nvidia.com/v1"
 DEFAULT_MINIAPP_URL = "https://ygirma315-cell.github.io/jo-ai/"
+LEGACY_MINIAPP_URL_ALIASES = {
+    "https://ygirma315-cell.github.io/my-miniapp": DEFAULT_MINIAPP_URL,
+    "https://ygirma315-cell.github.io/my-miniapp/": DEFAULT_MINIAPP_URL,
+}
 DEFAULT_LOCAL_ORIGINS = (
     "http://127.0.0.1:8000",
     "http://localhost:8000",
@@ -100,6 +104,22 @@ def _normalize_directory_url(value: str | None) -> str | None:
 
     normalized = parsed._replace(path=path, params="", query="", fragment="")
     return normalized.geturl() if path else normalized.geturl().rstrip("/")
+
+
+def _resolve_miniapp_url(raw_value: str | None) -> tuple[str | None, str | None]:
+    normalized = _normalize_directory_url(raw_value)
+    if not normalized:
+        return None, None
+
+    migrated = LEGACY_MINIAPP_URL_ALIASES.get(normalized)
+    if not migrated:
+        return normalized, None
+
+    warning = (
+        f"MINIAPP_URL uses deprecated Pages path {normalized}. "
+        f"Using {migrated} instead."
+    )
+    return migrated, warning
 
 
 def _origin_from_url(value: str | None) -> str | None:
@@ -190,10 +210,8 @@ def load_settings() -> Settings:
         or _normalize_public_url(_read_env("RENDER_EXTERNAL_URL"))
         or _normalize_public_url(_read_env("MINIAPP_API_BASE"))
     )
-    miniapp_url = (
-        _normalize_directory_url(_read_env("MINIAPP_URL"))
-        or DEFAULT_MINIAPP_URL
-    )
+    miniapp_url, miniapp_url_warning = _resolve_miniapp_url(_read_env("MINIAPP_URL"))
+    miniapp_url = miniapp_url or DEFAULT_MINIAPP_URL
     miniapp_api_base = _normalize_public_url(_read_env("MINIAPP_API_BASE")) or public_base_url
     telegram_webhook_url = _normalize_public_url(_read_env("TELEGRAM_WEBHOOK_URL")) or _join_public_url(
         public_base_url, "/telegram/webhook"
@@ -213,6 +231,8 @@ def load_settings() -> Settings:
         validation_warnings.append(
             "No PUBLIC_BASE_URL/RENDER_EXTERNAL_URL detected. Telegram webhook auto-configuration is disabled until a public URL is available."
         )
+    if miniapp_url_warning:
+        validation_warnings.append(miniapp_url_warning)
     if not miniapp_url:
         validation_warnings.append(
             "Mini app URL is not configured. Set MINIAPP_URL if the default GitHub Pages URL should be overridden."
