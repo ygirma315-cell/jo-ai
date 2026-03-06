@@ -29,20 +29,29 @@
 
 html,
 body {
+  height: 100%;
   min-height: 100%;
   width: 100%;
+}
+
+#app,
+#root,
+#appRoot {
+  min-height: 100%;
 }
 
 body {
   margin: 0;
   color: var(--ink-0);
   font-family: "DM Sans", "Segoe UI", sans-serif;
+  background-color: var(--bg-soft);
   background:
     radial-gradient(circle at 12% 14%, rgba(255, 203, 112, 0.46), transparent 28%),
     radial-gradient(circle at 86% 10%, rgba(152, 239, 227, 0.46), transparent 24%),
     radial-gradient(circle at 52% 108%, rgba(255, 220, 186, 0.62), transparent 32%),
     linear-gradient(180deg, var(--bg-soft), var(--bg-base));
   overflow-x: hidden;
+  overflow-y: auto;
 }
 
 body::before,
@@ -91,8 +100,56 @@ textarea {
 }
 
 .page-shell {
-  min-height: 100dvh;
+  min-height: 100%;
   padding: 24px;
+}
+
+.startup-banner {
+  position: fixed;
+  top: 10px;
+  left: 10px;
+  z-index: 110;
+  display: grid;
+  gap: 2px;
+  padding: 8px 10px;
+  border-radius: 12px;
+  background: rgba(17, 24, 39, 0.88);
+  color: #f8fafc;
+  font-size: 11px;
+  line-height: 1.35;
+  box-shadow: 0 10px 24px rgba(15, 23, 42, 0.18);
+  pointer-events: none;
+}
+
+.app-fallback {
+  position: fixed;
+  inset: 70px 12px 12px;
+  z-index: 120;
+  display: grid;
+  align-content: start;
+  gap: 10px;
+  padding: 18px;
+  border: 1px solid rgba(185, 28, 28, 0.16);
+  border-radius: 20px;
+  background: var(--tg-card, #ffffff);
+  color: var(--tg-text, var(--ink-0));
+  box-shadow: 0 18px 40px rgba(15, 23, 42, 0.18);
+  overflow: auto;
+}
+
+.app-fallback[hidden] {
+  display: none;
+}
+
+.app-fallback h1 {
+  font-size: 24px;
+}
+
+.app-fallback p {
+  margin: 0;
+  color: var(--tg-hint, var(--ink-1));
+  white-space: pre-wrap;
+  word-break: break-word;
 }
 
 .shell {

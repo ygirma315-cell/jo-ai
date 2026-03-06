@@ -2,6 +2,7 @@
   "use strict";
 
   const tg = window.Telegram && window.Telegram.WebApp ? window.Telegram.WebApp : null;
+  const bootDebug = window.__joMiniAppBoot || null;
   const API_BASE_STORAGE_KEY = "jo_api_base";
   const HOME_ENTRY_STORAGE_KEY = "jo_home_entered";
   const HISTORY_PREFIX = "jo_history_";
@@ -159,6 +160,50 @@
     return toolConfig[getToolId()] || null;
   }
 
+  function reportStartupError(label, error) {
+    const reporter = bootDebug && typeof bootDebug.reportError === "function" ? bootDebug.reportError : null;
+    if (reporter) {
+      reporter(label, error);
+      return;
+    }
+    console.error(`[JO AI Mini App] ${label}`, error);
+  }
+
+  function setRootMounted(value) {
+    if (bootDebug && typeof bootDebug.setRootMounted === "function") {
+      bootDebug.setRootMounted(value);
+    }
+  }
+
+  function markStartupComplete() {
+    if (!bootDebug) {
+      return;
+    }
+    bootDebug.startupComplete = true;
+    if (typeof bootDebug.hideFallback === "function") {
+      bootDebug.hideFallback();
+    }
+    if (typeof bootDebug.updateBanner === "function") {
+      bootDebug.updateBanner();
+    }
+  }
+
+  function getStorage(name) {
+    try {
+      return window[name] || null;
+    } catch (_error) {
+      return null;
+    }
+  }
+
+  function getLocalStorage() {
+    return getStorage("localStorage");
+  }
+
+  function getSessionStorage() {
+    return getStorage("sessionStorage");
+  }
+
   function normalizeHostedHomeUrl() {
     if (getPage() !== "home") {
       return;
@@ -247,6 +292,9 @@
   }
 
   function safeStorageGet(storage, key) {
+    if (!storage || typeof storage.getItem !== "function") {
+      return "";
+    }
     try {
       return storage.getItem(key) || "";
     } catch (_error) {
@@ -255,6 +303,9 @@
   }
 
   function safeStorageSet(storage, key, value) {
+    if (!storage || typeof storage.setItem !== "function") {
+      return;
+    }
     try {
       storage.setItem(key, value);
     } catch (_error) {
@@ -263,6 +314,9 @@
   }
 
   function safeStorageRemove(storage, key) {
+    if (!storage || typeof storage.removeItem !== "function") {
+      return;
+    }
     try {
       storage.removeItem(key);
     } catch (_error) {
@@ -453,7 +507,7 @@
       buffer.style.left = "-9999px";
       document.body.appendChild(buffer);
       buffer.select();
-      const copied = document.execCommand("copy");
+      const copied = typeof document.execCommand === "function" && document.execCommand("copy");
       document.body.removeChild(buffer);
       if (copied) {
         resolve();
@@ -536,29 +590,33 @@
   }
 
   function initTelegram() {
-    if (!tg) {
-      setUserInfo("Guest mode");
-      if (elements.welcomeMessage) {
-        elements.welcomeMessage.textContent = "Clean, free, fast, and flexible JO AI tools are ready in browser mode.";
+    try {
+      if (bootDebug && typeof bootDebug.applyTheme === "function") {
+        bootDebug.applyTheme();
       }
-      return;
-    }
 
-    tg.ready();
-    if (typeof tg.expand === "function") {
-      tg.expand();
-    }
+      if (!tg) {
+        setUserInfo("Guest mode");
+        if (elements.welcomeMessage) {
+          elements.welcomeMessage.textContent = "Clean, free, fast, and flexible JO AI tools are ready in browser mode.";
+        }
+        return;
+      }
 
-    const firstName =
-      (tg.initDataUnsafe &&
-        tg.initDataUnsafe.user &&
-        typeof tg.initDataUnsafe.user.first_name === "string" &&
-        tg.initDataUnsafe.user.first_name) ||
-      "there";
+      const firstName =
+        (tg.initDataUnsafe &&
+          tg.initDataUnsafe.user &&
+          typeof tg.initDataUnsafe.user.first_name === "string" &&
+          tg.initDataUnsafe.user.first_name) ||
+        "there";
 
-    setUserInfo(`Hi, ${firstName}`);
-    if (elements.welcomeMessage) {
-      elements.welcomeMessage.textContent = `Welcome, ${firstName}. Free, fast, and flexible JO AI tools are ready.`;
+      setUserInfo(`Hi, ${firstName}`);
+      if (elements.welcomeMessage) {
+        elements.welcomeMessage.textContent = `Welcome, ${firstName}. Free, fast, and flexible JO AI tools are ready.`;
+      }
+    } catch (error) {
+      reportStartupError("initTelegram", error);
+      setUserInfo("Guest mode");
     }
   }
 
@@ -823,11 +881,11 @@
       return;
     }
     const serializable = state.history.filter((entry) => !entry.pending).slice(-MAX_HISTORY_ITEMS);
-    safeStorageSet(window.sessionStorage, getHistoryKey(), JSON.stringify(serializable));
+    safeStorageSet(getSessionStorage(), getHistoryKey(), JSON.stringify(serializable));
   }
 
   function loadHistory() {
-    const raw = safeStorageGet(window.sessionStorage, getHistoryKey());
+    const raw = safeStorageGet(getSessionStorage(), getHistoryKey());
     if (!raw) {
       state.history = [];
       return;
@@ -924,7 +982,7 @@
   }
 
   function clearKimiPreview() {
-    if (state.kimiPreviewUrl) {
+    if (state.kimiPreviewUrl && window.URL && typeof window.URL.revokeObjectURL === "function") {
       URL.revokeObjectURL(state.kimiPreviewUrl);
       state.kimiPreviewUrl = "";
     }
@@ -1007,11 +1065,11 @@
   function buildApiBaseCandidates() {
     const queryBase = normalizeBase(getQueryParam("api_base"));
     const explicitBase = normalizeBase(window.JO_API_BASE);
-    const storedBase = normalizeBase(safeStorageGet(window.localStorage, API_BASE_STORAGE_KEY));
+    const storedBase = normalizeBase(safeStorageGet(getLocalStorage(), API_BASE_STORAGE_KEY));
     const sameOriginBase = shouldTrySameOriginApi() ? normalizeBase(window.location.origin) : "";
 
     if (queryBase) {
-      safeStorageSet(window.localStorage, API_BASE_STORAGE_KEY, queryBase);
+      safeStorageSet(getLocalStorage(), API_BASE_STORAGE_KEY, queryBase);
     }
 
     return unique([
@@ -1055,7 +1113,7 @@
       const healthy = await isApiHealthy(candidate);
       if (healthy) {
         state.apiBase = candidate;
-        safeStorageSet(window.localStorage, API_BASE_STORAGE_KEY, candidate);
+        safeStorageSet(getLocalStorage(), API_BASE_STORAGE_KEY, candidate);
         setStatus(getPage() === "home" ? "Studio ready" : "Assistant ready");
         return candidate;
       }
@@ -1300,7 +1358,12 @@
     }
 
     clearKimiPreview();
-    if (elements.kimiPreview && elements.kimiPreviewWrap) {
+    if (
+      elements.kimiPreview &&
+      elements.kimiPreviewWrap &&
+      window.URL &&
+      typeof window.URL.createObjectURL === "function"
+    ) {
       state.kimiPreviewUrl = URL.createObjectURL(file);
       elements.kimiPreview.src = state.kimiPreviewUrl;
       elements.kimiPreviewWrap.hidden = false;
@@ -1506,7 +1569,7 @@
     }
   }
   function initHomePage() {
-    const seen = safeStorageGet(window.sessionStorage, HOME_ENTRY_STORAGE_KEY) === "yes";
+    const seen = safeStorageGet(getSessionStorage(), HOME_ENTRY_STORAGE_KEY) === "yes";
     if (seen && elements.welcomeOverlay) {
       elements.welcomeOverlay.classList.add("hidden");
     }
@@ -1514,7 +1577,7 @@
     if (elements.openAppBtn && elements.welcomeOverlay) {
       elements.openAppBtn.addEventListener("click", () => {
         elements.welcomeOverlay.classList.add("hidden");
-        safeStorageSet(window.sessionStorage, HOME_ENTRY_STORAGE_KEY, "yes");
+        safeStorageSet(getSessionStorage(), HOME_ENTRY_STORAGE_KEY, "yes");
       });
     }
   }
@@ -1529,32 +1592,74 @@
     setLoadingHint("Ready when you are.");
   }
 
+  function runAfterFirstPaint(task) {
+    const runner = () => {
+      window.setTimeout(() => {
+        Promise.resolve()
+          .then(task)
+          .catch((error) => {
+            reportStartupError("post-paint task", error);
+          });
+      }, 0);
+    };
+
+    if (typeof window.requestAnimationFrame === "function") {
+      window.requestAnimationFrame(runner);
+      return;
+    }
+
+    runner();
+  }
+
   async function boot() {
     normalizeHostedHomeUrl();
     polishStaticUi();
     ensureGlobalUi();
     bindGlobalUi();
     collectElements();
+    setRootMounted(Boolean(document.querySelector("#appRoot, #app, #root, .page-shell")));
     setVersionBadge();
     initTelegram();
     configureSupportActions();
 
     if (getPage() === "home") {
       initHomePage();
-      await resolveApiBase();
+      markStartupComplete();
+      runAfterFirstPaint(async () => {
+        await resolveApiBase();
+      });
       return;
     }
 
     if (getPage() === "help") {
       setStatus("Support page");
+      markStartupComplete();
       return;
     }
 
     if (getPage() === "tool") {
       initToolPage();
-      await resolveApiBase();
+      markStartupComplete();
+      runAfterFirstPaint(async () => {
+        await resolveApiBase();
+      });
+      return;
     }
+
+    markStartupComplete();
   }
 
-  boot();
+  function startBoot() {
+    Promise.resolve()
+      .then(boot)
+      .catch((error) => {
+        reportStartupError("boot", error);
+      });
+  }
+
+  if (document.readyState === "loading") {
+    document.addEventListener("DOMContentLoaded", startBoot, { once: true });
+  } else {
+    startBoot();
+  }
 })();
