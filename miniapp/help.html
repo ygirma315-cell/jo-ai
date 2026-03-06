@@ -1,0 +1,93 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <meta http-equiv="Cache-Control" content="no-store, max-age=0">
+  <meta http-equiv="Pragma" content="no-cache">
+  <meta http-equiv="Expires" content="0">
+  <title>JO AI Help</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link
+    href="https://fonts.googleapis.com/css2?family=DM+Sans:wght@400;500;700&family=Space+Grotesk:wght@500;700&display=swap"
+    rel="stylesheet"
+  >
+  <link rel="stylesheet" href="style.css">
+  <script src="https://telegram.org/js/telegram-web-app.js"></script>
+  <script src="config.js"></script>
+  <script src="app.js" defer></script>
+</head>
+<body data-page="help">
+  <main class="page-shell">
+    <section class="shell">
+      <header class="site-header">
+        <div>
+          <a class="back-link" href="index.html">Back to menu</a>
+          <p class="eyebrow">JO AI CHAT BOT</p>
+          <h1 class="page-title">Help</h1>
+          <p class="subtitle">Quick answers, clean support notes, and no extra clutter.</p>
+        </div>
+        <div class="status-cluster">
+          <span id="status" class="chip">Support page</span>
+          <span id="userInfo" class="chip muted">Guest mode</span>
+        </div>
+      </header>
+
+      <section class="hero-card card tool-hero">
+        <p class="section-kicker">HELP PAGE</p>
+        <h2>FAQ and support</h2>
+        <p>Open a question to see the answer, then contact support only if you still need help.</p>
+      </section>
+
+      <section class="card faq-card">
+        <div class="panel-head">
+          <div>
+            <p class="section-kicker">FAQ</p>
+            <h2>Common questions</h2>
+          </div>
+        </div>
+
+        <div class="faq-list">
+          <details class="faq-item" open>
+            <summary>Why is the response taking so long?</summary>
+            <p>
+              When the API is disconnected or sleeping, responses may take longer or may not work temporarily.
+              Please wait and try again, or contact <a href="https://t.me/grpbuyer" target="_blank" rel="noopener noreferrer">@grpbuyer</a>.
+            </p>
+          </details>
+
+          <details class="faq-item">
+            <summary>How do I copy a response quickly?</summary>
+            <p>Use the Copy last button at the top of the output area, or use the copy button on a response bubble.</p>
+          </details>
+
+          <details class="faq-item">
+            <summary>Why is my image not uploading on Kimi Vision?</summary>
+            <p>Make sure the file is a common image type such as PNG, JPG, JPEG, WEBP, GIF, or BMP and is not too large.</p>
+          </details>
+
+          <details class="faq-item">
+            <summary>Why is there no conversation on a page yet?</summary>
+            <p>The history area fills after you send your first request. Use Clear history if you want a fresh page.</p>
+          </details>
+        </div>
+      </section>
+
+      <section class="card support-card">
+        <div class="panel-head">
+          <div>
+            <p class="section-kicker">SUPPORT</p>
+            <h2>Need more help?</h2>
+          </div>
+        </div>
+        <p>If something keeps failing, copy a short support note and send it with your message.</p>
+        <div class="actions">
+          <a id="contactBtn" class="btn" href="https://t.me/grpbuyer" target="_blank" rel="noopener noreferrer">Message @grpbuyer</a>
+          <button id="reportBtn" class="btn primary" type="button">Copy support note</button>
+        </div>
+      </section>
+    </section>
+  </main>
+</body>
+</html>

@@ -1,92 +1,219 @@
-
 (() => {
   "use strict";
 
   const tg = window.Telegram && window.Telegram.WebApp ? window.Telegram.WebApp : null;
   const API_BASE_STORAGE_KEY = "jo_api_base";
-  const FRONTEND_VERSION = "v1.0.3";
+  const HOME_ENTRY_STORAGE_KEY = "jo_home_entered";
+  const HISTORY_PREFIX = "jo_history_";
+  const FRONTEND_VERSION = "v1.2.0";
+  const MAX_HISTORY_ITEMS = 18;
+  const MAX_UPLOAD_BYTES = 8 * 1024 * 1024;
 
-  const elements = {
-    welcomeOverlay: document.getElementById("welcomeOverlay"),
-    welcomeMessage: document.getElementById("welcomeMessage"),
-    openAppBtn: document.getElementById("openAppBtn"),
-    status: document.getElementById("status"),
-    userInfo: document.getElementById("userInfo"),
-    modes: Array.from(document.querySelectorAll(".mode")),
-    inputLabel: document.getElementById("inputLabel"),
-    aiInput: document.getElementById("aiInput"),
-    promptTypeWrap: document.getElementById("promptTypeWrap"),
-    promptType: document.getElementById("promptType"),
-    imageTypeWrap: document.getElementById("imageTypeWrap"),
-    imageType: document.getElementById("imageType"),
-    kimiImageWrap: document.getElementById("kimiImageWrap"),
-    kimiImage: document.getElementById("kimiImage"),
-    uploadInfo: document.getElementById("uploadInfo"),
-    sendBtn: document.getElementById("sendBtn"),
-    clearBtn: document.getElementById("clearBtn"),
-    copyBtn: document.getElementById("copyBtn"),
-    downloadImageBtn: document.getElementById("downloadImageBtn"),
-    loadingHint: document.getElementById("loadingHint"),
-    apiState: document.getElementById("apiState"),
-    aiOutput: document.getElementById("aiOutput"),
-    imageWrap: document.getElementById("imageWrap"),
-    imagePreview: document.getElementById("imagePreview"),
-    imageCaption: document.getElementById("imageCaption"),
-    versionBadge: document.getElementById("versionBadge"),
-    toast: document.getElementById("toast"),
-    contactBtn: document.getElementById("contactBtn"),
-    reportBtn: document.getElementById("reportBtn"),
+  const loadingMessages = [
+    "Processing...",
+    "Generating...",
+    "Thinking...",
+    "Preparing response...",
+  ];
+
+  const updates = [
+    {
+      version: "v1.2.0",
+      title: "Multi-page JO AI refresh",
+      items: [
+        "New welcome screen and homepage model menu",
+        "Dedicated pages for each JO AI tool",
+        "Conversation-style history with easy copy and save actions",
+        "Help page and clickable update panel",
+      ],
+    },
+    {
+      version: "v1.1.0",
+      title: "Cleaner AI-only base",
+      items: [
+        "Removed old extra categories and non-AI clutter",
+        "Kept the core JO AI tools and current API behavior",
+      ],
+    },
+  ];
+
+  const toolConfig = {
+    chat: {
+      title: "JO AI Chat",
+      description: "Fast, general-purpose chat for everyday requests.",
+      lead: "Ask clearly, keep the thread clean, and copy the last reply in one click.",
+      example: "Explain recursion like I am new to programming.",
+      label: "Message",
+      placeholder: "Ask anything clearly and directly.",
+      rows: 8,
+      historyTitle: "Conversation",
+    },
+    code: {
+      title: "Code Generator",
+      description: "Longer prompts, clearer code output, and a roomier workspace.",
+      lead: "Use a taller input area, paste detailed requirements, and review code comfortably.",
+      example: "Create a Python function that validates emails and returns clear error messages.",
+      label: "Code request",
+      placeholder: "Describe the language, framework, constraints, input/output, and edge cases.",
+      rows: 12,
+      historyTitle: "Code responses",
+    },
+    deepseek: {
+      title: "Deep Analysis",
+      description: "Structured reasoning with clearer summaries, analysis, and final answers.",
+      lead: "Use this when you want a more deliberate breakdown instead of a quick reply.",
+      example: "Compare SQL and NoSQL for a fast-growing product and explain the tradeoffs.",
+      label: "Deep analysis request",
+      placeholder: "Ask for comparison, reasoning, tradeoffs, or a more structured decision.",
+      rows: 8,
+      historyTitle: "Analysis thread",
+    },
+    research: {
+      title: "Research",
+      description: "Ask for summaries, details, risks, and next steps on one page.",
+      lead: "Use this page for detailed explanations, practical context, and next-step guidance.",
+      example: "Explain the pros and cons of remote teams for a startup and suggest best practices.",
+      label: "Research question",
+      placeholder: "Ask for a summary, detailed explanation, risks, tradeoffs, or next steps.",
+      rows: 8,
+      historyTitle: "Research thread",
+    },
+    prompt: {
+      title: "Prompt Builder",
+      description: "Create clearer prompts with a focused page and a clean response thread.",
+      lead: "Choose a prompt type, describe your goal, and keep the final output easy to copy.",
+      example: "Create a concise onboarding prompt for a customer support assistant.",
+      label: "Prompt details",
+      placeholder: "Describe the goal, audience, tone, format, and any constraints you want.",
+      rows: 8,
+      historyTitle: "Prompt results",
+      needsPromptType: true,
+      examplePromptType: "assistant prompt",
+    },
+    image: {
+      title: "Image Generator",
+      description: "Describe the visual, pick a style, and keep the result easy to save.",
+      lead: "Set the style, describe the scene, and save the latest image with one click.",
+      example: "A cinematic night city street with rain reflections and soft neon lighting.",
+      label: "Image description",
+      placeholder: "Describe the subject, style, mood, lighting, and composition.",
+      rows: 8,
+      historyTitle: "Image results",
+      needsImageType: true,
+      supportsImageSave: true,
+      exampleImageType: "cyberpunk",
+    },
+    kimi: {
+      title: "Kimi Vision",
+      description: "Upload an image and ask for a clean description in a friendlier workspace.",
+      lead: "Use the upload area, preview the image, and keep each response in a clean history.",
+      example: "Describe the image and point out the main objects and the setting.",
+      label: "Image request",
+      placeholder: "Optional instruction. Example: summarize the image, identify objects, or explain the scene.",
+      rows: 8,
+      historyTitle: "Vision history",
+      needsUpload: true,
+      supportsImageSave: false,
+    },
   };
 
+  let elements = {};
+
   const state = {
-    activeMode: "chat",
     apiBase: "",
+    isBusy: false,
     loadingTimer: null,
     loadingIndex: 0,
-    isBusy: false,
+    pendingId: "",
+    history: [],
     lastOutputText: "",
     lastImageDataUrl: "",
     toastTimer: null,
+    emptyTemplate: "",
+    kimiPreviewUrl: "",
   };
 
-  const modeUi = {
-    chat: {
-      label: "Message",
-      placeholder: "Ask anything. Example: Give me a clear explanation of recursion.",
-    },
-    code: {
-      label: "Code request",
-      placeholder: "Describe the code you need and include language/framework.",
-    },
-    deepseek: {
-      label: "DeepSeek request",
-      placeholder: "Ask for a sharper analytical answer with concise reasoning and a clear final result.",
-    },
-    research: {
-      label: "Research question",
-      placeholder: "Ask for a detailed explanation with risks, tradeoffs, and next steps.",
-    },
-    prompt: {
-      label: "Prompt details",
-      placeholder: "Explain your goal, audience, tone, and output format.",
-    },
-    image: {
-      label: "Image description",
-      placeholder: "Describe subject, style, lighting, mood, and composition.",
-    },
-    kimi: {
-      label: "Describe task",
-      placeholder: "Optional instruction. Example: Summarize what this image contains.",
-    },
-  };
+  function byId(id) {
+    return document.getElementById(id);
+  }
 
-  const loadingMessages = [
-    "Generating response...",
-    "Thinking deeply...",
-    "Processing your request...",
-    "Preparing the best output...",
-    "Almost done...",
-  ];
+  function getPage() {
+    return document.body.dataset.page || "home";
+  }
+
+  function getToolId() {
+    return document.body.dataset.tool || "";
+  }
+
+  function currentTool() {
+    return toolConfig[getToolId()] || null;
+  }
+
+  function collectElements() {
+    elements = {
+      welcomeOverlay: byId("welcomeOverlay"),
+      welcomeMessage: byId("welcomeMessage"),
+      openAppBtn: byId("openAppBtn"),
+      status: byId("status"),
+      userInfo: byId("userInfo"),
+      toolTitle: byId("toolTitle"),
+      toolDescription: byId("toolDescription"),
+      toolLead: byId("toolLead"),
+      toolExample: byId("toolExample"),
+      useExampleBtn: byId("useExampleBtn"),
+      toolForm: byId("toolForm"),
+      inputLabel: byId("inputLabel"),
+      aiInput: byId("aiInput"),
+      promptTypeWrap: byId("promptTypeWrap"),
+      promptType: byId("promptType"),
+      imageTypeWrap: byId("imageTypeWrap"),
+      imageType: byId("imageType"),
+      kimiImageWrap: byId("kimiImageWrap"),
+      kimiImage: byId("kimiImage"),
+      kimiPreviewWrap: byId("kimiPreviewWrap"),
+      kimiPreview: byId("kimiPreview"),
+      uploadInfo: byId("uploadInfo"),
+      sendBtn: byId("sendBtn"),
+      clearBtn: byId("clearBtn"),
+      copyBtn: byId("copyBtn"),
+      downloadImageBtn: byId("downloadImageBtn"),
+      loadingHint: byId("loadingHint"),
+      apiState: byId("apiState"),
+      historyList: byId("historyList"),
+      emptyState: byId("emptyState"),
+      historyTitle: byId("historyTitle"),
+      contactBtn: byId("contactBtn"),
+      reportBtn: byId("reportBtn"),
+      versionBadge: byId("versionBadge"),
+      updatesModal: byId("updatesModal"),
+      updatesClose: byId("updatesClose"),
+      toast: byId("toast"),
+    };
+  }
+
+  function safeStorageGet(storage, key) {
+    try {
+      return storage.getItem(key) || "";
+    } catch (_error) {
+      return "";
+    }
+  }
+
+  function safeStorageSet(storage, key, value) {
+    try {
+      storage.setItem(key, value);
+    } catch (_error) {
+      // ignore storage failures
+    }
+  }
+
+  function safeStorageRemove(storage, key) {
+    try {
+      storage.removeItem(key);
+    } catch (_error) {
+      // ignore storage failures
+    }
+  }
 
   function getQueryParam(name) {
     try {
@@ -98,16 +225,7 @@
   }
 
   function unique(values) {
-    const seen = new Set();
-    const result = [];
-    for (const value of values) {
-      if (!value || seen.has(value)) {
-        continue;
-      }
-      seen.add(value);
-      result.push(value);
-    }
-    return result;
+    return values.filter((value, index, array) => value && array.indexOf(value) === index);
   }
 
   function normalizeBase(rawBase) {
@@ -132,105 +250,119 @@
     return "";
   }
 
-  function setStatus(text) {
-    if (elements.status) {
-      elements.status.textContent = text;
-    }
+  function createId() {
+    return `${Date.now()}-${Math.random().toString(16).slice(2, 8)}`;
   }
-
-  function setUserInfo(text) {
-    if (elements.userInfo) {
-      elements.userInfo.textContent = text;
+  function ensureGlobalUi() {
+    if (!byId("versionBadge")) {
+      const badge = document.createElement("button");
+      badge.id = "versionBadge";
+      badge.type = "button";
+      badge.className = "version-badge";
+      document.body.appendChild(badge);
     }
-  }
 
-  function setVersionBadge(version) {
-    if (!elements.versionBadge) {
-      return;
-    }
-    const safeVersion = String(version || "").trim();
-    if (!safeVersion) {
-      elements.versionBadge.textContent = `Version: ${FRONTEND_VERSION}`;
-      return;
-    }
-    elements.versionBadge.textContent = `Version: ${safeVersion}`;
-  }
+    if (!byId("updatesModal")) {
+      const modal = document.createElement("div");
+      modal.id = "updatesModal";
+      modal.className = "updates-modal";
 
-  function extractRuntimeInfo(data) {
-    const version = data && typeof data.version === "string" ? data.version.trim() : "";
-    const models = {};
-    const deploy = {};
-    const service = {};
-    const rawModels = data && typeof data.models === "object" && data.models ? data.models : {};
-    const rawDeploy = data && typeof data.deploy === "object" && data.deploy ? data.deploy : {};
-    const rawService = data && typeof data.service === "object" && data.service ? data.service : {};
+      const card = document.createElement("section");
+      card.className = "updates-card";
 
-    for (const [key, value] of Object.entries(rawModels)) {
-      if (typeof value === "string" && value.trim()) {
-        models[key] = value.trim();
+      const head = document.createElement("div");
+      head.className = "panel-head";
+
+      const copy = document.createElement("div");
+      const eyebrow = document.createElement("p");
+      eyebrow.className = "section-kicker";
+      eyebrow.textContent = "VERSION";
+      const title = document.createElement("h2");
+      title.textContent = "Recent updates";
+      copy.appendChild(eyebrow);
+      copy.appendChild(title);
+
+      const close = document.createElement("button");
+      close.id = "updatesClose";
+      close.type = "button";
+      close.className = "btn small";
+      close.textContent = "Close";
+
+      head.appendChild(copy);
+      head.appendChild(close);
+      card.appendChild(head);
+
+      const list = document.createElement("div");
+      list.className = "updates-list";
+      for (const item of updates) {
+        const row = document.createElement("section");
+        row.className = "updates-item";
+        const itemTitle = document.createElement("h3");
+        itemTitle.textContent = `${item.version} - ${item.title}`;
+        const itemList = document.createElement("ul");
+        for (const point of item.items) {
+          const li = document.createElement("li");
+          li.textContent = point;
+          itemList.appendChild(li);
+        }
+        row.appendChild(itemTitle);
+        row.appendChild(itemList);
+        list.appendChild(row);
       }
+
+      card.appendChild(list);
+      modal.appendChild(card);
+      document.body.appendChild(modal);
     }
 
-    for (const [key, value] of Object.entries(rawDeploy)) {
-      if (typeof value === "string" && value.trim()) {
-        deploy[key] = value.trim();
+    if (!byId("toast")) {
+      const toast = document.createElement("div");
+      toast.id = "toast";
+      toast.className = "toast";
+      toast.hidden = true;
+      document.body.appendChild(toast);
+    }
+
+    collectElements();
+  }
+
+  function bindGlobalUi() {
+    if (elements.versionBadge) {
+      elements.versionBadge.addEventListener("click", openUpdatesModal);
+    }
+    if (elements.updatesClose) {
+      elements.updatesClose.addEventListener("click", closeUpdatesModal);
+    }
+    if (elements.updatesModal) {
+      elements.updatesModal.addEventListener("click", (event) => {
+        if (event.target === elements.updatesModal) {
+          closeUpdatesModal();
+        }
+      });
+    }
+    document.addEventListener("keydown", (event) => {
+      if (event.key === "Escape") {
+        closeUpdatesModal();
       }
-    }
-
-    for (const [key, value] of Object.entries(rawService)) {
-      if (typeof value === "string" && value.trim()) {
-        service[key] = value.trim();
-      }
-    }
-
-    return { version, models, deploy, service };
+    });
   }
 
-  function setApiState(text, variant = "muted") {
-    if (!elements.apiState) {
-      return;
-    }
-    elements.apiState.textContent = text;
-    elements.apiState.classList.remove("muted", "success", "error");
-    elements.apiState.classList.add(variant);
-  }
-
-  function setLoadingHint(text) {
-    if (elements.loadingHint) {
-      elements.loadingHint.textContent = text;
+  function openUpdatesModal() {
+    if (elements.updatesModal) {
+      elements.updatesModal.classList.add("open");
     }
   }
 
-  function setBusy(busy) {
-    state.isBusy = busy;
-    if (elements.sendBtn) {
-      elements.sendBtn.disabled = busy;
+  function closeUpdatesModal() {
+    if (elements.updatesModal) {
+      elements.updatesModal.classList.remove("open");
     }
-    if (elements.clearBtn) {
-      elements.clearBtn.disabled = busy;
-    }
-    if (elements.copyBtn) {
-      elements.copyBtn.disabled = busy || !state.lastOutputText;
-    }
-    if (elements.downloadImageBtn) {
-      elements.downloadImageBtn.disabled = busy || !state.lastImageDataUrl;
-    }
+  }
 
-    if (busy) {
-      state.loadingIndex = 0;
-      setApiState("processing", "muted");
-      setLoadingHint(loadingMessages[state.loadingIndex]);
-      clearInterval(state.loadingTimer);
-      state.loadingTimer = setInterval(() => {
-        state.loadingIndex = (state.loadingIndex + 1) % loadingMessages.length;
-        setLoadingHint(loadingMessages[state.loadingIndex]);
-      }, 900);
-      return;
+  function setVersionBadge() {
+    if (elements.versionBadge) {
+      elements.versionBadge.textContent = `Version ${FRONTEND_VERSION}`;
     }
-
-    clearInterval(state.loadingTimer);
-    state.loadingTimer = null;
-    setLoadingHint("Ready when you are.");
   }
 
   function showToast(text, variant = "success", durationMs = 2600) {
@@ -249,154 +381,225 @@
     }, durationMs);
   }
 
+  function copyText(text) {
+    const value = String(text || "").trim();
+    if (!value) {
+      return Promise.reject(new Error("Nothing to copy yet."));
+    }
+    if (navigator.clipboard && navigator.clipboard.writeText) {
+      return navigator.clipboard.writeText(value);
+    }
+
+    return new Promise((resolve, reject) => {
+      const buffer = document.createElement("textarea");
+      buffer.value = value;
+      buffer.setAttribute("readonly", "");
+      buffer.style.position = "fixed";
+      buffer.style.left = "-9999px";
+      document.body.appendChild(buffer);
+      buffer.select();
+      const copied = document.execCommand("copy");
+      document.body.removeChild(buffer);
+      if (copied) {
+        resolve();
+      } else {
+        reject(new Error("Copy failed."));
+      }
+    });
+  }
+
+  function setStatus(text) {
+    if (elements.status) {
+      elements.status.textContent = text;
+    }
+  }
+
+  function setUserInfo(text) {
+    if (elements.userInfo) {
+      elements.userInfo.textContent = text;
+    }
+  }
+
+  function setApiState(text, variant = "muted") {
+    if (!elements.apiState) {
+      return;
+    }
+    elements.apiState.textContent = text;
+    elements.apiState.classList.remove("muted", "success", "error");
+    elements.apiState.classList.add(variant);
+  }
+
+  function setLoadingHint(text) {
+    if (elements.loadingHint) {
+      elements.loadingHint.textContent = text;
+    }
+  }
+
+  function syncOutputButtons() {
+    if (elements.copyBtn) {
+      elements.copyBtn.disabled = state.isBusy || !state.lastOutputText;
+    }
+    if (elements.downloadImageBtn) {
+      const config = currentTool();
+      if (config && config.supportsImageSave) {
+        elements.downloadImageBtn.hidden = false;
+        elements.downloadImageBtn.disabled = state.isBusy || !state.lastImageDataUrl;
+      } else {
+        elements.downloadImageBtn.hidden = true;
+      }
+    }
+  }
+
+  function setBusy(busy) {
+    state.isBusy = busy;
+    if (elements.sendBtn) {
+      elements.sendBtn.disabled = busy;
+    }
+    if (elements.clearBtn) {
+      elements.clearBtn.disabled = busy;
+    }
+
+    clearInterval(state.loadingTimer);
+    state.loadingTimer = null;
+
+    if (busy) {
+      state.loadingIndex = 0;
+      setApiState("working", "muted");
+      setLoadingHint(loadingMessages[0]);
+      updatePendingText(loadingMessages[0]);
+      state.loadingTimer = setInterval(() => {
+        state.loadingIndex = (state.loadingIndex + 1) % loadingMessages.length;
+        const nextText = loadingMessages[state.loadingIndex];
+        setLoadingHint(nextText);
+        updatePendingText(nextText);
+      }, 850);
+    } else {
+      setLoadingHint("Ready when you are.");
+    }
+
+    syncOutputButtons();
+  }
+
+  function initTelegram() {
+    if (!tg) {
+      setUserInfo("Guest mode");
+      if (elements.welcomeMessage) {
+        elements.welcomeMessage.textContent = "Clean, free, fast, and flexible JO AI tools are ready in browser mode.";
+      }
+      return;
+    }
+
+    tg.ready();
+    if (typeof tg.expand === "function") {
+      tg.expand();
+    }
+
+    const firstName =
+      (tg.initDataUnsafe &&
+        tg.initDataUnsafe.user &&
+        typeof tg.initDataUnsafe.user.first_name === "string" &&
+        tg.initDataUnsafe.user.first_name) ||
+      "there";
+
+    setUserInfo(`Hi, ${firstName}`);
+    if (elements.welcomeMessage) {
+      elements.welcomeMessage.textContent = `Welcome, ${firstName}. Free, fast, and flexible JO AI tools are ready.`;
+    }
+  }
+
+  function buildSupportNote() {
+    const parts = [
+      "JO AI mini app support note",
+      `time_utc=${new Date().toISOString()}`,
+      `page=${getPage()}`,
+      getToolId() ? `tool=${getToolId()}` : "",
+      `version=${FRONTEND_VERSION}`,
+      `status=${elements.status ? elements.status.textContent : "unknown"}`,
+      `user_agent=${navigator.userAgent}`,
+    ];
+    return parts.filter(Boolean).join("\n");
+  }
+
+  function configureSupportActions() {
+    const querySupport = normalizeSupportUrl(getQueryParam("support_url"));
+    if (querySupport && elements.contactBtn) {
+      elements.contactBtn.href = querySupport;
+    }
+
+    if (elements.reportBtn) {
+      elements.reportBtn.addEventListener("click", async () => {
+        try {
+          await copyText(buildSupportNote());
+          showToast("Support note copied.");
+        } catch (error) {
+          showToast(error instanceof Error ? error.message : "Could not copy support note.", "error");
+        }
+      });
+    }
+  }
   function escapeHtml(input) {
     return String(input || "")
       .replace(/&/g, "&amp;")
       .replace(/</g, "&lt;")
       .replace(/>/g, "&gt;")
-      .replace(/\"/g, "&quot;")
+      .replace(/"/g, "&quot;")
       .replace(/'/g, "&#39;");
-  }
-
-  async function copyText(text) {
-    const value = String(text || "");
-    if (!value.trim()) {
-      throw new Error("Nothing to copy.");
-    }
-    if (navigator.clipboard && navigator.clipboard.writeText) {
-      await navigator.clipboard.writeText(value);
-      return;
-    }
-
-    const buffer = document.createElement("textarea");
-    buffer.value = value;
-    buffer.setAttribute("readonly", "");
-    buffer.style.position = "fixed";
-    buffer.style.left = "-9999px";
-    document.body.appendChild(buffer);
-    buffer.select();
-    const ok = document.execCommand("copy");
-    document.body.removeChild(buffer);
-    if (!ok) {
-      throw new Error("Clipboard write failed.");
-    }
-  }
-
-  function clearOutput() {
-    state.lastOutputText = "";
-    if (elements.aiOutput) {
-      elements.aiOutput.innerHTML = '<p class="placeholder">Your AI response will appear here.</p>';
-    }
-    if (elements.copyBtn) {
-      elements.copyBtn.disabled = true;
-    }
-  }
-
-  function hideImage() {
-    state.lastImageDataUrl = "";
-    if (elements.imagePreview) {
-      elements.imagePreview.removeAttribute("src");
-    }
-    if (elements.imageWrap) {
-      elements.imageWrap.hidden = true;
-    }
-    if (elements.downloadImageBtn) {
-      elements.downloadImageBtn.disabled = true;
-    }
-  }
-
-  function normalizeImageUrl(rawImage) {
-    const imageValue = String(rawImage || "").trim();
-    if (!imageValue) {
-      return "";
-    }
-    if (imageValue.startsWith("data:image")) {
-      return imageValue;
-    }
-    const compact = imageValue.replace(/\s+/g, "");
-    return `data:image/png;base64,${compact}`;
-  }
-
-  function showImage(base64Payload) {
-    const dataUrl = normalizeImageUrl(base64Payload);
-    if (!dataUrl || !elements.imagePreview || !elements.imageWrap) {
-      hideImage();
-      return;
-    }
-
-    elements.imagePreview.onload = () => {
-      if (elements.imageCaption) {
-        elements.imageCaption.textContent = "Generated image preview";
-      }
-      if (elements.downloadImageBtn) {
-        elements.downloadImageBtn.disabled = false;
-      }
-      state.lastImageDataUrl = dataUrl;
-      elements.imageWrap.hidden = false;
-    };
-    elements.imagePreview.onerror = () => {
-      hideImage();
-      showToast("Image could not be rendered. Please try again.", "error");
-    };
-    elements.imagePreview.src = dataUrl;
   }
 
   function renderTextBlock(text) {
     const fragment = document.createDocumentFragment();
-    const lines = text.split(/\r?\n/);
-    let listElement = null;
+    const lines = String(text || "").split(/\r?\n/);
+    let list = null;
     let listType = "";
 
     const flushList = () => {
-      if (listElement) {
-        fragment.appendChild(listElement);
-        listElement = null;
+      if (list) {
+        fragment.appendChild(list);
+        list = null;
         listType = "";
       }
     };
 
     for (const rawLine of lines) {
       const line = rawLine.trimEnd();
-      const headingMatch = line.match(/^(#{1,3})\s+(.+)$/);
-      const bulletMatch = line.match(/^[-*+]\s+(.+)$/);
-      const numberMatch = line.match(/^\d+\.\s+(.+)$/);
-
       if (!line.trim()) {
         flushList();
         continue;
       }
 
+      const headingMatch = line.match(/^(#{1,3})\s+(.+)$/);
+      const bulletMatch = line.match(/^[-*+]\s+(.+)$/);
+      const numberMatch = line.match(/^\d+\.\s+(.+)$/);
+
       if (headingMatch) {
         flushList();
-        const heading = document.createElement(
-          headingMatch[1].length === 1 ? "h3" : headingMatch[1].length === 2 ? "h4" : "h5"
-        );
+        const heading = document.createElement(headingMatch[1].length === 1 ? "h3" : "h4");
         heading.innerHTML = escapeHtml(headingMatch[2]);
         fragment.appendChild(heading);
         continue;
       }
 
       if (bulletMatch) {
-        if (!listElement || listType !== "ul") {
+        if (!list || listType !== "ul") {
           flushList();
-          listElement = document.createElement("ul");
+          list = document.createElement("ul");
           listType = "ul";
         }
         const item = document.createElement("li");
         item.innerHTML = escapeHtml(bulletMatch[1]);
-        listElement.appendChild(item);
+        list.appendChild(item);
         continue;
       }
 
       if (numberMatch) {
-        if (!listElement || listType !== "ol") {
+        if (!list || listType !== "ol") {
           flushList();
-          listElement = document.createElement("ol");
+          list = document.createElement("ol");
           listType = "ol";
         }
         const item = document.createElement("li");
         item.innerHTML = escapeHtml(numberMatch[1]);
-        listElement.appendChild(item);
+        list.appendChild(item);
         continue;
       }
 
@@ -410,87 +613,302 @@
     return fragment;
   }
 
-  function buildCodeBlock(rawSegment) {
-    const normalized = rawSegment.replace(/\r/g, "");
-    const lines = normalized.split("\n");
-    let language = "code";
-    let codeBody = normalized;
-
-    if (lines.length > 1 && /^[A-Za-z0-9_+#.-]{1,20}$/.test(lines[0].trim())) {
-      language = lines[0].trim().toLowerCase();
-      codeBody = lines.slice(1).join("\n");
-    }
-
-    if (!codeBody.trim()) {
-      codeBody = normalized;
-    }
-
+  function buildCodeBlock(segment) {
     const wrapper = document.createElement("section");
     wrapper.className = "code-block";
 
     const head = document.createElement("header");
     head.className = "code-head";
 
-    const lang = document.createElement("span");
-    lang.className = "code-lang";
-    lang.textContent = language;
+    const label = document.createElement("span");
+    label.textContent = "code";
 
     const copy = document.createElement("button");
-    copy.className = "code-copy";
     copy.type = "button";
     copy.textContent = "Copy code";
     copy.addEventListener("click", async () => {
       try {
-        await copyText(codeBody);
+        await copyText(segment);
         showToast("Code copied.");
       } catch (error) {
-        showToast(error instanceof Error ? error.message : "Failed to copy code.", "error");
+        showToast(error instanceof Error ? error.message : "Copy failed.", "error");
       }
     });
 
-    head.appendChild(lang);
-    head.appendChild(copy);
-
     const pre = document.createElement("pre");
     const code = document.createElement("code");
-    code.textContent = codeBody;
+    code.textContent = segment.replace(/^\n+|\n+$/g, "");
     pre.appendChild(code);
 
+    head.appendChild(label);
+    head.appendChild(copy);
     wrapper.appendChild(head);
     wrapper.appendChild(pre);
     return wrapper;
   }
-  function renderOutput(text) {
+
+  function renderRichText(container, text) {
+    const target = container || document.createElement("div");
+    target.innerHTML = "";
     const raw = String(text || "").trim();
-    if (!elements.aiOutput) {
-      return;
-    }
-
-    elements.aiOutput.innerHTML = "";
     if (!raw) {
-      clearOutput();
-      return;
-    }
-
-    state.lastOutputText = raw;
-    if (elements.copyBtn) {
-      elements.copyBtn.disabled = false;
+      return target;
     }
 
     const segments = raw.split(/```/);
-    for (let index = 0; index < segments.length; index += 1) {
-      const segment = segments[index];
+    segments.forEach((segment, index) => {
       if (!segment.trim()) {
-        continue;
+        return;
       }
       if (index % 2 === 1) {
-        elements.aiOutput.appendChild(buildCodeBlock(segment));
+        target.appendChild(buildCodeBlock(segment));
       } else {
-        elements.aiOutput.appendChild(renderTextBlock(segment));
+        target.appendChild(renderTextBlock(segment));
       }
+    });
+
+    return target;
+  }
+
+  function normalizeImageUrl(rawImage) {
+    const value = String(rawImage || "").trim();
+    if (!value) {
+      return "";
+    }
+    if (value.startsWith("data:image")) {
+      return value;
+    }
+    return `data:image/png;base64,${value.replace(/\s+/g, "")}`;
+  }
+
+  function formatTime(timestamp) {
+    try {
+      return new Date(timestamp || Date.now()).toLocaleTimeString([], {
+        hour: "numeric",
+        minute: "2-digit",
+      });
+    } catch (_error) {
+      return "";
     }
   }
 
+  function createMessageElement(entry) {
+    const item = document.createElement("article");
+    item.className = `message ${entry.role}${entry.pending ? " pending" : ""}`;
+    item.dataset.messageId = entry.id;
+
+    const head = document.createElement("div");
+    head.className = "message-head";
+
+    const role = document.createElement("span");
+    role.className = "message-role";
+    role.textContent = entry.role === "user" ? "You" : "JO AI";
+
+    const meta = document.createElement("div");
+    meta.className = "message-meta";
+    meta.textContent = formatTime(entry.timestamp);
+
+    head.appendChild(role);
+    head.appendChild(meta);
+
+    if (entry.role === "assistant" && !entry.pending && entry.text) {
+      const copy = document.createElement("button");
+      copy.type = "button";
+      copy.className = "bubble-copy";
+      copy.textContent = "Copy";
+      copy.addEventListener("click", async () => {
+        try {
+          await copyText(entry.text);
+          showToast("Response copied.");
+        } catch (error) {
+          showToast(error instanceof Error ? error.message : "Copy failed.", "error");
+        }
+      });
+      head.appendChild(copy);
+    }
+
+    const body = document.createElement("div");
+    body.className = "message-body";
+
+    if (entry.note) {
+      const note = document.createElement("p");
+      note.className = "message-note";
+      note.textContent = entry.note;
+      body.appendChild(note);
+    }
+
+    if (entry.pending) {
+      const pending = document.createElement("p");
+      pending.className = "pending-text";
+      pending.textContent = entry.text || loadingMessages[0];
+      body.appendChild(pending);
+    } else {
+      renderRichText(body, entry.text);
+    }
+
+    if (entry.imageDataUrl) {
+      const image = document.createElement("img");
+      image.className = "message-image";
+      image.alt = "Generated image";
+      image.src = entry.imageDataUrl;
+      body.appendChild(image);
+    }
+
+    item.appendChild(head);
+    item.appendChild(body);
+    return item;
+  }
+
+  function getHistoryKey() {
+    return `${HISTORY_PREFIX}${getToolId()}`;
+  }
+
+  function persistHistory() {
+    if (!getToolId()) {
+      return;
+    }
+    const serializable = state.history.filter((entry) => !entry.pending).slice(-MAX_HISTORY_ITEMS);
+    safeStorageSet(window.sessionStorage, getHistoryKey(), JSON.stringify(serializable));
+  }
+
+  function loadHistory() {
+    const raw = safeStorageGet(window.sessionStorage, getHistoryKey());
+    if (!raw) {
+      state.history = [];
+      return;
+    }
+
+    try {
+      const parsed = JSON.parse(raw);
+      state.history = Array.isArray(parsed) ? parsed : [];
+    } catch (_error) {
+      state.history = [];
+    }
+  }
+
+  function updateLatestOutputFromHistory() {
+    const latestAssistant = [...state.history].reverse().find((entry) => entry.role === "assistant" && !entry.pending);
+    state.lastOutputText = latestAssistant && latestAssistant.text ? latestAssistant.text : "";
+    state.lastImageDataUrl = latestAssistant && latestAssistant.imageDataUrl ? latestAssistant.imageDataUrl : "";
+  }
+
+  function renderHistory() {
+    if (!elements.historyList) {
+      return;
+    }
+
+    elements.historyList.innerHTML = "";
+    if (!state.history.length) {
+      elements.historyList.innerHTML = state.emptyTemplate;
+      state.lastOutputText = "";
+      state.lastImageDataUrl = "";
+      syncOutputButtons();
+      return;
+    }
+
+    for (const entry of state.history) {
+      elements.historyList.appendChild(createMessageElement(entry));
+    }
+
+    updateLatestOutputFromHistory();
+    syncOutputButtons();
+    window.requestAnimationFrame(() => {
+      if (elements.historyList) {
+        elements.historyList.scrollTop = elements.historyList.scrollHeight;
+      }
+    });
+  }
+
+  function pushHistory(entry, persist = true) {
+    state.history.push(entry);
+    if (persist) {
+      persistHistory();
+    }
+    renderHistory();
+  }
+
+  function insertPendingMessage() {
+    state.pendingId = createId();
+    pushHistory(
+      {
+        id: state.pendingId,
+        role: "assistant",
+        text: loadingMessages[0],
+        pending: true,
+        timestamp: Date.now(),
+      },
+      false
+    );
+  }
+
+  function updatePendingText(text) {
+    if (!state.pendingId) {
+      return;
+    }
+    const pendingEntry = state.history.find((entry) => entry.id === state.pendingId);
+    if (!pendingEntry) {
+      return;
+    }
+    pendingEntry.text = text;
+    const node = elements.historyList && elements.historyList.querySelector(`[data-message-id="${state.pendingId}"] .pending-text`);
+    if (node) {
+      node.textContent = text;
+    }
+  }
+
+  function replacePendingMessage(entry) {
+    const index = state.history.findIndex((item) => item.id === state.pendingId);
+    if (index >= 0) {
+      state.history[index] = entry;
+    } else {
+      state.history.push(entry);
+    }
+    state.pendingId = "";
+    persistHistory();
+    renderHistory();
+  }
+
+  function clearKimiPreview() {
+    if (state.kimiPreviewUrl) {
+      URL.revokeObjectURL(state.kimiPreviewUrl);
+      state.kimiPreviewUrl = "";
+    }
+    if (elements.kimiPreview) {
+      elements.kimiPreview.removeAttribute("src");
+    }
+    if (elements.kimiPreviewWrap) {
+      elements.kimiPreviewWrap.hidden = true;
+    }
+  }
+
+  function clearToolWorkspace() {
+    state.history = [];
+    state.pendingId = "";
+    state.lastOutputText = "";
+    state.lastImageDataUrl = "";
+    persistHistory();
+    renderHistory();
+
+    if (elements.aiInput) {
+      elements.aiInput.value = "";
+    }
+    if (elements.promptType) {
+      elements.promptType.value = "";
+    }
+    if (elements.imageType) {
+      elements.imageType.selectedIndex = 0;
+    }
+    if (elements.kimiImage) {
+      elements.kimiImage.value = "";
+    }
+    if (elements.uploadInfo) {
+      elements.uploadInfo.textContent = "No image selected.";
+    }
+    clearKimiPreview();
+    setApiState("idle", "muted");
+    setLoadingHint("Ready when you are.");
+    syncOutputButtons();
+  }
   async function fetchJsonWithTimeout(url, options, timeoutMs = 60000) {
     const controller = new AbortController();
     const timer = setTimeout(() => controller.abort(), timeoutMs);
@@ -502,13 +920,13 @@
         try {
           data = JSON.parse(raw);
         } catch (_error) {
-          throw new Error("The assistant returned an unexpected response. Please try again.");
+          throw new Error("The assistant returned an unexpected response.");
         }
       }
       return { response, data };
     } catch (error) {
       if (error && error.name === "AbortError") {
-        throw new Error(`Request timed out after ${Math.floor(timeoutMs / 1000)}s.`);
+        throw new Error("The assistant is taking longer than expected.");
       }
       throw error;
     } finally {
@@ -534,13 +952,11 @@
   function buildApiBaseCandidates() {
     const queryBase = normalizeBase(getQueryParam("api_base"));
     const explicitBase = normalizeBase(window.JO_API_BASE);
-    const storedBase = normalizeBase(window.localStorage.getItem(API_BASE_STORAGE_KEY));
+    const storedBase = normalizeBase(safeStorageGet(window.localStorage, API_BASE_STORAGE_KEY));
     const sameOriginBase = shouldTrySameOriginApi() ? normalizeBase(window.location.origin) : "";
-    const localhost8000 = normalizeBase("http://127.0.0.1:8000");
-    const localhostAlt = normalizeBase("http://localhost:8000");
 
     if (queryBase) {
-      window.localStorage.setItem(API_BASE_STORAGE_KEY, queryBase);
+      safeStorageSet(window.localStorage, API_BASE_STORAGE_KEY, queryBase);
     }
 
     return unique([
@@ -548,48 +964,51 @@
       explicitBase,
       storedBase,
       sameOriginBase,
-      isLocalHost() ? localhost8000 : "",
-      isLocalHost() ? localhostAlt : "",
+      isLocalHost() ? normalizeBase("http://127.0.0.1:8000") : "",
+      isLocalHost() ? normalizeBase("http://localhost:8000") : "",
     ]);
   }
 
   async function isApiHealthy(base) {
-    const checks = ["/api/health", "/health"];
-    for (const path of checks) {
+    const paths = ["/api/health", "/health"];
+    for (const path of paths) {
       try {
         const { response, data } = await fetchJsonWithTimeout(`${base}${path}`, { method: "GET" }, 5500);
-        const info = extractRuntimeInfo(data);
         if (response.ok && data && (data.ok === true || data.status === "ok")) {
-          return { ok: true, version: info.version, models: info.models };
+          return true;
         }
       } catch (_error) {
-        // try next path
+        // try the next path
       }
     }
-    return { ok: false, version: "", models: {} };
+    return false;
   }
 
   async function resolveApiBase() {
-    setStatus("Starting assistant...");
+    if (state.apiBase) {
+      return state.apiBase;
+    }
+
+    setStatus("Checking studio...");
     const candidates = buildApiBaseCandidates();
     if (!candidates.length) {
-      state.apiBase = "";
-      setStatus("Assistant unavailable");
-      return;
+      setStatus("Studio unavailable");
+      return "";
     }
 
     for (const candidate of candidates) {
-      const health = await isApiHealthy(candidate);
-      if (health.ok) {
+      const healthy = await isApiHealthy(candidate);
+      if (healthy) {
         state.apiBase = candidate;
-        window.localStorage.setItem(API_BASE_STORAGE_KEY, candidate);
-        setStatus(tg ? "Assistant ready" : "Browser mode ready");
-        return;
+        safeStorageSet(window.localStorage, API_BASE_STORAGE_KEY, candidate);
+        setStatus(getPage() === "home" ? "Studio ready" : "Assistant ready");
+        return candidate;
       }
     }
 
     state.apiBase = candidates[0];
-    setStatus("Assistant connection not verified");
+    setStatus("Studio may be waking up");
+    return state.apiBase;
   }
 
   function endpointAttempts(mode, payload) {
@@ -614,7 +1033,7 @@
           payload: {
             ...basePayload,
             message:
-              "DeepSeek mode.\n" +
+              "Deep analysis mode.\n" +
               "Respond with concise sections: Summary, Analysis, Final Answer.\n\n" +
               `User request:\n${payload.message}`,
           },
@@ -624,7 +1043,7 @@
           payload: {
             ...basePayload,
             message:
-              "DeepSeek mode.\n" +
+              "Deep analysis mode.\n" +
               "Respond with concise sections: Summary, Analysis, Final Answer.\n\n" +
               `User request:\n${payload.message}`,
           },
@@ -709,6 +1128,7 @@
         },
       ];
     }
+
     return [
       { path: "/api/kimi_image_describer", payload: basePayload },
       { path: "/kimi_image_describer", payload: basePayload },
@@ -716,21 +1136,17 @@
   }
 
   async function requestWithFallback(mode, payload) {
-    if (!state.apiBase) {
-      await resolveApiBase();
-    }
-    if (!state.apiBase) {
+    const apiBase = await resolveApiBase();
+    if (!apiBase) {
       throw new Error("The assistant is not ready yet.");
     }
 
-    const attempts = endpointAttempts(mode, payload);
-    const errors = [];
+    let timedOut = false;
 
-    for (const attempt of attempts) {
-      const url = `${state.apiBase}${attempt.path}`;
+    for (const attempt of endpointAttempts(mode, payload)) {
       try {
         const { response, data } = await fetchJsonWithTimeout(
-          url,
+          `${apiBase}${attempt.path}`,
           {
             method: "POST",
             headers: { "Content-Type": "application/json" },
@@ -743,61 +1159,100 @@
           return data || {};
         }
 
-        const message =
-          (data && typeof data.error === "string" && data.error) ||
-          `Request failed with HTTP ${response.status}.`;
-        errors.push(`${attempt.path} -> ${message}`);
-
-        if ([404, 405, 501].includes(response.status)) {
-          continue;
-        }
-        if (response.status >= 500 && response.status <= 599) {
+        if ([404, 405, 501].includes(response.status) || response.status >= 500) {
           continue;
         }
       } catch (error) {
         const message = error instanceof Error ? error.message : String(error);
-        errors.push(`${attempt.path} -> ${message}`);
+        timedOut = timedOut || /longer than expected|timed out/i.test(message);
         continue;
       }
     }
 
-    const fallbackMessage = errors[errors.length - 1] || "No compatible API endpoint responded.";
-    throw new Error(fallbackMessage);
+    if (timedOut) {
+      throw new Error("The assistant is taking longer than expected. Please try again.");
+    }
+    throw new Error("The assistant could not complete this request right now.");
   }
-  function currentModeConfig() {
-    return modeUi[state.activeMode] || modeUi.chat;
-  }
-
-  function setMode(mode) {
-    state.activeMode = mode;
-    for (const modeButton of elements.modes) {
-      modeButton.classList.toggle("active", modeButton.dataset.mode === mode);
+  function applyToolConfig() {
+    const config = currentTool();
+    if (!config) {
+      return;
     }
 
-    const config = currentModeConfig();
+    document.title = `${config.title} | JO AI Chat Bot`;
+    if (elements.toolTitle) {
+      elements.toolTitle.textContent = config.title;
+    }
+    if (elements.toolDescription) {
+      elements.toolDescription.textContent = config.description;
+    }
+    if (elements.toolLead) {
+      elements.toolLead.textContent = config.lead;
+    }
+    if (elements.toolExample) {
+      elements.toolExample.textContent = config.example;
+    }
     if (elements.inputLabel) {
       elements.inputLabel.textContent = config.label;
     }
     if (elements.aiInput) {
       elements.aiInput.placeholder = config.placeholder;
+      elements.aiInput.rows = config.rows;
     }
-
+    if (elements.historyTitle) {
+      elements.historyTitle.textContent = config.historyTitle;
+    }
     if (elements.promptTypeWrap) {
-      elements.promptTypeWrap.hidden = mode !== "prompt";
+      elements.promptTypeWrap.hidden = !config.needsPromptType;
     }
     if (elements.imageTypeWrap) {
-      elements.imageTypeWrap.hidden = mode !== "image";
+      elements.imageTypeWrap.hidden = !config.needsImageType;
     }
     if (elements.kimiImageWrap) {
-      elements.kimiImageWrap.hidden = mode !== "kimi";
-    }
-
-    if (mode !== "image") {
-      hideImage();
+      elements.kimiImageWrap.hidden = !config.needsUpload;
     }
   }
 
-  async function fileToBase64(file) {
+  function fillExample() {
+    const config = currentTool();
+    if (!config || !elements.aiInput) {
+      return;
+    }
+    elements.aiInput.value = config.example;
+    if (config.examplePromptType && elements.promptType) {
+      elements.promptType.value = config.examplePromptType;
+    }
+    if (config.exampleImageType && elements.imageType) {
+      elements.imageType.value = config.exampleImageType;
+    }
+    elements.aiInput.focus();
+  }
+
+  function updateKimiSelection() {
+    const file = elements.kimiImage && elements.kimiImage.files ? elements.kimiImage.files[0] : null;
+    if (!file) {
+      if (elements.uploadInfo) {
+        elements.uploadInfo.textContent = "No image selected.";
+      }
+      clearKimiPreview();
+      return;
+    }
+
+    const sizeMb = (file.size / (1024 * 1024)).toFixed(2);
+    if (elements.uploadInfo) {
+      elements.uploadInfo.textContent = `${file.name} (${sizeMb} MB)`;
+    }
+
+    clearKimiPreview();
+    if (elements.kimiPreview && elements.kimiPreviewWrap) {
+      state.kimiPreviewUrl = URL.createObjectURL(file);
+      elements.kimiPreview.src = state.kimiPreviewUrl;
+      elements.kimiPreviewWrap.hidden = false;
+    }
+  }
+
+  function fileToBase64(file) {
     return new Promise((resolve, reject) => {
       const reader = new FileReader();
       reader.onload = () => {
@@ -805,88 +1260,17 @@
         const comma = raw.indexOf(",");
         resolve(comma >= 0 ? raw.slice(comma + 1) : raw);
       };
-      reader.onerror = () => reject(new Error("Failed to read image file."));
+      reader.onerror = () => reject(new Error("Could not read the image."));
       reader.readAsDataURL(file);
     });
   }
 
-  function buildReportText() {
-    return [
-      "JO AI mini-app issue report",
-      `time_utc=${new Date().toISOString()}`,
-      `app_version=${FRONTEND_VERSION}`,
-      `active_mode=${state.activeMode}`,
-      `status=${elements.status ? elements.status.textContent : "unknown"}`,
-      `user_agent=${navigator.userAgent}`,
-    ].join("\n");
-  }
-
-  function configureSupportActions() {
-    const querySupport = normalizeSupportUrl(getQueryParam("support_url"));
-    if (querySupport && elements.contactBtn) {
-      elements.contactBtn.href = querySupport;
-    }
-
-    if (elements.reportBtn) {
-      elements.reportBtn.addEventListener("click", async () => {
-        try {
-          await copyText(buildReportText());
-          showToast("Support note copied. Paste and send it to the developer.");
-        } catch (error) {
-          showToast(error instanceof Error ? error.message : "Failed to build support note.", "error");
-        }
-      });
-    }
-  }
-
-  function initTelegram() {
-    if (!tg) {
-      setStatus("Browser mode");
-      setUserInfo("Guest mode");
-      if (elements.welcomeMessage) {
-        elements.welcomeMessage.textContent = "Running in browser mode. AI Studio is ready to use.";
-      }
-      return;
-    }
-
-    tg.ready();
-    if (typeof tg.expand === "function") {
-      tg.expand();
-    }
-    const firstName =
-      (tg.initDataUnsafe &&
-        tg.initDataUnsafe.user &&
-        typeof tg.initDataUnsafe.user.first_name === "string" &&
-        tg.initDataUnsafe.user.first_name) ||
-      "there";
-    setUserInfo(`Hi, ${firstName}`);
-    if (elements.welcomeMessage) {
-      elements.welcomeMessage.textContent = `Ready, ${firstName}. Your JO AI workspace is prepared.`;
-    }
-  }
-
-  function initWelcomeOverlay() {
-    if (!elements.welcomeOverlay || !elements.openAppBtn) {
-      return;
-    }
-    elements.openAppBtn.addEventListener("click", () => {
-      elements.welcomeOverlay.classList.add("hidden");
-      if (elements.aiInput) {
-        elements.aiInput.focus();
-      }
-    });
-  }
-
-  function buildRequestPayload(mode) {
+  async function buildRequestPayload() {
+    const mode = getToolId();
     const message = elements.aiInput ? elements.aiInput.value.trim() : "";
     const payload = { message };
 
-    if (mode === "kimi") {
-      payload.message = message || "Describe this image.";
-      return payload;
-    }
-
-    if (!message) {
+    if (mode !== "kimi" && !message) {
       throw new Error("Please enter a request first.");
     }
 
@@ -899,184 +1283,220 @@
     }
 
     if (mode === "image") {
-      const selected = elements.imageType ? elements.imageType.value : "realistic";
-      payload.image_type = selected || "realistic";
-    }
-
-    return payload;
-  }
-
-  async function callAI() {
-    if (state.isBusy) {
-      return;
-    }
-
-    const mode = state.activeMode;
-    let payload;
-    try {
-      payload = buildRequestPayload(mode);
-    } catch (error) {
-      renderOutput(`### Validation error\n${error instanceof Error ? error.message : "Invalid request."}`);
-      setApiState("invalid input", "error");
-      showToast("Please complete the required fields.", "error");
-      return;
+      payload.image_type = elements.imageType ? elements.imageType.value : "realistic";
     }
 
     if (mode === "kimi") {
       const file = elements.kimiImage && elements.kimiImage.files ? elements.kimiImage.files[0] : null;
       if (!file) {
-        renderOutput("### Image required\nUpload an image first for Kimi describe mode.");
-        setApiState("missing image", "error");
-        return;
+        throw new Error("Please upload an image first.");
       }
       if (!file.type.startsWith("image/")) {
-        renderOutput("### Invalid file\nPlease upload a valid image file.");
-        setApiState("invalid file", "error");
-        return;
+        throw new Error("Please upload a valid image file.");
       }
-      if (file.size > 8 * 1024 * 1024) {
-        renderOutput("### File too large\nPlease use an image smaller than 8MB.");
-        setApiState("file too large", "error");
-        return;
+      if (file.size > MAX_UPLOAD_BYTES) {
+        throw new Error("Please use an image smaller than 8MB.");
       }
-      try {
-        payload.image_base64 = await fileToBase64(file);
-      } catch (error) {
-        renderOutput(`### Upload error\n${error instanceof Error ? error.message : "Failed to read file."}`);
-        setApiState("upload failed", "error");
-        return;
-      }
+      payload.message = message || "Describe this image.";
+      payload.image_base64 = await fileToBase64(file);
     }
 
-    setBusy(true);
+    return payload;
+  }
+
+  function buildUserEntry(payload) {
+    const mode = getToolId();
+    let note = "";
+    if (mode === "prompt" && payload.prompt_type) {
+      note = `Prompt type: ${payload.prompt_type}`;
+    }
+    if (mode === "image" && payload.image_type) {
+      note = `Style: ${payload.image_type}`;
+    }
+    if (mode === "kimi" && elements.kimiImage && elements.kimiImage.files && elements.kimiImage.files[0]) {
+      note = `File: ${elements.kimiImage.files[0].name}`;
+    }
+
+    return {
+      id: createId(),
+      role: "user",
+      text: payload.message,
+      note,
+      timestamp: Date.now(),
+    };
+  }
+
+  async function submitTool(event) {
+    if (event) {
+      event.preventDefault();
+    }
+    if (state.isBusy) {
+      return;
+    }
+
+    let payload;
     try {
-      const data = await requestWithFallback(mode, payload);
+      payload = await buildRequestPayload();
+    } catch (error) {
+      const message = error instanceof Error ? error.message : "Please complete the required fields.";
+      setApiState("needs input", "error");
+      showToast(message, "error");
+      return;
+    }
+
+    pushHistory(buildUserEntry(payload));
+    insertPendingMessage();
+    setBusy(true);
+
+    try {
+      const data = await requestWithFallback(getToolId(), payload);
       if (data && typeof data.error === "string" && data.error.trim()) {
         throw new Error(data.error.trim());
       }
 
-      const output =
-        (data && typeof data.output === "string" && data.output) ||
-        (data && typeof data.warning === "string" && data.warning) ||
-        "No output returned.";
-      renderOutput(output);
+      const imageDataUrl = data && data.image_base64 ? normalizeImageUrl(data.image_base64) : "";
+      let text =
+        (data && typeof data.output === "string" && data.output.trim()) ||
+        (data && typeof data.warning === "string" && !imageDataUrl && data.warning.trim()) ||
+        "";
 
-      if (data && data.image_base64) {
-        showImage(data.image_base64);
-      } else {
-        hideImage();
+      if (!text && imageDataUrl) {
+        text = "Your image is ready.";
+      }
+      if (!text) {
+        text = "No output returned.";
       }
 
-      if (data && typeof data.warning === "string" && data.warning.trim()) {
-        showToast(data.warning, "error", 3200);
-      } else {
-        showToast("Response ready.");
-      }
-      setApiState("done", "success");
+      state.lastOutputText = text;
+      state.lastImageDataUrl = imageDataUrl;
+
+      replacePendingMessage({
+        id: createId(),
+        role: "assistant",
+        text,
+        note:
+          data &&
+          typeof data.warning === "string" &&
+          data.output &&
+          data.warning.trim()
+            ? data.warning.trim()
+            : "",
+        imageDataUrl,
+        timestamp: Date.now(),
+      });
+
+      setApiState("ready", "success");
+      showToast("Response ready.");
     } catch (error) {
-      const message = error instanceof Error ? error.message : "Unknown request error.";
-      renderOutput(`### Request failed\n${message}\n\nTry again, or use Help and Support to report this issue.`);
-      hideImage();
-      setApiState("failed", "error");
-      showToast("Request failed. Check Help and Support.", "error");
+      const message = error instanceof Error ? error.message : "The assistant could not complete this request.";
+      replacePendingMessage({
+        id: createId(),
+        role: "assistant",
+        text: `Request failed\n\n${message}`,
+        timestamp: Date.now(),
+      });
+      setApiState("issue", "error");
+      showToast(message, "error", 3200);
     } finally {
       setBusy(false);
     }
   }
 
-  function wireModes() {
-    for (const modeButton of elements.modes) {
-      modeButton.addEventListener("click", () => {
-        const nextMode = modeButton.dataset.mode || "chat";
-        setMode(nextMode);
-      });
+  function saveLatestImage() {
+    if (!state.lastImageDataUrl) {
+      showToast("No image available to save.", "error");
+      return;
     }
+    const link = document.createElement("a");
+    link.href = state.lastImageDataUrl;
+    link.download = `jo-ai-image-${Date.now()}.png`;
+    document.body.appendChild(link);
+    link.click();
+    document.body.removeChild(link);
   }
 
-  function wireActions() {
-    if (elements.sendBtn) {
-      elements.sendBtn.addEventListener("click", callAI);
+  function bindToolPage() {
+    if (elements.useExampleBtn) {
+      elements.useExampleBtn.addEventListener("click", fillExample);
+    }
+    if (elements.toolForm) {
+      elements.toolForm.addEventListener("submit", submitTool);
     }
     if (elements.clearBtn) {
-      elements.clearBtn.addEventListener("click", () => {
-        if (elements.aiInput) {
-          elements.aiInput.value = "";
-        }
-        if (elements.promptType) {
-          elements.promptType.value = "";
-        }
-        if (elements.kimiImage) {
-          elements.kimiImage.value = "";
-        }
-        if (elements.uploadInfo) {
-          elements.uploadInfo.textContent = "No image selected.";
-        }
-        clearOutput();
-        hideImage();
-        setApiState("idle", "muted");
-        setLoadingHint("Ready when you are.");
-      });
+      elements.clearBtn.addEventListener("click", clearToolWorkspace);
     }
     if (elements.copyBtn) {
       elements.copyBtn.addEventListener("click", async () => {
         try {
           await copyText(state.lastOutputText);
-          showToast("Full response copied.");
+          showToast("Last response copied.");
         } catch (error) {
           showToast(error instanceof Error ? error.message : "Copy failed.", "error");
         }
       });
     }
     if (elements.downloadImageBtn) {
-      elements.downloadImageBtn.addEventListener("click", () => {
-        if (!state.lastImageDataUrl) {
-          showToast("No image available to save.", "error");
-          return;
-        }
-        const link = document.createElement("a");
-        link.href = state.lastImageDataUrl;
-        link.download = `jo-ai-image-${Date.now()}.png`;
-        document.body.appendChild(link);
-        link.click();
-        document.body.removeChild(link);
-      });
+      elements.downloadImageBtn.addEventListener("click", saveLatestImage);
     }
     if (elements.aiInput) {
       elements.aiInput.addEventListener("keydown", (event) => {
         if (event.key === "Enter" && (event.ctrlKey || event.metaKey)) {
           event.preventDefault();
-          callAI();
+          submitTool();
         }
       });
     }
     if (elements.kimiImage) {
-      elements.kimiImage.addEventListener("change", () => {
-        const file = elements.kimiImage && elements.kimiImage.files ? elements.kimiImage.files[0] : null;
-        if (!elements.uploadInfo) {
-          return;
-        }
-        if (!file) {
-          elements.uploadInfo.textContent = "No image selected.";
-          return;
-        }
-        const sizeMb = (file.size / (1024 * 1024)).toFixed(2);
-        elements.uploadInfo.textContent = `${file.name} (${sizeMb} MB)`;
+      elements.kimiImage.addEventListener("change", updateKimiSelection);
+    }
+  }
+  function initHomePage() {
+    const seen = safeStorageGet(window.sessionStorage, HOME_ENTRY_STORAGE_KEY) === "yes";
+    if (seen && elements.welcomeOverlay) {
+      elements.welcomeOverlay.classList.add("hidden");
+    }
+
+    if (elements.openAppBtn && elements.welcomeOverlay) {
+      elements.openAppBtn.addEventListener("click", () => {
+        elements.welcomeOverlay.classList.add("hidden");
+        safeStorageSet(window.sessionStorage, HOME_ENTRY_STORAGE_KEY, "yes");
       });
     }
   }
 
-  async function boot() {
-    initTelegram();
-    initWelcomeOverlay();
-    configureSupportActions();
-    wireModes();
-    wireActions();
-    setMode("chat");
-    clearOutput();
-    hideImage();
-    setVersionBadge(FRONTEND_VERSION);
+  function initToolPage() {
+    applyToolConfig();
+    state.emptyTemplate = elements.historyList ? elements.historyList.innerHTML : "";
+    loadHistory();
+    renderHistory();
+    bindToolPage();
     setApiState("idle", "muted");
-    await resolveApiBase();
+    setLoadingHint("Ready when you are.");
+  }
+
+  async function boot() {
+    ensureGlobalUi();
+    bindGlobalUi();
+    collectElements();
+    setVersionBadge();
+    initTelegram();
+    configureSupportActions();
+
+    if (getPage() === "home") {
+      initHomePage();
+      await resolveApiBase();
+      return;
+    }
+
+    if (getPage() === "help") {
+      setStatus("Support page");
+      return;
+    }
+
+    if (getPage() === "tool") {
+      initToolPage();
+      await resolveApiBase();
+    }
   }
 
   boot();

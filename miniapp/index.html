@@ -6,11 +6,11 @@
   <meta http-equiv="Cache-Control" content="no-store, max-age=0">
   <meta http-equiv="Pragma" content="no-cache">
   <meta http-equiv="Expires" content="0">
-  <title>JO AI Mini App</title>
+  <title>JO AI Chat Bot</title>
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
   <link
-    href="https://fonts.googleapis.com/css2?family=DM+Sans:wght@400;500;700&family=Space+Grotesk:wght@500;600;700&display=swap"
+    href="https://fonts.googleapis.com/css2?family=DM+Sans:wght@400;500;700&family=Space+Grotesk:wght@500;700&display=swap"
     rel="stylesheet"
   >
   <link rel="stylesheet" href="style.css">
@@ -18,129 +18,121 @@
   <script src="config.js"></script>
   <script src="app.js" defer></script>
 </head>
-<body>
+<body data-page="home">
   <div id="welcomeOverlay" class="welcome-overlay">
     <section class="welcome-card">
-      <p class="welcome-tag">JO AI MINI APP</p>
-      <h2>Welcome to AI Studio</h2>
-      <p id="welcomeMessage">Loading your session...</p>
+      <p class="welcome-tag">JO AI CHAT BOT</p>
+      <h1>Free, fast, flexible AI tools.</h1>
+      <p id="welcomeMessage">
+        Clean chat, code, research, prompt, image, and vision tools inside one polished mini app.
+      </p>
       <div class="welcome-points">
-        <span>Chat and research</span>
-        <span>Code and prompts</span>
-        <span>Images and vision</span>
+        <span>Free</span>
+        <span>Fast</span>
+        <span>Flexible</span>
       </div>
-      <button id="openAppBtn" class="btn primary wide" type="button">Open AI Studio</button>
+      <button id="openAppBtn" class="btn primary wide" type="button">Enter JO AI</button>
     </section>
   </div>
 
-  <main class="page">
-    <section class="shell">
-      <header class="topbar">
+  <main class="page-shell">
+    <section class="shell home-shell">
+      <header class="site-header">
         <div>
-          <p class="eyebrow">JO AI STUDIO</p>
-          <h1>Ask, build, and generate in one place.</h1>
-          <p class="subtitle">A simpler mini app focused on the core assistant tools.</p>
+          <p class="eyebrow">JO AI CHAT BOT</p>
+          <h2 class="page-title">Choose your AI workspace.</h2>
+          <p class="subtitle">A clean model menu built for quick switching and focused pages.</p>
         </div>
         <div class="status-cluster">
-          <span id="status" class="chip">Starting assistant...</span>
+          <span id="status" class="chip">Checking studio...</span>
           <span id="userInfo" class="chip muted">Guest mode</span>
         </div>
       </header>
 
-      <section class="hero-card card">
-        <h2>AI Studio</h2>
-        <p>Pick a mode, write your request, and keep the output clean and easy to reuse.</p>
-        <div class="hero-hints">
-          <span>7 assistant modes</span>
-          <span>Copy full output</span>
-          <span>Image preview support</span>
+      <section class="hero-card card hero-split">
+        <div class="hero-copy">
+          <p class="section-kicker">WELCOME</p>
+          <h1>JO AI tools, organized for real use.</h1>
+          <p>
+            Open a dedicated page for the exact tool you want and keep the experience focused, modern,
+            and easy to navigate.
+          </p>
+          <div class="hero-actions">
+            <a class="btn primary" href="chat.html">🤖 Start with Chat</a>
+            <a class="btn" href="help.html">🛟 Open Help</a>
+          </div>
+        </div>
+        <div class="hero-stack">
+          <div class="hero-stat">
+            <strong>7</strong>
+            <span>AI tools</span>
+          </div>
+          <div class="hero-stat">
+            <strong>1</strong>
+            <span>clean menu</span>
+          </div>
+          <div class="hero-stat">
+            <strong>0</strong>
+            <span>extra clutter</span>
+          </div>
         </div>
       </section>
 
-      <section class="card">
+      <section class="menu-section">
         <div class="section-head">
           <div>
-            <label>Modes</label>
-            <p class="hint">Switch between chat, code, research, prompts, images, and image describing.</p>
+            <p class="section-kicker">MODEL MENU</p>
+            <h2>Pick a focused page</h2>
+            <p class="hint">Each tool opens on its own page with examples, input space, and clean output.</p>
           </div>
         </div>
-        <div class="mode-grid">
-          <button class="mode active" data-mode="chat" type="button">JO AI Chat</button>
-          <button class="mode" data-mode="code" type="button">Code Generator</button>
-          <button class="mode" data-mode="deepseek" type="button">Deep Analysis</button>
-          <button class="mode" data-mode="research" type="button">Research</button>
-          <button class="mode" data-mode="prompt" type="button">Prompt Builder</button>
-          <button class="mode" data-mode="image" type="button">Image Generator</button>
-          <button class="mode" data-mode="kimi" type="button">Kimi Describer</button>
-        </div>
-      </section>
 
-      <section class="card" id="promptTypeWrap" hidden>
-        <label for="promptType">Prompt type</label>
-        <input id="promptType" type="text" placeholder="e.g. coding prompt, marketing prompt, lesson prompt">
-      </section>
-
-      <section class="card" id="imageTypeWrap" hidden>
-        <label for="imageType">Image style</label>
-        <select id="imageType">
-          <option value="realistic">Realistic image</option>
-          <option value="ai_art">AI art</option>
-          <option value="anime">Anime style</option>
-          <option value="cyberpunk">Cyberpunk style</option>
-          <option value="logo_icon">Logo or icon</option>
-          <option value="render_3d">3D render</option>
-          <option value="concept_art">Concept art</option>
-        </select>
-      </section>
-
-      <section class="card" id="kimiImageWrap" hidden>
-        <label for="kimiImage">Upload image for Kimi</label>
-        <input id="kimiImage" type="file" accept="image/*">
-        <p id="uploadInfo" class="hint">No image selected.</p>
-      </section>
-
-      <section class="card composer-card">
-        <label for="aiInput" id="inputLabel">Message</label>
-        <textarea id="aiInput" rows="7" placeholder="Type your request here..."></textarea>
-        <div class="actions">
-          <button id="sendBtn" class="btn primary" type="button">Generate</button>
-          <button id="clearBtn" class="btn" type="button">Clear</button>
-        </div>
-        <p id="loadingHint" class="hint">Ready when you are.</p>
-      </section>
-
-      <section class="card response-card">
-        <div class="response-head">
-          <h2>Response</h2>
-          <div class="response-controls">
-            <span id="apiState" class="chip muted">idle</span>
-            <button id="copyBtn" class="btn small" type="button">Copy</button>
-            <button id="downloadImageBtn" class="btn small" type="button" disabled>Save Image</button>
-          </div>
-        </div>
-        <div id="aiOutput" class="rich-output">
-          <p class="placeholder">Your AI response will appear here.</p>
-        </div>
-        <figure id="imageWrap" class="image-wrap" hidden>
-          <img id="imagePreview" class="image-preview" alt="Generated AI image preview">
-          <figcaption id="imageCaption">Generated image preview</figcaption>
-        </figure>
-      </section>
-
-      <section class="card support-card">
-        <h2>Help and Support</h2>
-        <p>If something goes wrong, copy a short support note and send it with your report.</p>
-        <div class="actions">
-          <a id="contactBtn" class="btn" href="https://t.me/JO_CHAT_AI_BOT" target="_blank" rel="noopener noreferrer">
-            Contact Developer
+        <div class="tool-grid">
+          <a class="tool-card" href="chat.html">
+            <span class="tool-emoji">🤖</span>
+            <h3>JO AI Chat</h3>
+            <p>General chat for quick questions, writing help, and everyday answers.</p>
+            <span class="tool-link">Open page</span>
           </a>
-          <button id="reportBtn" class="btn" type="button">Copy Support Note</button>
+          <a class="tool-card" href="code.html">
+            <span class="tool-emoji">💻</span>
+            <h3>Code Generator</h3>
+            <p>Build snippets, explain logic, and work through longer technical prompts.</p>
+            <span class="tool-link">Open page</span>
+          </a>
+          <a class="tool-card" href="deepseek.html">
+            <span class="tool-emoji">🧠</span>
+            <h3>Deep Analysis</h3>
+            <p>Use a sharper reasoning flow for more structured and thoughtful answers.</p>
+            <span class="tool-link">Open page</span>
+          </a>
+          <a class="tool-card" href="research.html">
+            <span class="tool-emoji">📚</span>
+            <h3>Research</h3>
+            <p>Ask for detailed breakdowns, tradeoffs, summaries, and next steps.</p>
+            <span class="tool-link">Open page</span>
+          </a>
+          <a class="tool-card" href="prompt.html">
+            <span class="tool-emoji">✍️</span>
+            <h3>Prompt Builder</h3>
+            <p>Create cleaner prompts for coding, writing, lessons, marketing, and more.</p>
+            <span class="tool-link">Open page</span>
+          </a>
+          <a class="tool-card" href="image.html">
+            <span class="tool-emoji">🎨</span>
+            <h3>Image Generator</h3>
+            <p>Describe visuals, choose a style, and keep image output easy to save.</p>
+            <span class="tool-link">Open page</span>
+          </a>
+          <a class="tool-card" href="kimi.html">
+            <span class="tool-emoji">🖼️</span>
+            <h3>Kimi Vision</h3>
+            <p>Upload an image and ask for a clean explanation of what it contains.</p>
+            <span class="tool-link">Open page</span>
+          </a>
         </div>
       </section>
     </section>
   </main>
-
-  <div id="versionBadge" class="version-badge">Version: v1.0.3</div>
-  <div id="toast" class="toast" hidden></div>
 </body>
 </html>

@@ -1,0 +1,126 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <meta http-equiv="Cache-Control" content="no-store, max-age=0">
+  <meta http-equiv="Pragma" content="no-cache">
+  <meta http-equiv="Expires" content="0">
+  <title>Prompt Builder</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link
+    href="https://fonts.googleapis.com/css2?family=DM+Sans:wght@400;500;700&family=Space+Grotesk:wght@500;700&display=swap"
+    rel="stylesheet"
+  >
+  <link rel="stylesheet" href="style.css">
+  <script src="https://telegram.org/js/telegram-web-app.js"></script>
+  <script src="config.js"></script>
+  <script src="app.js" defer></script>
+</head>
+<body data-page="tool" data-tool="prompt" class="tool-page">
+  <main class="page-shell">
+    <section class="shell">
+      <header class="site-header">
+        <div>
+          <a class="back-link" href="index.html">Back to menu</a>
+          <p class="eyebrow">JO AI CHAT BOT</p>
+          <h1 id="toolTitle" class="page-title">Prompt Builder</h1>
+          <p id="toolDescription" class="subtitle">Create clearer prompts with a focused page and a clean response thread.</p>
+        </div>
+        <div class="status-cluster">
+          <span id="status" class="chip">Checking studio...</span>
+          <span id="userInfo" class="chip muted">Guest mode</span>
+        </div>
+      </header>
+
+      <section class="hero-card card tool-hero">
+        <p class="section-kicker">TOOL PAGE</p>
+        <h2>Shape the prompt before you send it</h2>
+        <p id="toolLead">Choose a prompt type, describe your goal, and keep the final output easy to copy.</p>
+      </section>
+
+      <div class="tool-layout">
+        <section class="card prompt-card">
+          <div class="panel-head">
+            <div>
+              <p class="section-kicker">INPUT</p>
+              <h2>Build a stronger prompt</h2>
+            </div>
+            <button id="useExampleBtn" class="btn small" type="button">Use example</button>
+          </div>
+
+          <p class="example-line">Example: <span id="toolExample">Create a concise onboarding prompt for a customer support assistant.</span></p>
+
+          <form id="toolForm" class="field-stack">
+            <div id="promptTypeWrap">
+              <label for="promptType">Prompt type</label>
+              <input id="promptType" type="text" placeholder="e.g. lesson prompt, coding prompt">
+            </div>
+
+            <div id="imageTypeWrap" hidden>
+              <label for="imageType">Image style</label>
+              <select id="imageType">
+                <option value="realistic">Realistic image</option>
+                <option value="ai_art">AI art</option>
+                <option value="anime">Anime style</option>
+                <option value="cyberpunk">Cyberpunk style</option>
+                <option value="logo_icon">Logo or icon</option>
+                <option value="render_3d">3D render</option>
+                <option value="concept_art">Concept art</option>
+              </select>
+            </div>
+
+            <div id="kimiImageWrap" hidden>
+              <label class="upload-zone" for="kimiImage">
+                <input id="kimiImage" type="file" accept=".png,.jpg,.jpeg,.webp,.gif,.bmp,image/*">
+                <span class="upload-title">Upload an image</span>
+                <span class="upload-copy">PNG, JPG, JPEG, WEBP, GIF, and more</span>
+              </label>
+              <div id="kimiPreviewWrap" class="upload-preview" hidden>
+                <img id="kimiPreview" alt="Selected image preview">
+              </div>
+              <p id="uploadInfo" class="hint">No image selected.</p>
+            </div>
+
+            <label for="aiInput" id="inputLabel">Prompt details</label>
+            <textarea id="aiInput" class="prompt-input" rows="8" placeholder="Describe the goal, audience, tone, format, and any constraints you want."></textarea>
+
+            <div class="actions">
+              <button id="sendBtn" class="btn primary" type="submit">Generate</button>
+              <button id="clearBtn" class="btn" type="button">Clear history</button>
+            </div>
+            <p id="loadingHint" class="hint">Ready when you are.</p>
+          </form>
+        </section>
+
+        <section class="card conversation-card">
+          <div class="panel-head">
+            <div>
+              <p class="section-kicker">OUTPUT</p>
+              <h2 id="historyTitle">Prompt results</h2>
+            </div>
+            <div class="response-controls">
+              <span id="apiState" class="chip muted">idle</span>
+              <button id="copyBtn" class="btn small" type="button">Copy last</button>
+              <button id="downloadImageBtn" class="btn small" type="button" disabled>Save image</button>
+            </div>
+          </div>
+
+          <div id="historyList" class="conversation-list">
+            <div id="emptyState" class="empty-state">
+              <h3>No prompt output yet</h3>
+              <p>Your built prompts will appear here in a clean thread.</p>
+            </div>
+          </div>
+        </section>
+      </div>
+
+      <nav class="footer-links">
+        <a class="btn" href="index.html">Back to model menu</a>
+        <a class="btn" href="help.html">Open Help</a>
+      </nav>
+    </section>
+  </main>
+</body>
+</html>
