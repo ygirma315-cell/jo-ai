@@ -207,20 +207,20 @@ def load_settings() -> Settings:
 
     if not ai_api_key:
         validation_errors.append(
-            "Missing AI_API_KEY or NVIDIA_API_KEY. Chat, code, research, prompt, and image endpoints need a provider key."
+            "Missing required AI service credentials. Chat, code, research, prompt, and image endpoints need a server-side key."
         )
     if not public_base_url and not telegram_webhook_url:
         validation_warnings.append(
-            "No PUBLIC_BASE_URL/RENDER_EXTERNAL_URL detected. Telegram webhook auto-configuration is disabled until a public URL is available."
+            "No public base URL detected. Telegram webhook auto-configuration is disabled until a public URL is available."
         )
     if miniapp_url_warning:
         validation_warnings.append(miniapp_url_warning)
     if not miniapp_url:
         validation_errors.append("Mini app URL is missing.")
     if not deepseek_api_key:
-        validation_warnings.append("DEEPSEEK_API_KEY is missing. DeepSeek profile requests will fail until it is set.")
+        validation_warnings.append("Analysis profile credentials are missing. Analysis profile requests will fail until configured.")
     if not kimi_api_key:
-        validation_warnings.append("KIMI_API_KEY is missing. Kimi image describer requests will fail until it is set.")
+        validation_warnings.append("Vision mode credentials are missing. Vision requests will fail until configured.")
 
     return Settings(
         bot_token=bot_token,

@@ -37,6 +37,7 @@ from bot.keyboards.jo_ai import (
 )
 from bot.keyboards.menu import ai_tools_keyboard, main_menu_keyboard
 from bot.models.session import AIModelProfile, Feature, JoAIMode
+from bot.security import BRANDING_LINE, DEVELOPER_HANDLE
 from bot.services.ai_service import AIServiceError, ChatService, ImageGenerationService
 from bot.services.session_manager import SessionManager
 from bot.telegram_formatting import TelegramMessageFormatter
@@ -52,8 +53,8 @@ JO_AI_MENU_TEXT = (
     "• 🔍 Research\n"
     "• ✨ Prompt Generator\n"
     "• 🎨 Image Generator\n"
-    "• 🖼️ Kimi Image Describer\n"
-    "• 🧠 DeepSeek Models\n\n"
+    "• 🖼️ JO AI Vision\n"
+    "• 🧠 Deep Analysis\n\n"
     "💡 Tip: Use /help any time for guidance."
 )
 
@@ -78,8 +79,8 @@ IMAGE_TYPE_STYLE_HINTS = {
 }
 
 MODEL_PROFILE_LABELS = {
-    AIModelProfile.DEEPSEEK_THINKING: "DeepSeek Thinking",
-    AIModelProfile.DEEPSEEK_REASONING: "DeepSeek Reasoning",
+    AIModelProfile.DEEPSEEK_THINKING: "Focused Analysis",
+    AIModelProfile.DEEPSEEK_REASONING: "Structured Analysis",
 }
 
 ENGAGEMENT_LINES = (
@@ -205,7 +206,7 @@ async def _activate_mode(
         )
         return
     await message.answer(
-        "🖼️ <b>Kimi Image Describer is active</b>\n\n"
+        "🖼️ <b>JO AI Vision is active</b>\n\n"
         "Send an image and I will describe what I see.\n"
         "💡 Optional: include a text instruction with the photo.",
         reply_markup=jo_chat_keyboard(),
@@ -376,17 +377,15 @@ def _parse_code_reply(reply_text: str, fallback_title: str) -> ParsedCodeReply:
 
 
 def _friendly_error_text(title: str, exc: Exception | None = None) -> str:
-    base = (
+    message = (
         f"⚠️ <b>{title}</b>\n"
+        f"{BRANDING_LINE}\n"
         "Please try again in a moment.\n"
-        "💡 You can switch mode from the button below or use /menu."
+        f"For JO API access, contact {DEVELOPER_HANDLE}."
     )
-    if exc is None:
-        return base
-    detail = str(exc).strip()
-    if not detail:
-        return base
-    return f"{base}\n\n📌 <i>Details:</i> <code>{html.escape(detail[:240])}</code>"
+    if exc is not None:
+        logger.warning("JO AI request failed.")
+    return message
 
 
 async def _send_progress_message(message: Message, text: str) -> Message | None:
@@ -499,7 +498,9 @@ async def _send_formatted_ai_reply(
 @router.message(Command("prompt"))
 @router.message(Command("image"))
 @router.message(Command("deepseek"))
+@router.message(Command("analysis"))
 @router.message(Command("kimi"))
+@router.message(Command("vision"))
 @router.message(F.text == MENU_AI_CHAT)
 @router.message(F.text == "JO AI Chat")
 @router.message(F.text == MENU_AI_CODE)
@@ -511,9 +512,7 @@ async def _send_formatted_ai_reply(
 @router.message(F.text == MENU_AI_IMAGE)
 @router.message(F.text == "Image Generator")
 @router.message(F.text == MENU_AI_DEEPSEEK)
-@router.message(F.text == "DeepSeek Models")
 @router.message(F.text == MENU_AI_KIMI)
-@router.message(F.text == "Kimi Image Describer")
 @router.message(F.text == MENU_AI_TOOLS)
 @router.message(F.text == "AI Tools")
 @router.message(F.text == MENU_JO_AI)
@@ -538,14 +537,14 @@ async def open_jo_ai_menu(message: Message, session_manager: SessionManager, min
     if text in {"/image", MENU_AI_IMAGE.lower()}:
         await _activate_mode(message, message.from_user.id, JoAIMode.IMAGE, session_manager, miniapp_url)
         return
-    if text in {"/kimi", MENU_AI_KIMI.lower()}:
+    if text in {"/kimi", "/vision", MENU_AI_KIMI.lower()}:
         await _activate_mode(message, message.from_user.id, JoAIMode.KIMI_IMAGE_DESCRIBER, session_manager, miniapp_url)
         return
-    if text in {"/deepseek", MENU_AI_DEEPSEEK.lower()}:
+    if text in {"/deepseek", "/analysis", MENU_AI_DEEPSEEK.lower()}:
         await message.answer(
-            "🧠 <b>Choose DeepSeek profile</b>\n\n"
-            "• Thinking: broader exploration\n"
-            "• Reasoning: direct, stepwise accuracy",
+            "🧠 <b>Choose analysis profile</b>\n\n"
+            "• Focused Analysis: broader exploration\n"
+            "• Structured Analysis: direct, stepwise accuracy",
             reply_markup=deepseek_model_keyboard(),
         )
         return
@@ -688,7 +687,7 @@ async def choose_model_profile(query: CallbackQuery, session_manager: SessionMan
     }
     profile = mapping.get(value)
     if not profile:
-        await query.answer("⚠️ Unknown model profile.", show_alert=True)
+        await query.answer("⚠️ Unknown analysis profile.", show_alert=True)
         return
 
     async with session_manager.lock(query.from_user.id) as session:
@@ -796,7 +795,7 @@ async def handle_kimi_photo(
         mode = session.jo_ai_mode if session.active_feature == Feature.JO_AI else JoAIMode.MENU
     if mode != JoAIMode.KIMI_IMAGE_DESCRIBER:
         await message.answer(
-            "🖼️ To describe images, first open <b>Kimi Image Describer</b> mode.",
+            "🖼️ To describe images, first open <b>JO AI Vision</b> mode.",
             reply_markup=jo_chat_keyboard(),
         )
         return
@@ -826,7 +825,7 @@ async def handle_kimi_photo(
             )
             return
         await message.answer(
-            _friendly_error_text("Kimi image describer is temporarily unavailable", exc),
+            _friendly_error_text("JO AI Vision is temporarily unavailable", exc),
             reply_markup=kimi_result_keyboard(),
         )
         return
@@ -889,13 +888,13 @@ async def kimi_retry_same_image(
                 )
             else:
                 await query.message.answer(
-                    _friendly_error_text("Kimi image describer is temporarily unavailable", exc),
+                    _friendly_error_text("JO AI Vision is temporarily unavailable", exc),
                     reply_markup=kimi_result_keyboard(),
                 )
             return
         except Exception:
             await _clear_progress_message(progress_message)
-            logger.exception("Unexpected Kimi retry callback error.")
+            logger.exception("Unexpected vision retry callback error.")
             await query.message.answer(
                 "⚠️ I couldn't process that image right now.\nPlease try again shortly.",
                 reply_markup=kimi_result_keyboard(),
@@ -962,7 +961,7 @@ async def _run_kimi_with_progress(message: Message, work_coro) -> str:
             task.cancel()
             with suppress(asyncio.CancelledError):
                 await task
-            raise AIServiceError("Kimi image description timed out.") from exc
+            raise AIServiceError("Vision request timed out.") from exc
 
 
 async def _process_chat_message(
@@ -1109,10 +1108,13 @@ async def _process_image_message(
     except AIServiceError as exc:
         await _clear_progress_message(progress_message)
         await message.answer(
-            "⚠️ <b>Image generation API is unavailable right now.</b>\n"
-            "You can still use this optimized prompt manually:\n\n"
-            f"<code>{html.escape(cleaned_prompt)}</code>\n\n"
-            f"📌 <i>Details:</i> <code>{html.escape(str(exc)[:240])}</code>",
+            (
+                "⚠️ <b>Image generation is temporarily unavailable.</b>\n"
+                f"{BRANDING_LINE}\n"
+                "You can still use this optimized prompt manually:\n\n"
+                f"<code>{html.escape(cleaned_prompt)}</code>\n\n"
+                f"For JO API access, contact {DEVELOPER_HANDLE}."
+            ),
             reply_markup=jo_chat_keyboard(),
         )
         return
@@ -1140,7 +1142,7 @@ async def _process_image_message(
 async def jo_ai_unexpected_input(message: Message) -> None:
     await message.answer(
         "📩 Send text in the current JO AI mode.\n"
-        "🖼️ In Kimi mode, send an image.\n"
+        "🖼️ In Vision mode, send an image.\n"
         "💡 You can switch mode anytime.",
         reply_markup=jo_ai_menu_keyboard(),
     )

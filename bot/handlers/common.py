@@ -8,51 +8,54 @@ from bot.constants import MENU_AI_TOOLS, MENU_CANCEL, MENU_HELP, MENU_UTILITIES,
 from bot.keyboards.menu import ai_tools_keyboard, main_menu_keyboard, utilities_keyboard
 from bot.models.session import AIModelProfile, Feature
 from bot.runtime_info import format_runtime_info_html
+from bot.security import BRANDING_LINE, DEVELOPER_HANDLE
 from bot.services.session_manager import SessionManager
 from version import VERSION
 
 router = Router(name="common")
 
 PROFILE_LABELS = {
-    AIModelProfile.DEEPSEEK_REASONING: "DeepSeek Reasoning",
-    AIModelProfile.DEEPSEEK_THINKING: "DeepSeek Thinking",
+    AIModelProfile.DEEPSEEK_REASONING: "Structured analysis",
+    AIModelProfile.DEEPSEEK_THINKING: "Focused analysis",
 }
 
 WELCOME_TEXT = (
-    "✨ <b>Welcome to JO AI Assistant</b>\n\n"
+    "\u2728 <b>Welcome to JO AI Assistant</b>\n\n"
     "I can help you with:\n"
-    "• 🤖 AI Chat and smart answers\n"
-    "• ⚡ Code generation\n"
-    "• 🔍 Research and analysis\n"
-    "• 🎨 Image generation\n"
-    "• 🧮 Calculator and 🎮 Games\n\n"
-    "🧠 Ask me anything, or tap a menu button below to start."
+    "\u2022 \U0001F916 AI chat and smart answers\n"
+    "\u2022 \u26A1 Code generation\n"
+    "\u2022 \U0001F50D Research and analysis\n"
+    "\u2022 \U0001F3A8 Image generation\n"
+    "\u2022 \U0001F5BC\ufe0f Vision mode for image description\n"
+    "\u2022 \U0001F9EE Calculator and \U0001F3AE Games\n\n"
+    "\U0001F9E0 Ask me anything, or tap a menu button below to start."
 )
 
 HELP_TEXT = (
-    "💡 <b>Help Center</b>\n\n"
-    "🤖 <b>AI Commands</b>\n"
-    "• /chat - JO AI chat mode\n"
-    "• /code - code generator mode\n"
-    "• /research - research mode\n"
-    "• /prompt - prompt generator mode\n"
-    "• /image - image generator mode\n"
-    "• /deepseek - switch DeepSeek profile\n"
-    "• /kimi - image describer (send photo)\n\n"
-    "🛠️ <b>Other Features</b>\n"
-    "• /calculator - safe calculator\n"
-    "• /games - Tic-Tac-Toe and Guess Number\n"
-    "• /version - show version and model info\n"
-    "• /menu - return to main menu\n\n"
-    "📌 Tip: You can switch modes any time. Need a quick check? Use /ping."
+    "\U0001F4A1 <b>Help Center</b>\n\n"
+    "\U0001F916 <b>AI Commands</b>\n"
+    "\u2022 /chat - JO AI chat mode\n"
+    "\u2022 /code - code generator mode\n"
+    "\u2022 /research - research mode\n"
+    "\u2022 /prompt - prompt generator mode\n"
+    "\u2022 /image - image generator mode\n"
+    "\u2022 /analysis - switch analysis profile\n"
+    "\u2022 /vision - vision mode (send photo)\n\n"
+    "\U0001F6E0\ufe0f <b>Other Features</b>\n"
+    "\u2022 /calculator - safe calculator\n"
+    "\u2022 /games - Tic-Tac-Toe and Guess Number\n"
+    "\u2022 /version - show public version info\n"
+    "\u2022 /menu - return to main menu\n\n"
+    "Internal backend, provider, and model details are not shared.\n"
+    f"For JO API access, contact {DEVELOPER_HANDLE}."
 )
 
 MENU_HINT_TEXT = (
-    "🏠 <b>Main Menu</b>\n\n"
+    "\U0001F3E0 <b>Main Menu</b>\n\n"
     "Choose a section below:\n"
-    "• 🤖 AI Tools\n"
-    "• 🛠️ Utilities\n\n"
-    "💡 Need guidance? Use /help"
+    "\u2022 \U0001F916 AI Tools\n"
+    "\u2022 \U0001F6E0\ufe0f Utilities\n\n"
+    "\U0001F4A1 Need guidance? Use /help"
 )
 
 
@@ -65,13 +68,16 @@ async def handle_start(message: Message, session_manager: SessionManager, miniap
     if transition.notice:
         await message.answer(transition.notice, reply_markup=main_menu_keyboard(miniapp_url))
     await message.answer(WELCOME_TEXT, reply_markup=main_menu_keyboard(miniapp_url))
-    await message.answer(f"🤖 Bot Version: {VERSION}", reply_markup=main_menu_keyboard(miniapp_url))
     await message.answer(
-        "🎯 <b>Quick Start</b>\n\n"
-        "• Tap <b>🤖 AI Tools</b> to chat, code, research, generate prompts, or create images.\n"
-        "• Tap <b>🛠️ Utilities</b> for calculator and games.\n"
-        "• Tap <b>ℹ️ Version / Models</b> to inspect the current build.\n\n"
-        "🧠 Ask me anything when you're ready.",
+        f"{BRANDING_LINE}\nDeveloper: {DEVELOPER_HANDLE}\nBot Version: {VERSION}",
+        reply_markup=main_menu_keyboard(miniapp_url),
+    )
+    await message.answer(
+        "\U0001F3AF <b>Quick Start</b>\n\n"
+        "\u2022 Tap <b>\U0001F916 AI Tools</b> to chat, code, research, build prompts, create images, or use vision mode.\n"
+        "\u2022 Tap <b>\U0001F6E0\ufe0f Utilities</b> for calculator and games.\n"
+        "\u2022 Tap <b>\u2139\ufe0f Version</b> for public build info.\n\n"
+        "\U0001F9E0 Ask me anything when you're ready.",
         reply_markup=main_menu_keyboard(miniapp_url),
     )
 
@@ -85,7 +91,7 @@ async def handle_restart(message: Message, session_manager: SessionManager, mini
     if transition.notice:
         await message.answer(transition.notice, reply_markup=main_menu_keyboard(miniapp_url))
     await message.answer(
-        "✅ <b>Session restarted</b>\n\n"
+        "\u2705 <b>Session restarted</b>\n\n"
         "Your chat state is refreshed.\n"
         "Pick a mode from the menu to continue.",
         reply_markup=main_menu_keyboard(miniapp_url),
@@ -101,7 +107,7 @@ async def handle_help(message: Message, miniapp_url: str | None) -> None:
 
 @router.message(Command("ping"))
 async def handle_ping(message: Message) -> None:
-    await message.answer("🏓 <b>Pong!</b>\n\n✅ Bot is online and ready.")
+    await message.answer("\U0001F3D3 <b>Pong!</b>\n\n\u2705 Bot is online and ready.")
 
 
 @router.message(Command("version"))
@@ -132,14 +138,14 @@ async def handle_ai_tools_menu(
     if transition.notice:
         await message.answer(transition.notice, reply_markup=main_menu_keyboard(miniapp_url))
     await message.answer(
-        "🤖 <b>AI Tools Menu</b>\n\n"
+        "\U0001F916 <b>AI Tools Menu</b>\n\n"
         "Choose what you want to do:\n"
-        "• 💬 Chat AI\n"
-        "• ⚡ Generate code\n"
-        "• 🔍 Research\n"
-        "• ✨ Build prompts\n"
-        "• 🎨 Generate images\n"
-        "• 🖼️ Describe images with Kimi",
+        "\u2022 \U0001F4AC Chat AI\n"
+        "\u2022 \u26A1 Generate code\n"
+        "\u2022 \U0001F50D Research\n"
+        "\u2022 \u2728 Build prompts\n"
+        "\u2022 \U0001F3A8 Generate images\n"
+        "\u2022 \U0001F5BC\ufe0f Vision mode",
         reply_markup=ai_tools_keyboard(),
     )
 
@@ -157,9 +163,9 @@ async def handle_utilities_menu(
     if transition.notice:
         await message.answer(transition.notice, reply_markup=main_menu_keyboard(miniapp_url))
     await message.answer(
-        "🛠️ <b>Utilities Menu</b>\n\n"
-        "• 🧮 Calculator for quick math\n"
-        "• 🎮 Games for fun breaks\n\n"
+        "\U0001F6E0\ufe0f <b>Utilities Menu</b>\n\n"
+        "\u2022 \U0001F9EE Calculator for quick math\n"
+        "\u2022 \U0001F3AE Games for fun breaks\n\n"
         "Pick one below.",
         reply_markup=utilities_keyboard(),
     )
@@ -177,7 +183,7 @@ async def handle_menu(message: Message, session_manager: SessionManager, miniapp
     if transition.notice:
         await message.answer(transition.notice, reply_markup=main_menu_keyboard(miniapp_url))
     else:
-        await message.answer("🏠 You are already in the main menu.", reply_markup=main_menu_keyboard(miniapp_url))
+        await message.answer("\U0001F3E0 You are already in the main menu.", reply_markup=main_menu_keyboard(miniapp_url))
     await message.answer(MENU_HINT_TEXT, reply_markup=main_menu_keyboard(miniapp_url))
 
 
@@ -193,5 +199,5 @@ async def handle_menu_callback(query: CallbackQuery, session_manager: SessionMan
         if transition.notice:
             await query.message.answer(transition.notice, reply_markup=main_menu_keyboard(miniapp_url))
         else:
-            await query.message.answer("🏠 Returned to main menu.", reply_markup=main_menu_keyboard(miniapp_url))
+            await query.message.answer("\U0001F3E0 Returned to main menu.", reply_markup=main_menu_keyboard(miniapp_url))
         await query.message.answer(MENU_HINT_TEXT, reply_markup=main_menu_keyboard(miniapp_url))

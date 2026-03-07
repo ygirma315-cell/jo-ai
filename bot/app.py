@@ -22,6 +22,7 @@ from bot.handlers.games import router as games_router
 from bot.handlers.jo_ai import router as jo_ai_router
 from bot.middlewares.logging import UserActionLoggingMiddleware
 from bot.runtime_info import build_runtime_info
+from version import WEB_VERSION
 from bot.services.ai_service import ChatService, ImageGenerationService, VideoGenerationService
 from bot.services.calculator_service import CalculatorService
 from bot.services.guess_number_service import GuessNumberService
@@ -96,7 +97,7 @@ async def _configure_telegram_webhook(runtime: BotRuntime) -> bool:
         )
         runtime.webhook_configured = True
         runtime.last_startup_error = None
-        logger.info("Configured Telegram webhook: %s", runtime.telegram_webhook_url)
+        logger.info("Configured Telegram webhook.")
         return True
     except (TelegramNetworkError, ClientConnectorError, asyncio.TimeoutError) as exc:
         runtime.webhook_configured = False
@@ -117,7 +118,7 @@ async def _configure_chat_menu_button(runtime: BotRuntime) -> bool:
             await runtime.bot.set_chat_menu_button(
                 menu_button=MenuButtonWebApp(text="Open", web_app=WebAppInfo(url=resolved_miniapp_url))
             )
-            logger.info("Configured Telegram chat menu button as WebApp 'Open' -> %s", resolved_miniapp_url)
+            logger.info("Configured Telegram chat menu button as WebApp 'Open'.")
         else:
             await runtime.bot.set_chat_menu_button(menu_button=MenuButtonCommands())
             logger.info("Configured Telegram chat menu button as command list.")
@@ -210,16 +211,12 @@ async def create_bot_runtime() -> BotRuntime:
     settings = load_settings()
     settings.require_valid()
     run_markdown_sanity_checks()
-    logger.info("TOKEN LOADED | env_var=%s", settings.bot_token_env_var)
+    logger.info("BOT CREDENTIALS LOADED")
     logger.info("BOT INIT | version=%s", VERSION)
     process_role = os.getenv("PROCESS_ROLE", "web").strip() or "web"
-    logger.info("[RENDER] PROCESS=%s ENTRYPOINT=main.py VERSION=%s", process_role, VERSION)
-    if settings.public_base_url:
-        logger.info("Public base URL: %s", settings.public_base_url)
-    if settings.miniapp_url:
-        logger.info("Mini app URL: %s", settings.miniapp_url)
-    if settings.telegram_webhook_url:
-        logger.info("Telegram webhook URL: %s", settings.telegram_webhook_url)
+    logger.info("PROCESS=%s ENTRYPOINT=main.py VERSION=%s", process_role, VERSION)
+    if settings.public_base_url or settings.miniapp_url or settings.telegram_webhook_url:
+        logger.info("Public routing is configured.")
     for warning in settings.validation_warnings:
         logger.warning("Startup validation warning: %s", warning)
 
@@ -248,11 +245,7 @@ async def create_bot_runtime() -> BotRuntime:
     dispatcher["kimi_model"] = settings.kimi_model
     dispatcher["miniapp_url"] = settings.miniapp_url
     dispatcher["runtime_info"] = build_runtime_info(
-        chat_model=settings.nvidia_chat_model,
-        code_model=settings.code_model,
-        image_model=settings.image_model,
-        deepseek_model=settings.deepseek_model,
-        kimi_model=settings.kimi_model,
+        web_version=WEB_VERSION,
     )
 
     dispatcher.message.middleware(UserActionLoggingMiddleware())

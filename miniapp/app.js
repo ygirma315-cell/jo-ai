@@ -6,10 +6,12 @@
   const API_BASE_STORAGE_KEY = "jo_api_base";
   const HOME_ENTRY_STORAGE_KEY = "jo_home_entered";
   const HISTORY_PREFIX = "jo_history_";
-  const FRONTEND_VERSION = "v1.3.1";
+  const FRONTEND_VERSION = "v1.3.2";
   const SITE_BASE_URL = "https://ygirma315-cell.github.io/jo-ai/";
   const MAX_HISTORY_ITEMS = 18;
   const MAX_UPLOAD_BYTES = 8 * 1024 * 1024;
+  const SAFE_INTERNAL_DETAILS_REFUSAL =
+    "I can't share internal backend or API details. For JO API access, contact the developer @grpbuyer3.";
 
   const loadingMessages = [
     "Processing...",
@@ -19,6 +21,15 @@
   ];
 
   const updates = [
+    {
+      version: "v1.3.2",
+      title: "Security hardening and safer public branding",
+      items: [
+        "Public version info now stays branded while internal backend, model, and API details remain hidden",
+        "Vision requests now use generic JO AI routing instead of older provider-specific wording",
+        "Support links and public copy now point users to @grpbuyer3 for JO API access",
+      ],
+    },
     {
       version: "v1.3.1",
       title: "Fixed mobile composer and cleaner welcome polish",
@@ -77,7 +88,7 @@
       version: "v1.2.0",
       title: "Multi-page JO AI refresh",
       items: [
-        "New welcome screen and homepage model menu",
+        "New welcome screen and homepage tool menu",
         "Dedicated pages for each JO AI tool",
         "Conversation-style history with easy copy and save actions",
         "Help page and clickable update panel",
@@ -178,7 +189,7 @@
       emptyCopy: "Describe a scene, choose a style, and your image result will appear here.",
     },
     kimi: {
-      title: "Kimi Vision",
+      title: "JO AI Vision",
       description: "Upload an image and ask Joe AI to describe or explain it.",
       lead: "Add an image, ask a question, and keep every vision reply in the same conversation.",
       example: "Describe the image and point out the main objects and the setting.",
@@ -213,6 +224,16 @@
     scrollLockY: 0,
     bodyLockStyles: null,
   };
+
+  const sensitiveTargetsPattern =
+    /\b(system(?:\s|-)?prompt|hidden(?:\s|-)?prompt|hidden(?:\s|-)?instructions?|developer(?:\s|-)?message|config(?:uration)?|\.env|env(?:ironment)?(?:\s|-)?vars?|environment(?:\s|-)?variables?|api(?:\s|-)?keys?|tokens?|bearer|authorization|headers?|secrets?|credentials?|backend|provider|stack|architecture|endpoints?|runtime|model(?:\s|-)?name|model(?:\s|-)?version|exact(?:\s|-)?model|hidden(?:\s|-)?settings?)\b/i;
+  const extractionVerbsPattern =
+    /\b(reveal|show|tell|dump|print|display|list|return|output|extract|share|expose|leak|give|send)\b/i;
+  const instructionBypassPattern =
+    /\b(ignore|bypass|override|forget|disregard)\b[\s\S]{0,80}\b(instructions|rules|system|developer|policy|guardrails?)\b/i;
+  const selfContextPattern =
+    /\b(you|your|jo\s+ai|this\s+bot|the\s+bot|the\s+website|the\s+mini\s+app|the\s+backend)\b/i;
+  const providerNamesPattern = /\b(nvidia|openai|anthropic|moonshot|deepseek|render|onrender|llama|flux|kimi)\b/i;
 
   function byId(id) {
     return document.getElementById(id);
@@ -1181,8 +1202,10 @@
 
   function configureSupportActions() {
     const querySupport = normalizeSupportUrl(getQueryParam("support_url"));
-    if (querySupport && elements.contactBtn) {
-      elements.contactBtn.href = querySupport;
+    const configuredSupport = normalizeSupportUrl(window.JO_SUPPORT_URL);
+    const supportUrl = querySupport || configuredSupport;
+    if (supportUrl && elements.contactBtn) {
+      elements.contactBtn.href = supportUrl;
     }
 
     if (elements.reportBtn) {
@@ -1817,8 +1840,8 @@
     }
 
     return [
-      { path: "/api/kimi_image_describer", payload: basePayload },
-      { path: "/kimi_image_describer", payload: basePayload },
+      { path: "/api/vision", payload: basePayload },
+      { path: "/vision", payload: basePayload },
     ];
   }
 
@@ -2028,6 +2051,30 @@
     };
   }
 
+  function containsSensitiveRequest(payload) {
+    const text = [
+      payload && typeof payload.message === "string" ? payload.message : "",
+      payload && typeof payload.prompt_type === "string" ? payload.prompt_type : "",
+    ]
+      .join("\n")
+      .trim();
+
+    if (!text) {
+      return false;
+    }
+
+    if (instructionBypassPattern.test(text)) {
+      return true;
+    }
+    if (extractionVerbsPattern.test(text) && sensitiveTargetsPattern.test(text)) {
+      return true;
+    }
+    if (selfContextPattern.test(text) && (sensitiveTargetsPattern.test(text) || providerNamesPattern.test(text))) {
+      return true;
+    }
+    return false;
+  }
+
   async function submitTool(event) {
     if (event) {
       event.preventDefault();
@@ -2057,6 +2104,20 @@
       }
     }
     updateSendButtonState();
+    if (containsSensitiveRequest(payload)) {
+      const refusal = {
+        id: createId(),
+        role: "assistant",
+        text: SAFE_INTERNAL_DETAILS_REFUSAL,
+        timestamp: Date.now(),
+      };
+      state.lastOutputText = refusal.text;
+      state.lastImageDataUrl = "";
+      pushHistory(refusal);
+      setApiState("ready", "success");
+      showToast("Internal details are not shared.");
+      return;
+    }
     insertPendingMessage();
     setBusy(true);
     scrollHistoryToBottom(true);

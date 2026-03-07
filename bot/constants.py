@@ -1,18 +1,18 @@
-MENU_CALCULATOR = "🧮 Calculator"
-MENU_GAMES = "🎮 Games"
-MENU_JO_AI = "🤖 Jo AI"
-MENU_AI_TOOLS = "🤖 AI Tools"
-MENU_UTILITIES = "🛠️ Utilities"
-MENU_AI_CHAT = "💬 JO AI Chat"
-MENU_AI_CODE = "⚡ Code Generator"
-MENU_AI_RESEARCH = "🔍 Research"
-MENU_AI_PROMPT = "✨ Prompt Generator"
-MENU_AI_IMAGE = "🎨 Image Generator"
-MENU_AI_DEEPSEEK = "🧠 DeepSeek Models"
-MENU_AI_KIMI = "🖼️ Kimi Image Describer"
-MENU_HELP = "💡 Help"
-MENU_VERSION_MODELS = "ℹ️ Version / Models"
-MENU_CANCEL = "↩️ Cancel / Back to Menu"
+MENU_CALCULATOR = "\U0001F9EE Calculator"
+MENU_GAMES = "\U0001F3AE Games"
+MENU_JO_AI = "\U0001F916 Jo AI"
+MENU_AI_TOOLS = "\U0001F916 AI Tools"
+MENU_UTILITIES = "\U0001F6E0\ufe0f Utilities"
+MENU_AI_CHAT = "\U0001F4AC JO AI Chat"
+MENU_AI_CODE = "\u26a1 Code Generator"
+MENU_AI_RESEARCH = "\U0001F50D Research"
+MENU_AI_PROMPT = "\u2728 Prompt Generator"
+MENU_AI_IMAGE = "\U0001F3A8 Image Generator"
+MENU_AI_DEEPSEEK = "\U0001F9E0 Deep Analysis"
+MENU_AI_KIMI = "\U0001F5BC\ufe0f Vision"
+MENU_HELP = "\U0001F4A1 Help"
+MENU_VERSION_MODELS = "\u2139\ufe0f Version"
+MENU_CANCEL = "\u21a9\ufe0f Cancel / Back to Menu"
 
 _PRIMARY_MENU_BUTTON_TEXTS = {
     MENU_CALCULATOR,
@@ -43,10 +43,10 @@ _LEGACY_MENU_BUTTON_TEXTS = {
     "Research",
     "Prompt Generator",
     "Image Generator",
-    "DeepSeek Models",
-    "Kimi Image Describer",
+    "Deep Analysis",
+    "Vision",
+    "Version",
     "Help",
-    "Version / Models",
     "Cancel / Back to Menu",
 }
 
