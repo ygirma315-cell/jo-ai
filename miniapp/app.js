@@ -6,7 +6,7 @@
   const API_BASE_STORAGE_KEY = "jo_api_base";
   const HOME_ENTRY_STORAGE_KEY = "jo_home_entered";
   const HISTORY_PREFIX = "jo_history_";
-  const FRONTEND_VERSION = "v1.3.0";
+  const FRONTEND_VERSION = "v1.3.1";
   const SITE_BASE_URL = "https://ygirma315-cell.github.io/jo-ai/";
   const MAX_HISTORY_ITEMS = 18;
   const MAX_UPLOAD_BYTES = 8 * 1024 * 1024;
@@ -19,6 +19,15 @@
   ];
 
   const updates = [
+    {
+      version: "v1.3.1",
+      title: "Fixed mobile composer and cleaner welcome polish",
+      items: [
+        "Tool pages now keep a stable chat view with a fixed bottom composer and a Send button pinned to the right",
+        "Only the conversation thread scrolls, while the input area stays compact and clearer inside Telegram mobile",
+        "The welcome screen now uses a cleaner JO AI icon treatment instead of the older eye emoji",
+      ],
+    },
     {
       version: "v1.3.0",
       title: "Shared chat app redesign",
@@ -93,7 +102,7 @@
       label: "Ask Joe AI chatbot",
       placeholder: "Ask Joe AI chatbot",
       rows: 1,
-      maxComposerHeight: 168,
+      maxComposerHeight: 144,
       historyTitle: "Conversation",
       emptyTitle: "Ask Joe AI chatbot",
       emptyCopy: "Fast help for ideas, questions, and tasks.",
@@ -106,7 +115,7 @@
       label: "Ask Joe AI chatbot for code",
       placeholder: "Ask Joe AI chatbot for code, debugging, or implementation help",
       rows: 1,
-      maxComposerHeight: 220,
+      maxComposerHeight: 176,
       historyTitle: "Code chat",
       emptyTitle: "Start a code conversation",
       emptyCopy: "Share a bug, spec, or feature request and JO AI will reply in-chat.",
@@ -119,7 +128,7 @@
       label: "Ask Joe AI chatbot to analyze",
       placeholder: "Ask Joe AI chatbot to compare, reason, or break down a decision",
       rows: 1,
-      maxComposerHeight: 168,
+      maxComposerHeight: 152,
       historyTitle: "Analysis thread",
       emptyTitle: "Ask for deeper analysis",
       emptyCopy: "Comparisons, reasoning, and structured tradeoffs show up here.",
@@ -132,7 +141,7 @@
       label: "Ask Joe AI chatbot to research",
       placeholder: "Ask Joe AI chatbot to research a topic, summarize, or suggest next steps",
       rows: 1,
-      maxComposerHeight: 188,
+      maxComposerHeight: 160,
       historyTitle: "Research thread",
       emptyTitle: "Start a research thread",
       emptyCopy: "Ask for summaries, risks, tradeoffs, or practical guidance.",
@@ -145,7 +154,7 @@
       label: "Ask Joe AI chatbot to build a prompt",
       placeholder: "Ask Joe AI chatbot to build a prompt for your goal",
       rows: 1,
-      maxComposerHeight: 188,
+      maxComposerHeight: 160,
       historyTitle: "Prompt results",
       needsPromptType: true,
       examplePromptType: "assistant prompt",
@@ -160,7 +169,7 @@
       label: "Describe the image you want",
       placeholder: "Describe the image you want Joe AI to create",
       rows: 1,
-      maxComposerHeight: 188,
+      maxComposerHeight: 160,
       historyTitle: "Image results",
       needsImageType: true,
       supportsImageSave: true,
@@ -176,7 +185,7 @@
       label: "Ask Joe AI about this image",
       placeholder: "Ask Joe AI about this image",
       rows: 1,
-      maxComposerHeight: 160,
+      maxComposerHeight: 144,
       historyTitle: "Vision history",
       needsUpload: true,
       supportsImageSave: false,
@@ -494,21 +503,11 @@
   }
 
   function scrollComposerIntoView(immediate = false) {
-    const composer = document.querySelector(".tool-page .chat-composer");
-    if (!composer) {
+    if (!elements.historyList) {
       return;
     }
 
     const runner = () => {
-      try {
-        composer.scrollIntoView({
-          block: "end",
-          inline: "nearest",
-          behavior: immediate ? "auto" : "smooth",
-        });
-      } catch (_error) {
-        composer.scrollIntoView(false);
-      }
       scrollHistoryToBottom(immediate);
     };
 

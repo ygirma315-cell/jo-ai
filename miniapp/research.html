@@ -25,11 +25,11 @@
     href="https://fonts.googleapis.com/css2?family=DM+Sans:wght@400;500;700&family=Space+Grotesk:wght@500;700&display=swap"
     rel="stylesheet"
   >
-  <link rel="stylesheet" href="style.css?v=1.2.4">
+  <link rel="stylesheet" href="style.css?v=1.3.1">
   <script src="https://telegram.org/js/telegram-web-app.js"></script>
-  <script src="bootstrap.js?v=1.2.4" defer></script>
-  <script src="config.js?v=1.2.4"></script>
-  <script src="app.js?v=1.2.4" defer></script>
+  <script src="bootstrap.js?v=1.3.1" defer></script>
+  <script src="config.js?v=1.3.1"></script>
+  <script src="app.js?v=1.3.1" defer></script>
 </head>
 <body data-page="tool" data-tool="research" class="tool-page">
   <section id="appFallback" class="app-fallback" hidden>
@@ -37,44 +37,57 @@
     <p id="appFallbackMessage">Unknown startup error.</p>
   </section>
   <main id="appRoot" class="page-shell">
-    <section class="shell">
-      <header class="site-header">
-        <div>
+    <section class="shell chat-shell">
+      <header class="chat-topbar">
+        <div class="chat-topbar-main">
           <a class="back-link" href="index.html">Back</a>
-          <p class="eyebrow">JO AI CHAT BOT</p>
-          <h1 id="toolTitle" class="page-title">Research</h1>
-          <p id="toolDescription" class="subtitle">Ask for summaries, details, risks, and next steps on one page.</p>
+          <div class="chat-brand-row">
+            <div class="chat-brand-mark" aria-hidden="true">JO</div>
+            <div class="chat-brand-copy">
+              <p class="eyebrow">JO AI Chatbot</p>
+              <h1 id="toolTitle" class="chat-title">Research</h1>
+              <p id="toolDescription" class="chat-subtitle">Focused breakdowns, summaries, practical context, and next steps.</p>
+            </div>
+          </div>
         </div>
-        <div class="status-cluster">
+        <div class="chat-topbar-actions">
           <span id="status" class="chip">Checking studio...</span>
           <span id="userInfo" class="chip muted">Guest mode</span>
+          <a class="btn small" href="help.html">Help</a>
         </div>
       </header>
 
-      <section class="hero-card card tool-hero">
-        <h2>Research in a cleaner flow</h2>
-        <p id="toolLead">Use this page for detailed explanations, practical context, and next-step guidance.</p>
-      </section>
-
-      <div class="tool-layout">
-        <section class="card prompt-card">
-          <div class="panel-head">
-            <div>
-              <p class="section-kicker">INPUT</p>
-              <h2>Ask a research question</h2>
-            </div>
-            <button id="useExampleBtn" class="btn small" type="button">Use example</button>
+      <section class="chat-main">
+        <div class="chat-thread-head">
+          <div class="chat-thread-copy">
+            <p class="eyebrow">Conversation</p>
+            <h2 id="historyTitle" class="chat-thread-title">Research thread</h2>
+            <p id="toolLead" class="chat-thread-note">Research questions stay organized in one clean conversation view.</p>
           </div>
+          <div class="chat-thread-actions">
+            <span id="apiState" class="chip muted">idle</span>
+            <button id="copyBtn" class="btn small" type="button">Copy last</button>
+            <button id="downloadImageBtn" class="btn small" type="button" disabled>Save image</button>
+            <button id="clearBtn" class="btn small" type="button">New chat</button>
+          </div>
+        </div>
 
-          <p class="example-line">Example: <span id="toolExample">Explain the pros and cons of remote teams for a startup and suggest best practices.</span></p>
+        <div id="historyList" class="conversation-list chat-history" role="log" aria-live="polite">
+          <div id="emptyState" class="empty-state chat-empty-state">
+            <div class="empty-state-mark" aria-hidden="true">JO</div>
+            <h3>Start a research thread</h3>
+            <p>Ask for summaries, risks, tradeoffs, or practical guidance.</p>
+          </div>
+        </div>
 
-          <form id="toolForm" class="field-stack">
-            <div id="promptTypeWrap" hidden>
+        <form id="toolForm" class="chat-composer" autocomplete="off">
+          <div class="composer-options">
+            <div id="promptTypeWrap" class="composer-field" hidden>
               <label for="promptType">Prompt type</label>
-              <input id="promptType" type="text" placeholder="e.g. lesson prompt, coding prompt">
+              <input id="promptType" type="text" placeholder="e.g. assistant prompt">
             </div>
 
-            <div id="imageTypeWrap" hidden>
+            <div id="imageTypeWrap" class="composer-field" hidden>
               <label for="imageType">Image style</label>
               <select id="imageType">
                 <option value="realistic">Realistic image</option>
@@ -87,7 +100,7 @@
               </select>
             </div>
 
-            <div id="kimiImageWrap" hidden>
+            <div id="kimiImageWrap" class="composer-upload" hidden>
               <label class="upload-zone" for="kimiImage">
                 <input id="kimiImage" type="file" accept=".png,.jpg,.jpeg,.webp,.gif,.bmp,image/*">
                 <span class="upload-title">Upload an image</span>
@@ -98,44 +111,21 @@
               </div>
               <p id="uploadInfo" class="hint">No image selected.</p>
             </div>
-
-            <label for="aiInput" id="inputLabel">Research question</label>
-            <textarea id="aiInput" class="prompt-input" rows="8" placeholder="Ask for a summary, detailed explanation, risks, tradeoffs, or next steps."></textarea>
-
-            <div class="actions">
-              <button id="sendBtn" class="btn primary" type="submit">Send</button>
-              <button id="clearBtn" class="btn" type="button">New chat</button>
-            </div>
-            <p id="loadingHint" class="hint">Ready when you are.</p>
-          </form>
-        </section>
-
-        <section class="card conversation-card">
-          <div class="panel-head">
-            <div>
-              <p class="section-kicker">OUTPUT</p>
-              <h2 id="historyTitle">Research thread</h2>
-            </div>
-            <div class="response-controls">
-              <button id="pastChatsBtn" class="btn small" type="button">Past chats here</button>
-              <span id="apiState" class="chip muted">idle</span>
-              <button id="copyBtn" class="btn small" type="button">Copy last</button>
-              <button id="downloadImageBtn" class="btn small" type="button" disabled>Save image</button>
-            </div>
           </div>
 
-          <div id="historyList" class="conversation-list">
-            <div id="emptyState" class="empty-state">
-              <h3>No research output yet</h3>
-              <p>Your research requests and responses will appear here.</p>
-            </div>
+          <div class="composer-meta">
+            <button id="useExampleBtn" class="example-chip" type="button">Use example</button>
+            <p class="composer-example">Try: <span id="toolExample">Explain the pros and cons of remote teams for a startup and suggest best practices.</span></p>
           </div>
-        </section>
-      </div>
 
-      <nav class="footer-links">
-        <a class="btn" href="help.html">Help</a>
-      </nav>
+          <label for="aiInput" id="inputLabel" class="sr-only">Ask Joe AI chatbot to research</label>
+          <div class="chat-input-row">
+            <textarea id="aiInput" class="chat-input" rows="1" placeholder="Ask Joe AI chatbot to research a topic, summarize, or suggest next steps" enterkeyhint="send"></textarea>
+            <button id="sendBtn" class="btn primary send-btn" type="submit" aria-label="Send message">Send</button>
+          </div>
+          <p id="loadingHint" class="hint composer-status">Ready when you are.</p>
+        </form>
+      </section>
     </section>
   </main>
 </body>

@@ -25,11 +25,11 @@
     href="https://fonts.googleapis.com/css2?family=DM+Sans:wght@400;500;700&family=Space+Grotesk:wght@500;700&display=swap"
     rel="stylesheet"
   >
-  <link rel="stylesheet" href="style.css?v=1.2.4">
+  <link rel="stylesheet" href="style.css?v=1.3.1">
   <script src="https://telegram.org/js/telegram-web-app.js"></script>
-  <script src="bootstrap.js?v=1.2.4" defer></script>
-  <script src="config.js?v=1.2.4"></script>
-  <script src="app.js?v=1.2.4" defer></script>
+  <script src="bootstrap.js?v=1.3.1" defer></script>
+  <script src="config.js?v=1.3.1"></script>
+  <script src="app.js?v=1.3.1" defer></script>
 </head>
 <body data-page="tool" data-tool="kimi" class="tool-page">
   <section id="appFallback" class="app-fallback" hidden>
@@ -37,44 +37,57 @@
     <p id="appFallbackMessage">Unknown startup error.</p>
   </section>
   <main id="appRoot" class="page-shell">
-    <section class="shell">
-      <header class="site-header">
-        <div>
+    <section class="shell chat-shell">
+      <header class="chat-topbar">
+        <div class="chat-topbar-main">
           <a class="back-link" href="index.html">Back</a>
-          <p class="eyebrow">JO AI CHAT BOT</p>
-          <h1 id="toolTitle" class="page-title">Kimi Vision</h1>
-          <p id="toolDescription" class="subtitle">Upload an image and ask for a clean description in a friendlier workspace.</p>
+          <div class="chat-brand-row">
+            <div class="chat-brand-mark" aria-hidden="true">JO</div>
+            <div class="chat-brand-copy">
+              <p class="eyebrow">JO AI Chatbot</p>
+              <h1 id="toolTitle" class="chat-title">Kimi Vision</h1>
+              <p id="toolDescription" class="chat-subtitle">Upload an image and ask Joe AI to describe or explain it.</p>
+            </div>
+          </div>
         </div>
-        <div class="status-cluster">
+        <div class="chat-topbar-actions">
           <span id="status" class="chip">Checking studio...</span>
           <span id="userInfo" class="chip muted">Guest mode</span>
+          <a class="btn small" href="help.html">Help</a>
         </div>
       </header>
 
-      <section class="hero-card card tool-hero">
-        <h2>Upload, ask, review</h2>
-        <p id="toolLead">Use the upload area, preview the image, and keep each response in a clean history.</p>
-      </section>
-
-      <div class="tool-layout">
-        <section class="card prompt-card">
-          <div class="panel-head">
-            <div>
-              <p class="section-kicker">INPUT</p>
-              <h2>Send an image task</h2>
-            </div>
-            <button id="useExampleBtn" class="btn small" type="button">Use example</button>
+      <section class="chat-main">
+        <div class="chat-thread-head">
+          <div class="chat-thread-copy">
+            <p class="eyebrow">Conversation</p>
+            <h2 id="historyTitle" class="chat-thread-title">Vision history</h2>
+            <p id="toolLead" class="chat-thread-note">Add an image, ask a question, and keep every vision reply in the same conversation.</p>
           </div>
+          <div class="chat-thread-actions">
+            <span id="apiState" class="chip muted">idle</span>
+            <button id="copyBtn" class="btn small" type="button">Copy last</button>
+            <button id="downloadImageBtn" class="btn small" type="button" disabled>Save image</button>
+            <button id="clearBtn" class="btn small" type="button">New chat</button>
+          </div>
+        </div>
 
-          <p class="example-line">Example: <span id="toolExample">Describe the image and point out the main objects and the setting.</span></p>
+        <div id="historyList" class="conversation-list chat-history" role="log" aria-live="polite">
+          <div id="emptyState" class="empty-state chat-empty-state">
+            <div class="empty-state-mark" aria-hidden="true">JO</div>
+            <h3>Ask Joe AI about an image</h3>
+            <p>Upload an image and JO AI will describe, summarize, or explain it here.</p>
+          </div>
+        </div>
 
-          <form id="toolForm" class="field-stack">
-            <div id="promptTypeWrap" hidden>
+        <form id="toolForm" class="chat-composer" autocomplete="off">
+          <div class="composer-options">
+            <div id="promptTypeWrap" class="composer-field" hidden>
               <label for="promptType">Prompt type</label>
-              <input id="promptType" type="text" placeholder="e.g. lesson prompt, coding prompt">
+              <input id="promptType" type="text" placeholder="e.g. assistant prompt">
             </div>
 
-            <div id="imageTypeWrap" hidden>
+            <div id="imageTypeWrap" class="composer-field" hidden>
               <label for="imageType">Image style</label>
               <select id="imageType">
                 <option value="realistic">Realistic image</option>
@@ -87,10 +100,10 @@
               </select>
             </div>
 
-            <div id="kimiImageWrap">
+            <div id="kimiImageWrap" class="composer-upload">
               <label class="upload-zone" for="kimiImage">
                 <input id="kimiImage" type="file" accept=".png,.jpg,.jpeg,.webp,.gif,.bmp,image/*">
-                <span class="upload-title">Upload image for Kimi</span>
+                <span class="upload-title">Upload image</span>
                 <span class="upload-copy">PNG, JPG, JPEG, WEBP, GIF, BMP, and other common image files</span>
               </label>
               <div id="kimiPreviewWrap" class="upload-preview" hidden>
@@ -98,44 +111,21 @@
               </div>
               <p id="uploadInfo" class="hint">No image selected.</p>
             </div>
-
-            <label for="aiInput" id="inputLabel">Image request</label>
-            <textarea id="aiInput" class="prompt-input" rows="8" placeholder="Optional instruction. Example: summarize the image, identify objects, or explain the scene."></textarea>
-
-            <div class="actions">
-              <button id="sendBtn" class="btn primary" type="submit">Send</button>
-              <button id="clearBtn" class="btn" type="button">New chat</button>
-            </div>
-            <p id="loadingHint" class="hint">Ready when you are.</p>
-          </form>
-        </section>
-
-        <section class="card conversation-card">
-          <div class="panel-head">
-            <div>
-              <p class="section-kicker">OUTPUT</p>
-              <h2 id="historyTitle">Vision history</h2>
-            </div>
-            <div class="response-controls">
-              <button id="pastChatsBtn" class="btn small" type="button">Past chats here</button>
-              <span id="apiState" class="chip muted">idle</span>
-              <button id="copyBtn" class="btn small" type="button">Copy last</button>
-              <button id="downloadImageBtn" class="btn small" type="button" disabled>Save image</button>
-            </div>
           </div>
 
-          <div id="historyList" class="conversation-list">
-            <div id="emptyState" class="empty-state">
-              <h3>No vision output yet</h3>
-              <p>Your uploaded image tasks and responses will appear here.</p>
-            </div>
+          <div class="composer-meta">
+            <button id="useExampleBtn" class="example-chip" type="button">Use example</button>
+            <p class="composer-example">Try: <span id="toolExample">Describe the image and point out the main objects and the setting.</span></p>
           </div>
-        </section>
-      </div>
 
-      <nav class="footer-links">
-        <a class="btn" href="help.html">Help</a>
-      </nav>
+          <label for="aiInput" id="inputLabel" class="sr-only">Ask Joe AI about this image</label>
+          <div class="chat-input-row">
+            <textarea id="aiInput" class="chat-input" rows="1" placeholder="Ask Joe AI about this image" enterkeyhint="send"></textarea>
+            <button id="sendBtn" class="btn primary send-btn" type="submit" aria-label="Send message">Send</button>
+          </div>
+          <p id="loadingHint" class="hint composer-status">Ready when you are.</p>
+        </form>
+      </section>
     </section>
   </main>
 </body>
