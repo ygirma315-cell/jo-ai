@@ -9,7 +9,10 @@
   <meta http-equiv="Expires" content="0">
   <title>Image Generator</title>
   <script>
-    if (window.location.hostname === "ygirma315-cell.github.io") {
+    const onGitHubPagesProject =
+      window.location.hostname === "ygirma315-cell.github.io" &&
+      /^\/jo-ai(?:\/|$)/.test(window.location.pathname);
+    if (onGitHubPagesProject) {
       const base = document.createElement("base");
       base.href = "https://ygirma315-cell.github.io/jo-ai/";
       document.head.appendChild(base);
