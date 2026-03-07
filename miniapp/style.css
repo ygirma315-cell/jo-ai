@@ -118,8 +118,26 @@ textarea {
 }
 
 .page-shell {
+  position: relative;
   min-height: max(100%, var(--app-height));
   padding: calc(24px + var(--safe-top)) 24px calc(24px + var(--safe-bottom));
+  transition: filter 0.22s ease, transform 0.22s ease;
+}
+
+body.modal-active {
+  touch-action: none;
+}
+
+body.modal-active .page-shell {
+  filter: blur(14px);
+  transform: scale(0.992);
+  pointer-events: none;
+  user-select: none;
+}
+
+body.modal-active .version-badge {
+  opacity: 0.35;
+  pointer-events: none;
 }
 
 .app-fallback {
@@ -866,23 +884,31 @@ select:focus {
 .welcome-overlay {
   position: fixed;
   inset: 0;
-  z-index: 40;
+  z-index: 60;
   display: grid;
   place-items: center;
-  padding: 24px;
-  background: rgba(249, 242, 231, 0.46);
+  min-height: var(--viewport-height);
+  padding: calc(20px + var(--safe-top)) 16px calc(20px + var(--safe-bottom));
+  overflow-y: auto;
+  overscroll-behavior: contain;
+  background: rgba(249, 242, 231, 0.58);
   backdrop-filter: blur(24px);
-  transition: opacity 0.24s ease, visibility 0.24s ease;
-}
-
-.welcome-overlay.hidden {
   opacity: 0;
   visibility: hidden;
   pointer-events: none;
+  transition: opacity 0.22s ease, visibility 0.22s ease;
+}
+
+.welcome-overlay.open {
+  opacity: 1;
+  visibility: visible;
+  pointer-events: auto;
 }
 
 .welcome-card {
   width: min(540px, 100%);
+  max-height: min(100%, calc(var(--viewport-height) - var(--safe-top) - var(--safe-bottom) - 40px));
+  overflow: auto;
   padding: 32px;
   border-radius: 30px;
   border: 1px solid rgba(255, 255, 255, 0.6);
@@ -892,6 +918,12 @@ select:focus {
     rgba(255, 255, 255, 0.76);
   box-shadow: 0 40px 80px rgba(29, 43, 58, 0.16);
   text-align: center;
+  transform: translateY(18px) scale(0.985);
+  transition: transform 0.22s ease, box-shadow 0.22s ease;
+}
+
+.welcome-overlay.open .welcome-card {
+  transform: translateY(0) scale(1);
 }
 
 .welcome-icon {
@@ -944,7 +976,7 @@ select:focus {
   position: fixed;
   right: 20px;
   bottom: 20px;
-  z-index: 30;
+  z-index: 25;
   border: 1px solid rgba(72, 93, 111, 0.14);
   border-radius: 999px;
   padding: 12px 16px;
@@ -1015,25 +1047,42 @@ body[data-page="help"] .page-title::before {
 .updates-modal {
   position: fixed;
   inset: 0;
-  z-index: 50;
-  display: none;
+  z-index: 70;
+  display: flex;
   align-items: center;
   justify-content: center;
-  padding: 20px;
+  min-height: var(--viewport-height);
+  padding: calc(20px + var(--safe-top)) 16px calc(20px + var(--safe-bottom));
+  overflow-y: auto;
+  overscroll-behavior: contain;
   background: rgba(27, 32, 40, 0.38);
   backdrop-filter: blur(12px);
+  opacity: 0;
+  visibility: hidden;
+  pointer-events: none;
+  transition: opacity 0.22s ease, visibility 0.22s ease;
 }
 
 .updates-modal.open {
-  display: flex;
+  opacity: 1;
+  visibility: visible;
+  pointer-events: auto;
 }
 
 .updates-card {
   width: min(460px, 100%);
+  max-height: min(100%, calc(var(--viewport-height) - var(--safe-top) - var(--safe-bottom) - 40px));
+  overflow: auto;
   padding: 24px;
   border-radius: 24px;
   background: rgba(255, 255, 255, 0.96);
   box-shadow: var(--shadow-2);
+  transform: translateY(18px) scale(0.985);
+  transition: transform 0.22s ease, box-shadow 0.22s ease;
+}
+
+.updates-modal.open .updates-card {
+  transform: translateY(0) scale(1);
 }
 
 .updates-list {
@@ -1098,7 +1147,7 @@ body[data-telegram-mobile="true"] .card {
 }
 
 body[data-telegram-mobile="true"] .welcome-overlay {
-  background: rgba(247, 241, 231, 0.94);
+  background: rgba(247, 241, 231, 0.74);
 }
 
 body[data-telegram-mobile="true"] .welcome-card,
@@ -1107,7 +1156,11 @@ body[data-telegram-mobile="true"] .updates-card {
 }
 
 body[data-telegram-mobile="true"] .updates-modal {
-  background: rgba(27, 32, 40, 0.56);
+  background: rgba(27, 32, 40, 0.46);
+}
+
+body[data-telegram-mobile="true"].modal-active .page-shell {
+  filter: blur(10px);
 }
 
 body[data-keyboard-open="true"] .tool-page .tool-layout {

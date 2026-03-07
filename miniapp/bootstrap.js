@@ -4,13 +4,41 @@
   const state = (window.__joMiniAppBoot = window.__joMiniAppBoot || {});
   state.errors = Array.isArray(state.errors) ? state.errors : [];
   state.startupComplete = false;
-  state.telegramDetected = !!(window.Telegram && window.Telegram.WebApp);
+  state.telegramDetected = false;
   state.viewportBound = false;
   state.rootMounted = false;
   state.startupTimer = state.startupTimer || 0;
 
   function byId(id) {
     return document.getElementById(id);
+  }
+
+  function getTelegramWebApp() {
+    return window.Telegram && window.Telegram.WebApp ? window.Telegram.WebApp : null;
+  }
+
+  function hasTelegramWebAppContext(candidate) {
+    if (!candidate || typeof candidate !== "object") {
+      return false;
+    }
+
+    const initData = typeof candidate.initData === "string" ? candidate.initData.trim() : "";
+    const unsafe = candidate.initDataUnsafe && typeof candidate.initDataUnsafe === "object" ? candidate.initDataUnsafe : null;
+    const platform = typeof candidate.platform === "string" ? candidate.platform.toLowerCase() : "";
+
+    if (initData) {
+      return true;
+    }
+    if (unsafe && typeof unsafe.user === "object" && unsafe.user && typeof unsafe.user.id !== "undefined") {
+      return true;
+    }
+    if (unsafe && typeof unsafe.chat === "object" && unsafe.chat && typeof unsafe.chat.id !== "undefined") {
+      return true;
+    }
+    if (unsafe && typeof unsafe.query_id === "string" && unsafe.query_id.trim()) {
+      return true;
+    }
+    return Boolean(platform && platform !== "unknown");
   }
 
   function readNumber(value) {
@@ -97,7 +125,7 @@
   }
 
   function applyTheme() {
-    const tg = window.Telegram && window.Telegram.WebApp ? window.Telegram.WebApp : null;
+    const tg = getTelegramWebApp();
     const theme = tg && tg.themeParams ? tg.themeParams : null;
     const background = (theme && (theme.bg_color || theme.secondary_bg_color)) || "#fffaf2";
     const foreground = (theme && theme.text_color) || "#1b1f24";
@@ -117,15 +145,15 @@
   }
 
   function detectTelegramMobile() {
-    const tg = window.Telegram && window.Telegram.WebApp ? window.Telegram.WebApp : null;
+    const tg = getTelegramWebApp();
     const platform = tg && typeof tg.platform === "string" ? tg.platform.toLowerCase() : "";
     const ua = navigator.userAgent || "";
     const isMobileUa = /android|iphone|ipad|ipod|mobile/i.test(ua);
-    return isMobileUa && (platform === "android" || platform === "ios" || /telegram/i.test(ua) || !!tg);
+    return isMobileUa && (platform === "android" || platform === "ios" || /telegram/i.test(ua) || hasTelegramWebAppContext(tg));
   }
 
   function readViewportMetrics() {
-    const tg = window.Telegram && window.Telegram.WebApp ? window.Telegram.WebApp : null;
+    const tg = hasTelegramWebAppContext(getTelegramWebApp()) ? getTelegramWebApp() : null;
     const viewport = window.visualViewport || null;
     const innerHeight = readNumber(window.innerHeight);
     const viewportHeight = viewport ? readNumber(viewport.height) : 0;
@@ -200,12 +228,12 @@
   }
 
   function safeTelegramInit() {
-    state.telegramDetected = !!(window.Telegram && window.Telegram.WebApp);
+    state.telegramDetected = hasTelegramWebAppContext(getTelegramWebApp());
     updateBanner();
     setBodyFlag("telegramDetected", state.telegramDetected ? "true" : "false");
     setBodyFlag("telegramMobile", detectTelegramMobile() ? "true" : "false");
 
-    const tg = state.telegramDetected ? window.Telegram.WebApp : null;
+    const tg = state.telegramDetected ? getTelegramWebApp() : null;
     if (!tg) {
       return;
     }
@@ -250,6 +278,8 @@
   state.applyTheme = applyTheme;
   state.syncViewportMetrics = syncViewportMetrics;
   state.safeTelegramInit = safeTelegramInit;
+
+  state.telegramDetected = hasTelegramWebAppContext(getTelegramWebApp());
 
   state.startupTimer = window.setTimeout(() => {
     if (!state.startupComplete) {

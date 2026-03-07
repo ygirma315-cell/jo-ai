@@ -6,7 +6,7 @@
   const API_BASE_STORAGE_KEY = "jo_api_base";
   const HOME_ENTRY_STORAGE_KEY = "jo_home_entered";
   const HISTORY_PREFIX = "jo_history_";
-  const FRONTEND_VERSION = "v1.2.2";
+  const FRONTEND_VERSION = "v1.2.3";
   const SITE_BASE_URL = "https://ygirma315-cell.github.io/jo-ai/";
   const MAX_HISTORY_ITEMS = 18;
   const MAX_UPLOAD_BYTES = 8 * 1024 * 1024;
@@ -19,6 +19,15 @@
   ];
 
   const updates = [
+    {
+      version: "v1.2.3",
+      title: "Telegram Mini App launch and modal reliability",
+      items: [
+        "Telegram launches now open straight into the visible homepage instead of stopping behind the welcome overlay",
+        "Welcome and update overlays now lock body scroll, block background taps, and keep focus inside the modal",
+        "Mobile viewport sizing and overlay layout are tighter for Telegram webviews",
+      ],
+    },
     {
       version: "v1.2.2",
       title: "Mobile webview stability and tighter chat layout",
@@ -151,6 +160,10 @@
     toastTimer: null,
     emptyTemplate: "",
     kimiPreviewUrl: "",
+    activeModal: null,
+    modalTrigger: null,
+    scrollLockY: 0,
+    bodyLockStyles: null,
   };
 
   function byId(id) {
@@ -167,6 +180,30 @@
 
   function currentTool() {
     return toolConfig[getToolId()] || null;
+  }
+
+  function hasTelegramWebAppContext(candidate) {
+    if (!candidate || typeof candidate !== "object") {
+      return false;
+    }
+
+    const initData = typeof candidate.initData === "string" ? candidate.initData.trim() : "";
+    const unsafe = candidate.initDataUnsafe && typeof candidate.initDataUnsafe === "object" ? candidate.initDataUnsafe : null;
+    const platform = typeof candidate.platform === "string" ? candidate.platform.toLowerCase() : "";
+
+    if (initData) {
+      return true;
+    }
+    if (unsafe && typeof unsafe.user === "object" && unsafe.user && typeof unsafe.user.id !== "undefined") {
+      return true;
+    }
+    if (unsafe && typeof unsafe.chat === "object" && unsafe.chat && typeof unsafe.chat.id !== "undefined") {
+      return true;
+    }
+    if (unsafe && typeof unsafe.query_id === "string" && unsafe.query_id.trim()) {
+      return true;
+    }
+    return Boolean(platform && platform !== "unknown");
   }
 
   function reportStartupError(label, error) {
@@ -260,6 +297,7 @@
 
   function collectElements() {
     elements = {
+      appRoot: byId("appRoot"),
       welcomeOverlay: byId("welcomeOverlay"),
       welcomeMessage: byId("welcomeMessage"),
       openAppBtn: byId("openAppBtn"),
@@ -423,6 +461,283 @@
 
     window.setTimeout(runner, 120);
   }
+
+  function isTelegramMiniApp() {
+    return hasTelegramWebAppContext(tg);
+  }
+
+  function getDialogElement(modal) {
+    if (!modal || typeof modal.querySelector !== "function") {
+      return null;
+    }
+    return modal.querySelector('[role="dialog"], .welcome-card, .updates-card');
+  }
+
+  function elementIsVisible(element) {
+    return Boolean(element && typeof element.getClientRects === "function" && element.getClientRects().length);
+  }
+
+  function getFocusableElements(root) {
+    if (!root || typeof root.querySelectorAll !== "function") {
+      return [];
+    }
+
+    return Array.from(
+      root.querySelectorAll(
+        [
+          'button:not([disabled])',
+          '[href]',
+          'input:not([disabled]):not([type="hidden"])',
+          "select:not([disabled])",
+          "textarea:not([disabled])",
+          '[tabindex]:not([tabindex="-1"])',
+        ].join(",")
+      )
+    ).filter((element) => {
+      if (!(element instanceof HTMLElement)) {
+        return false;
+      }
+      if (element.hidden || element.closest("[hidden]")) {
+        return false;
+      }
+      return elementIsVisible(element);
+    });
+  }
+
+  function focusElement(element) {
+    if (!element || typeof element.focus !== "function") {
+      return;
+    }
+
+    try {
+      element.focus({ preventScroll: true });
+    } catch (_error) {
+      element.focus();
+    }
+  }
+
+  function prepareManagedModals() {
+    [elements.welcomeOverlay, elements.updatesModal, elements.comingSoonModal].forEach((modal) => {
+      if (!modal) {
+        return;
+      }
+
+      modal.hidden = false;
+      modal.classList.remove("open");
+      modal.setAttribute("aria-hidden", "true");
+
+      const dialog = getDialogElement(modal);
+      if (dialog && !dialog.hasAttribute("tabindex")) {
+        dialog.tabIndex = -1;
+      }
+    });
+  }
+
+  function setBackgroundUiBlocked(blocked) {
+    if (!elements.appRoot) {
+      return;
+    }
+
+    if (blocked) {
+      elements.appRoot.setAttribute("inert", "");
+      elements.appRoot.setAttribute("aria-hidden", "true");
+      return;
+    }
+
+    elements.appRoot.removeAttribute("inert");
+    elements.appRoot.removeAttribute("aria-hidden");
+  }
+
+  function lockBodyScroll() {
+    const body = document.body;
+    if (!body || body.classList.contains("modal-active")) {
+      return;
+    }
+
+    state.scrollLockY = window.scrollY || window.pageYOffset || 0;
+    state.bodyLockStyles = {
+      position: body.style.position,
+      top: body.style.top,
+      left: body.style.left,
+      right: body.style.right,
+      width: body.style.width,
+      overflow: body.style.overflow,
+    };
+
+    body.classList.add("modal-active");
+    body.style.position = "fixed";
+    body.style.top = `-${state.scrollLockY}px`;
+    body.style.left = "0";
+    body.style.right = "0";
+    body.style.width = "100%";
+    body.style.overflow = "hidden";
+  }
+
+  function unlockBodyScroll() {
+    const body = document.body;
+    if (!body) {
+      return;
+    }
+
+    body.classList.remove("modal-active");
+
+    const previous = state.bodyLockStyles || {};
+    body.style.position = previous.position || "";
+    body.style.top = previous.top || "";
+    body.style.left = previous.left || "";
+    body.style.right = previous.right || "";
+    body.style.width = previous.width || "";
+    body.style.overflow = previous.overflow || "";
+
+    const nextScrollY = state.scrollLockY || 0;
+    state.scrollLockY = 0;
+    state.bodyLockStyles = null;
+    window.scrollTo(0, nextScrollY);
+  }
+
+  function focusModal(modal) {
+    const dialog = getDialogElement(modal) || modal;
+    const focusable = getFocusableElements(dialog);
+    const target = focusable[0] || dialog;
+    scheduleFrame(() => {
+      focusElement(target);
+    });
+  }
+
+  function openManagedModal(modal, trigger = null) {
+    if (!modal) {
+      return;
+    }
+
+    if (state.activeModal && state.activeModal !== modal) {
+      closeManagedModal(state.activeModal, { restoreFocus: false });
+    }
+
+    state.activeModal = modal;
+    state.modalTrigger =
+      trigger instanceof HTMLElement
+        ? trigger
+        : document.activeElement instanceof HTMLElement
+          ? document.activeElement
+          : null;
+
+    lockBodyScroll();
+    setBackgroundUiBlocked(true);
+    modal.setAttribute("aria-hidden", "false");
+    modal.classList.add("open");
+    focusModal(modal);
+    syncViewportState();
+  }
+
+  function closeManagedModal(modal, options = {}) {
+    const target = modal || state.activeModal;
+    if (!target) {
+      return;
+    }
+
+    const restoreFocus = options.restoreFocus !== false;
+    const nextFocusTarget = options.nextFocusTarget instanceof HTMLElement ? options.nextFocusTarget : null;
+    const trigger = state.activeModal === target ? state.modalTrigger : null;
+
+    target.classList.remove("open");
+    target.setAttribute("aria-hidden", "true");
+
+    if (state.activeModal === target) {
+      state.activeModal = null;
+      state.modalTrigger = null;
+      setBackgroundUiBlocked(false);
+      unlockBodyScroll();
+    }
+
+    if (nextFocusTarget) {
+      scheduleFrame(() => {
+        focusElement(nextFocusTarget);
+      });
+    } else if (restoreFocus && trigger) {
+      scheduleFrame(() => {
+        focusElement(trigger);
+      });
+    }
+
+    syncViewportState();
+  }
+
+  function closeActiveModal(options = {}) {
+    if (!state.activeModal) {
+      return;
+    }
+    closeManagedModal(state.activeModal, options);
+  }
+
+  function handleActiveModalKeydown(event) {
+    const modal = state.activeModal;
+    if (!modal) {
+      return;
+    }
+
+    if (event.key === "Escape") {
+      event.preventDefault();
+      closeActiveModal();
+      return;
+    }
+
+    if (event.key !== "Tab") {
+      return;
+    }
+
+    const dialog = getDialogElement(modal) || modal;
+    const focusable = getFocusableElements(dialog);
+    if (!focusable.length) {
+      event.preventDefault();
+      focusElement(dialog);
+      return;
+    }
+
+    const first = focusable[0];
+    const last = focusable[focusable.length - 1];
+    const active = document.activeElement;
+
+    if (!(active instanceof HTMLElement) || !dialog.contains(active)) {
+      event.preventDefault();
+      focusElement(event.shiftKey ? last : first);
+      return;
+    }
+
+    if (event.shiftKey && active === first) {
+      event.preventDefault();
+      focusElement(last);
+      return;
+    }
+
+    if (!event.shiftKey && active === last) {
+      event.preventDefault();
+      focusElement(first);
+    }
+  }
+
+  function handleActiveModalFocus(event) {
+    const modal = state.activeModal;
+    if (!modal || modal.contains(event.target)) {
+      return;
+    }
+    focusModal(modal);
+  }
+
+  function hideWelcomeOverlay(options = {}) {
+    if (options.rememberEntry) {
+      safeStorageSet(getSessionStorage(), HOME_ENTRY_STORAGE_KEY, "yes");
+    }
+
+    closeManagedModal(elements.welcomeOverlay, {
+      restoreFocus: false,
+      nextFocusTarget: options.focusTarget === false ? null : elements.appRoot,
+    });
+  }
+
+  function showWelcomeOverlay() {
+    openManagedModal(elements.welcomeOverlay);
+  }
+
   function ensureGlobalUi() {
     if (!byId("versionBadge")) {
       const badge = document.createElement("button");
@@ -436,9 +751,14 @@
       const modal = document.createElement("div");
       modal.id = "updatesModal";
       modal.className = "updates-modal";
+      modal.hidden = true;
+      modal.setAttribute("aria-hidden", "true");
 
       const card = document.createElement("section");
       card.className = "updates-card";
+      card.setAttribute("role", "dialog");
+      card.setAttribute("aria-modal", "true");
+      card.tabIndex = -1;
 
       const head = document.createElement("div");
       head.className = "panel-head";
@@ -448,9 +768,11 @@
       eyebrow.className = "section-kicker";
       eyebrow.textContent = "VERSION";
       const title = document.createElement("h2");
+      title.id = "updatesTitle";
       title.textContent = "Recent updates";
       copy.appendChild(eyebrow);
       copy.appendChild(title);
+      card.setAttribute("aria-labelledby", title.id);
 
       const close = document.createElement("button");
       close.id = "updatesClose";
@@ -489,9 +811,14 @@
       const modal = document.createElement("div");
       modal.id = "comingSoonModal";
       modal.className = "updates-modal";
+      modal.hidden = true;
+      modal.setAttribute("aria-hidden", "true");
 
       const card = document.createElement("section");
       card.className = "updates-card";
+      card.setAttribute("role", "dialog");
+      card.setAttribute("aria-modal", "true");
+      card.tabIndex = -1;
 
       const head = document.createElement("div");
       head.className = "panel-head";
@@ -501,9 +828,11 @@
       eyebrow.className = "section-kicker";
       eyebrow.textContent = "PAST CHATS";
       const title = document.createElement("h2");
+      title.id = "comingSoonTitle";
       title.textContent = "Coming soon";
       copy.appendChild(eyebrow);
       copy.appendChild(title);
+      card.setAttribute("aria-labelledby", title.id);
 
       const close = document.createElement("button");
       close.id = "comingSoonClose";
@@ -532,11 +861,14 @@
     }
 
     collectElements();
+    prepareManagedModals();
   }
 
   function bindGlobalUi() {
     if (elements.versionBadge) {
-      elements.versionBadge.addEventListener("click", openUpdatesModal);
+      elements.versionBadge.addEventListener("click", (event) => {
+        openUpdatesModal(event.currentTarget);
+      });
     }
     if (elements.updatesClose) {
       elements.updatesClose.addEventListener("click", closeUpdatesModal);
@@ -558,35 +890,31 @@
         }
       });
     }
-    document.addEventListener("keydown", (event) => {
-      if (event.key === "Escape") {
-        closeUpdatesModal();
-        closeComingSoonModal();
-      }
-    });
+    document.addEventListener("keydown", handleActiveModalKeydown);
+    document.addEventListener("focusin", handleActiveModalFocus);
   }
 
-  function openUpdatesModal() {
+  function openUpdatesModal(trigger = null) {
     if (elements.updatesModal) {
-      elements.updatesModal.classList.add("open");
+      openManagedModal(elements.updatesModal, trigger);
     }
   }
 
   function closeUpdatesModal() {
     if (elements.updatesModal) {
-      elements.updatesModal.classList.remove("open");
+      closeManagedModal(elements.updatesModal);
     }
   }
 
-  function openComingSoonModal() {
+  function openComingSoonModal(trigger = null) {
     if (elements.comingSoonModal) {
-      elements.comingSoonModal.classList.add("open");
+      openManagedModal(elements.comingSoonModal, trigger);
     }
   }
 
   function closeComingSoonModal() {
     if (elements.comingSoonModal) {
-      elements.comingSoonModal.classList.remove("open");
+      closeManagedModal(elements.comingSoonModal);
     }
   }
 
@@ -717,7 +1045,7 @@
         bootDebug.applyTheme();
       }
 
-      if (!tg) {
+      if (!isTelegramMiniApp()) {
         setUserInfo("Guest mode");
         if (elements.welcomeMessage) {
           elements.welcomeMessage.textContent = "Clean, free, fast, and flexible JO AI tools are ready in browser mode.";
@@ -1716,7 +2044,9 @@
       });
     }
     if (elements.pastChatsBtn) {
-      elements.pastChatsBtn.addEventListener("click", openComingSoonModal);
+      elements.pastChatsBtn.addEventListener("click", (event) => {
+        openComingSoonModal(event.currentTarget);
+      });
     }
     if (elements.downloadImageBtn) {
       elements.downloadImageBtn.addEventListener("click", saveLatestImage);
@@ -1736,15 +2066,23 @@
     bindComposerViewportBehavior();
   }
   function initHomePage() {
-    const seen = safeStorageGet(getSessionStorage(), HOME_ENTRY_STORAGE_KEY) === "yes";
-    if (seen && elements.welcomeOverlay) {
-      elements.welcomeOverlay.classList.add("hidden");
+    if (!elements.welcomeOverlay) {
+      return;
     }
 
-    if (elements.openAppBtn && elements.welcomeOverlay) {
-      elements.openAppBtn.addEventListener("click", () => {
-        elements.welcomeOverlay.classList.add("hidden");
+    const seen = safeStorageGet(getSessionStorage(), HOME_ENTRY_STORAGE_KEY) === "yes";
+    if (isTelegramMiniApp() || seen) {
+      if (isTelegramMiniApp()) {
         safeStorageSet(getSessionStorage(), HOME_ENTRY_STORAGE_KEY, "yes");
+      }
+      hideWelcomeOverlay({ focusTarget: false });
+    } else {
+      showWelcomeOverlay();
+    }
+
+    if (elements.openAppBtn) {
+      elements.openAppBtn.addEventListener("click", () => {
+        hideWelcomeOverlay({ rememberEntry: true });
       });
     }
   }

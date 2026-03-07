@@ -33,11 +33,18 @@
     <h1>Mini App failed to load</h1>
     <p id="appFallbackMessage">Unknown startup error.</p>
   </section>
-  <div id="welcomeOverlay" class="welcome-overlay">
-    <section class="welcome-card">
+  <div id="welcomeOverlay" class="welcome-overlay" hidden aria-hidden="true">
+    <section
+      class="welcome-card"
+      role="dialog"
+      aria-modal="true"
+      aria-labelledby="welcomeTitle"
+      aria-describedby="welcomeMessage"
+      tabindex="-1"
+    >
       <div class="welcome-icon" aria-hidden="true">&#128065;</div>
       <p class="welcome-tag">JO AI CHAT BOT</p>
-      <h1>Free, fast, flexible AI tools.</h1>
+      <h1 id="welcomeTitle">Free, fast, flexible AI tools.</h1>
       <p id="welcomeMessage">
         A smooth mini app for quick answers, sharp prompts, clean code help, and easy image workflows.
       </p>
@@ -50,7 +57,7 @@
     </section>
   </div>
 
-  <main id="appRoot" class="page-shell">
+  <main id="appRoot" class="page-shell" tabindex="-1">
     <section class="shell home-shell">
       <header class="site-header">
         <div>
