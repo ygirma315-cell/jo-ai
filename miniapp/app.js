@@ -6,7 +6,7 @@
   const API_BASE_STORAGE_KEY = "jo_api_base";
   const HOME_ENTRY_STORAGE_KEY = "jo_home_entered";
   const HISTORY_PREFIX = "jo_history_";
-  const FRONTEND_VERSION = "v1.2.4";
+  const FRONTEND_VERSION = "v1.3.0";
   const SITE_BASE_URL = "https://ygirma315-cell.github.io/jo-ai/";
   const MAX_HISTORY_ITEMS = 18;
   const MAX_UPLOAD_BYTES = 8 * 1024 * 1024;
@@ -19,6 +19,15 @@
   ];
 
   const updates = [
+    {
+      version: "v1.3.0",
+      title: "Shared chat app redesign",
+      items: [
+        "All AI tool pages now use one clean chat-style layout with a compact header and bottom composer",
+        "Message flow, thinking states, and scrolling are smoother on mobile and inside Telegram",
+        "Image, prompt, code, research, and vision tools now share the same calmer design system",
+      ],
+    },
     {
       version: "v1.2.4",
       title: "Telegram webview startup hardening",
@@ -78,80 +87,101 @@
   const toolConfig = {
     chat: {
       title: "JO AI Chat",
-      description: "Fast chat for questions, ideas, and everyday help.",
-      lead: "Ask clearly, keep the thread clean, and copy the last reply in one click.",
+      description: "Fast help for questions, ideas, writing, and everyday tasks.",
+      lead: "Ask anything and keep the whole conversation in one calm thread.",
       example: "Explain recursion like I am new to programming.",
-      label: "Message",
-      placeholder: "Ask anything clearly and directly.",
-      rows: 8,
+      label: "Ask Joe AI chatbot",
+      placeholder: "Ask Joe AI chatbot",
+      rows: 1,
+      maxComposerHeight: 168,
       historyTitle: "Conversation",
+      emptyTitle: "Ask Joe AI chatbot",
+      emptyCopy: "Fast help for ideas, questions, and tasks.",
     },
     code: {
       title: "Code Generator",
-      description: "A roomier page for longer prompts and cleaner code answers.",
-      lead: "Use a taller input area, paste detailed requirements, and review code comfortably.",
+      description: "Code help with cleaner answers, fixes, and snippets in one stream.",
+      lead: "Send specs, bugs, or code requests and keep the reply readable in chat.",
       example: "Create a Python function that validates emails and returns clear error messages.",
-      label: "Code request",
-      placeholder: "Describe the language, framework, constraints, input/output, and edge cases.",
-      rows: 12,
-      historyTitle: "Code responses",
+      label: "Ask Joe AI chatbot for code",
+      placeholder: "Ask Joe AI chatbot for code, debugging, or implementation help",
+      rows: 1,
+      maxComposerHeight: 220,
+      historyTitle: "Code chat",
+      emptyTitle: "Start a code conversation",
+      emptyCopy: "Share a bug, spec, or feature request and JO AI will reply in-chat.",
     },
     deepseek: {
       title: "Deep Analysis",
-      description: "Structured thinking for comparisons, decisions, and deeper answers.",
-      lead: "Use this when you want a more deliberate breakdown instead of a quick reply.",
+      description: "Structured reasoning for harder questions, tradeoffs, and decisions.",
+      lead: "Use this when you want a slower, more deliberate answer in the same thread.",
       example: "Compare SQL and NoSQL for a fast-growing product and explain the tradeoffs.",
-      label: "Deep analysis request",
-      placeholder: "Ask for comparison, reasoning, tradeoffs, or a more structured decision.",
-      rows: 8,
+      label: "Ask Joe AI chatbot to analyze",
+      placeholder: "Ask Joe AI chatbot to compare, reason, or break down a decision",
+      rows: 1,
+      maxComposerHeight: 168,
       historyTitle: "Analysis thread",
+      emptyTitle: "Ask for deeper analysis",
+      emptyCopy: "Comparisons, reasoning, and structured tradeoffs show up here.",
     },
     research: {
       title: "Research",
-      description: "Focused breakdowns, summaries, tradeoffs, and next steps.",
-      lead: "Use this page for detailed explanations, practical context, and next-step guidance.",
+      description: "Focused breakdowns, summaries, practical context, and next steps.",
+      lead: "Research questions stay organized in one clean conversation view.",
       example: "Explain the pros and cons of remote teams for a startup and suggest best practices.",
-      label: "Research question",
-      placeholder: "Ask for a summary, detailed explanation, risks, tradeoffs, or next steps.",
-      rows: 8,
+      label: "Ask Joe AI chatbot to research",
+      placeholder: "Ask Joe AI chatbot to research a topic, summarize, or suggest next steps",
+      rows: 1,
+      maxComposerHeight: 188,
       historyTitle: "Research thread",
+      emptyTitle: "Start a research thread",
+      emptyCopy: "Ask for summaries, risks, tradeoffs, or practical guidance.",
     },
     prompt: {
       title: "Prompt Builder",
-      description: "Build a stronger prompt without extra clutter.",
-      lead: "Choose a prompt type, describe your goal, and keep the final output easy to copy.",
+      description: "Build stronger prompts without leaving the chat flow.",
+      lead: "Describe the goal, optionally add a prompt type, and get one polished prompt back.",
       example: "Create a concise onboarding prompt for a customer support assistant.",
-      label: "Prompt details",
-      placeholder: "Describe the goal, audience, tone, format, and any constraints you want.",
-      rows: 8,
+      label: "Ask Joe AI chatbot to build a prompt",
+      placeholder: "Ask Joe AI chatbot to build a prompt for your goal",
+      rows: 1,
+      maxComposerHeight: 188,
       historyTitle: "Prompt results",
       needsPromptType: true,
       examplePromptType: "assistant prompt",
+      emptyTitle: "Build a prompt with Joe AI",
+      emptyCopy: "Share the goal and JO AI will return a cleaner prompt here.",
     },
     image: {
       title: "Image Generator",
-      description: "Describe the look, choose a style, and save the latest image.",
-      lead: "Set the style, describe the scene, and save the latest image with one click.",
+      description: "Describe a visual, choose a style, and keep the result in the chat.",
+      lead: "Write the scene, pick a style, and save the image once it lands.",
       example: "A cinematic night city street with rain reflections and soft neon lighting.",
-      label: "Image description",
-      placeholder: "Describe the subject, style, mood, lighting, and composition.",
-      rows: 8,
+      label: "Describe the image you want",
+      placeholder: "Describe the image you want Joe AI to create",
+      rows: 1,
+      maxComposerHeight: 188,
       historyTitle: "Image results",
       needsImageType: true,
       supportsImageSave: true,
       exampleImageType: "cyberpunk",
+      emptyTitle: "Create an image with Joe AI",
+      emptyCopy: "Describe a scene, choose a style, and your image result will appear here.",
     },
     kimi: {
       title: "Kimi Vision",
-      description: "Upload an image and ask for a clear read of what it shows.",
-      lead: "Use the upload area, preview the image, and keep each response in a clean history.",
+      description: "Upload an image and ask Joe AI to describe or explain it.",
+      lead: "Add an image, ask a question, and keep every vision reply in the same conversation.",
       example: "Describe the image and point out the main objects and the setting.",
-      label: "Image request",
-      placeholder: "Optional instruction. Example: summarize the image, identify objects, or explain the scene.",
-      rows: 8,
+      label: "Ask Joe AI about this image",
+      placeholder: "Ask Joe AI about this image",
+      rows: 1,
+      maxComposerHeight: 160,
       historyTitle: "Vision history",
       needsUpload: true,
       supportsImageSave: false,
+      emptyTitle: "Ask Joe AI about an image",
+      emptyCopy: "Upload an image and JO AI will describe, summarize, or explain it here.",
     },
   };
 
@@ -445,22 +475,41 @@
     }
   }
 
+  function scrollHistoryToBottom(immediate = false) {
+    if (!elements.historyList) {
+      return;
+    }
+
+    const top = elements.historyList.scrollHeight;
+    if (immediate || typeof elements.historyList.scrollTo !== "function") {
+      elements.historyList.scrollTop = top;
+      return;
+    }
+
+    try {
+      elements.historyList.scrollTo({ top, behavior: "smooth" });
+    } catch (_error) {
+      elements.historyList.scrollTop = top;
+    }
+  }
+
   function scrollComposerIntoView(immediate = false) {
-    const card = document.querySelector(".tool-page .prompt-card");
-    if (!card) {
+    const composer = document.querySelector(".tool-page .chat-composer");
+    if (!composer) {
       return;
     }
 
     const runner = () => {
       try {
-        card.scrollIntoView({
+        composer.scrollIntoView({
           block: "end",
           inline: "nearest",
           behavior: immediate ? "auto" : "smooth",
         });
       } catch (_error) {
-        card.scrollIntoView(false);
+        composer.scrollIntoView(false);
       }
+      scrollHistoryToBottom(immediate);
     };
 
     if (immediate) {
@@ -469,6 +518,47 @@
     }
 
     window.setTimeout(runner, 120);
+  }
+
+  function getComposerMaxHeight() {
+    const config = currentTool();
+    return config && Number.isFinite(config.maxComposerHeight) ? Number(config.maxComposerHeight) : 176;
+  }
+
+  function resizeComposerInput(reset = false) {
+    if (!elements.aiInput) {
+      return;
+    }
+
+    elements.aiInput.style.height = "auto";
+    if (reset) {
+      elements.aiInput.style.overflowY = "hidden";
+    }
+
+    const nextHeight = Math.min(Math.max(elements.aiInput.scrollHeight, 54), getComposerMaxHeight());
+    elements.aiInput.style.height = `${nextHeight}px`;
+    elements.aiInput.style.overflowY = elements.aiInput.scrollHeight > nextHeight ? "auto" : "hidden";
+  }
+
+  function hasComposerPayload() {
+    const mode = getToolId();
+    const message = elements.aiInput ? elements.aiInput.value.trim() : "";
+
+    if (mode === "kimi") {
+      return Boolean(elements.kimiImage && elements.kimiImage.files && elements.kimiImage.files[0]);
+    }
+    return Boolean(message);
+  }
+
+  function updateSendButtonState() {
+    if (!elements.sendBtn) {
+      return;
+    }
+    elements.sendBtn.disabled = state.isBusy || !hasComposerPayload();
+  }
+
+  function shouldDismissKeyboardAfterSubmit() {
+    return window.matchMedia("(max-width: 900px)").matches || isTelegramMiniApp();
   }
 
   function isTelegramMiniApp() {
@@ -1020,9 +1110,6 @@
 
   function setBusy(busy) {
     state.isBusy = busy;
-    if (elements.sendBtn) {
-      elements.sendBtn.disabled = busy;
-    }
     if (elements.clearBtn) {
       elements.clearBtn.disabled = busy;
     }
@@ -1045,6 +1132,7 @@
       setLoadingHint("Ready when you are.");
     }
 
+    updateSendButtonState();
     syncOutputButtons();
   }
 
@@ -1269,6 +1357,13 @@
     item.className = `message ${entry.role}${entry.pending ? " pending" : ""}`;
     item.dataset.messageId = entry.id;
 
+    const avatar = document.createElement("div");
+    avatar.className = "message-avatar";
+    avatar.textContent = entry.role === "user" ? "You" : "JO";
+
+    const bubble = document.createElement("div");
+    bubble.className = "message-bubble";
+
     const head = document.createElement("div");
     head.className = "message-head";
 
@@ -1310,9 +1405,22 @@
     }
 
     if (entry.pending) {
-      const pending = document.createElement("p");
-      pending.className = "pending-text";
-      pending.textContent = entry.text || loadingMessages[0];
+      const pending = document.createElement("div");
+      pending.className = "thinking-indicator";
+
+      const dots = document.createElement("div");
+      dots.className = "thinking-dots";
+      for (let index = 0; index < 3; index += 1) {
+        const dot = document.createElement("span");
+        dots.appendChild(dot);
+      }
+
+      const pendingText = document.createElement("p");
+      pendingText.className = "pending-text";
+      pendingText.textContent = entry.text || loadingMessages[0];
+
+      pending.appendChild(dots);
+      pending.appendChild(pendingText);
       body.appendChild(pending);
     } else {
       renderRichText(body, entry.text);
@@ -1326,8 +1434,10 @@
       body.appendChild(image);
     }
 
-    item.appendChild(head);
-    item.appendChild(body);
+    bubble.appendChild(head);
+    bubble.appendChild(body);
+    item.appendChild(avatar);
+    item.appendChild(bubble);
     return item;
   }
 
@@ -1385,9 +1495,7 @@
     updateLatestOutputFromHistory();
     syncOutputButtons();
     scheduleFrame(() => {
-      if (elements.historyList) {
-        elements.historyList.scrollTop = elements.historyList.scrollHeight;
-      }
+      scrollHistoryToBottom(true);
     });
   }
 
@@ -1463,6 +1571,7 @@
 
     if (elements.aiInput) {
       elements.aiInput.value = "";
+      resizeComposerInput(true);
     }
     if (elements.promptType) {
       elements.promptType.value = "";
@@ -1479,7 +1588,9 @@
     clearKimiPreview();
     setApiState("idle", "muted");
     setLoadingHint("Ready when you are.");
+    updateSendButtonState();
     syncOutputButtons();
+    scrollHistoryToBottom(true);
   }
   async function fetchJsonWithTimeout(url, options, timeoutMs = 60000) {
     if (typeof fetch !== "function") {
@@ -1780,6 +1891,13 @@
     if (elements.historyTitle) {
       elements.historyTitle.textContent = config.historyTitle;
     }
+    if (elements.emptyState) {
+      elements.emptyState.innerHTML = `
+        <div class="empty-state-mark" aria-hidden="true">JO</div>
+        <h3>${escapeHtml(config.emptyTitle || "Ask Joe AI chatbot")}</h3>
+        <p>${escapeHtml(config.emptyCopy || "Fast help for ideas, questions, and tasks.")}</p>
+      `;
+    }
     if (elements.promptTypeWrap) {
       elements.promptTypeWrap.hidden = !config.needsPromptType;
     }
@@ -1789,6 +1907,8 @@
     if (elements.kimiImageWrap) {
       elements.kimiImageWrap.hidden = !config.needsUpload;
     }
+    resizeComposerInput(true);
+    updateSendButtonState();
   }
 
   function fillExample() {
@@ -1803,6 +1923,8 @@
     if (config.exampleImageType && elements.imageType) {
       elements.imageType.value = config.exampleImageType;
     }
+    resizeComposerInput();
+    updateSendButtonState();
     elements.aiInput.focus();
   }
 
@@ -1858,10 +1980,9 @@
 
     if (mode === "prompt") {
       const promptType = elements.promptType ? elements.promptType.value.trim() : "";
-      if (!promptType) {
-        throw new Error("Please enter a prompt type.");
+      if (promptType) {
+        payload.prompt_type = promptType;
       }
-      payload.prompt_type = promptType;
     }
 
     if (mode === "image") {
@@ -1929,10 +2050,17 @@
     pushHistory(buildUserEntry(payload));
     if (elements.aiInput) {
       elements.aiInput.value = "";
-      elements.aiInput.focus();
+      resizeComposerInput(true);
+      if (shouldDismissKeyboardAfterSubmit()) {
+        elements.aiInput.blur();
+      } else {
+        elements.aiInput.focus();
+      }
     }
+    updateSendButtonState();
     insertPendingMessage();
     setBusy(true);
+    scrollHistoryToBottom(true);
 
     try {
       const data = await requestWithFallback(getToolId(), payload);
@@ -2008,6 +2136,7 @@
 
     const handleFocus = () => {
       syncViewportState();
+      scrollHistoryToBottom(true);
       scrollComposerIntoView();
     };
 
@@ -2061,18 +2190,33 @@
       elements.downloadImageBtn.addEventListener("click", saveLatestImage);
     }
     if (elements.aiInput) {
+      elements.aiInput.addEventListener("input", () => {
+        resizeComposerInput();
+        updateSendButtonState();
+      });
       elements.aiInput.addEventListener("keydown", (event) => {
-        if (event.key === "Enter" && (event.ctrlKey || event.metaKey)) {
+        if (event.key === "Enter" && !event.shiftKey) {
           event.preventDefault();
           submitTool();
         }
       });
     }
+    if (elements.promptType) {
+      elements.promptType.addEventListener("input", updateSendButtonState);
+    }
+    if (elements.imageType) {
+      elements.imageType.addEventListener("change", updateSendButtonState);
+    }
     if (elements.kimiImage) {
-      elements.kimiImage.addEventListener("change", updateKimiSelection);
+      elements.kimiImage.addEventListener("change", () => {
+        updateKimiSelection();
+        updateSendButtonState();
+      });
     }
 
     bindComposerViewportBehavior();
+    resizeComposerInput(true);
+    updateSendButtonState();
   }
   function initHomePage() {
     if (!elements.welcomeOverlay) {
@@ -2105,6 +2249,7 @@
     syncViewportState();
     setApiState("idle", "muted");
     setLoadingHint("Ready when you are.");
+    updateSendButtonState();
   }
 
   function runAfterFirstPaint(task) {
