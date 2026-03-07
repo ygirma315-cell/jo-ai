@@ -6,7 +6,7 @@
   const API_BASE_STORAGE_KEY = "jo_api_base";
   const HOME_ENTRY_STORAGE_KEY = "jo_home_entered";
   const HISTORY_PREFIX = "jo_history_";
-  const FRONTEND_VERSION = "v1.2.3";
+  const FRONTEND_VERSION = "v1.2.4";
   const SITE_BASE_URL = "https://ygirma315-cell.github.io/jo-ai/";
   const MAX_HISTORY_ITEMS = 18;
   const MAX_UPLOAD_BYTES = 8 * 1024 * 1024;
@@ -19,6 +19,15 @@
   ];
 
   const updates = [
+    {
+      version: "v1.2.4",
+      title: "Telegram webview startup hardening",
+      items: [
+        "Telegram shell initialization now runs as early as possible to clear the webview loading state sooner",
+        "Static asset URLs can be cache-busted so Telegram mobile does not keep serving stale broken frontend files",
+        "Phone-sized layouts avoid the heaviest backdrop effects to reduce Telegram white-screen rendering issues",
+      ],
+    },
     {
       version: "v1.2.3",
       title: "Telegram Mini App launch and modal reliability",

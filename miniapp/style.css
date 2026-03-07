@@ -1181,6 +1181,27 @@ body[data-keyboard-open="true"] .tool-page .prompt-input {
   max-height: 150px;
 }
 
+@media (max-width: 900px) {
+  .shell,
+  .card,
+  .welcome-overlay,
+  .updates-modal {
+    backdrop-filter: none;
+  }
+
+  .shell {
+    background: linear-gradient(180deg, rgba(255, 255, 255, 0.96), rgba(255, 255, 255, 0.92));
+  }
+
+  .card {
+    background: rgba(255, 255, 255, 0.95);
+  }
+
+  .welcome-overlay {
+    background: rgba(247, 241, 231, 0.78);
+  }
+}
+
 @media (max-width: 980px) {
   .tool-layout,
   .hero-split {

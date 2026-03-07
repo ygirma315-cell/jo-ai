@@ -7,6 +7,7 @@
   state.telegramDetected = false;
   state.viewportBound = false;
   state.rootMounted = false;
+  state.shellInitialized = false;
   state.startupTimer = state.startupTimer || 0;
 
   function byId(id) {
@@ -259,6 +260,10 @@
   }
 
   function initMiniAppShell() {
+    if (state.shellInitialized) {
+      return;
+    }
+    state.shellInitialized = true;
     applyTheme();
     safeTelegramInit();
     bindViewportSync();
@@ -295,5 +300,9 @@
     reportError("window.onunhandledrejection", event.reason || "Unhandled promise rejection.");
   });
 
-  document.addEventListener("DOMContentLoaded", initMiniAppShell);
+  if (document.readyState === "loading") {
+    document.addEventListener("DOMContentLoaded", initMiniAppShell, { once: true });
+  } else {
+    initMiniAppShell();
+  }
 })();
