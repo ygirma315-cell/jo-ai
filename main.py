@@ -51,6 +51,7 @@ DEFAULT_LOCAL_ORIGINS = (
 )
 load_dotenv(dotenv_path=PROJECT_ROOT / ".env")
 logger = logging.getLogger(__name__)
+TextMode = Literal["chat", "code", "research", "prompt", "deepseek_reasoning", "deepseek_thinking"]
 
 
 class BackendError(RuntimeError):
@@ -63,7 +64,7 @@ class BackendError(RuntimeError):
 class ChatRequest(BaseModel):
     model_config = ConfigDict(str_strip_whitespace=True)
 
-    message: str = Field(min_length=1, max_length=8000)
+    message: str = Field(min_length=1, max_length=32000)
 
 
 class ImageRequest(BaseModel):
@@ -87,7 +88,7 @@ class ImageRequest(BaseModel):
 class PromptRequest(BaseModel):
     model_config = ConfigDict(str_strip_whitespace=True)
 
-    message: str = Field(min_length=1, max_length=8000)
+    message: str = Field(min_length=1, max_length=32000)
     prompt_type: str | None = Field(default=None, max_length=120)
 
     @property
@@ -98,8 +99,8 @@ class PromptRequest(BaseModel):
 class AITextRequest(BaseModel):
     model_config = ConfigDict(str_strip_whitespace=True)
 
-    mode: Literal["chat", "code", "research", "prompt"] = "chat"
-    message: str = Field(min_length=1, max_length=8000)
+    mode: TextMode = "chat"
+    message: str = Field(min_length=1, max_length=32000)
     prompt_type: str | None = Field(default=None, max_length=120)
 
     @property
@@ -227,23 +228,47 @@ def _decode_base64_image(raw_image: str) -> bytes:
         raise BackendError("Invalid base64 image payload.", status_code=400) from exc
 
 
-async def _run_text_mode_completion(message: str, mode: Literal["chat", "code", "research", "prompt"], prompt_type: str | None = None) -> str:
+async def _run_text_mode_completion(message: str, mode: TextMode, prompt_type: str | None = None) -> str:
     settings = get_settings()
-    effective_api_key = settings.nvidia_api_key or settings.ai_api_key
-    if not effective_api_key:
+    default_api_key = (settings.nvidia_api_key or settings.ai_api_key or "").strip()
+    if not default_api_key:
         raise _safe_service_error(status_code=503)
 
+    service_mode: Literal["chat", "code", "research", "prompt"] = (
+        "prompt" if mode == "prompt" else "research" if mode in {"research", "deepseek_reasoning", "deepseek_thinking"} else mode
+    )
     request_message = _compose_prompt_request(prompt_type or "general", message) if mode == "prompt" else message
     model_override = settings.code_model if mode == "code" else settings.nvidia_chat_model
+    effective_api_key = default_api_key
+    thinking = False
+
+    if mode in {"deepseek_reasoning", "deepseek_thinking"}:
+        deepseek_api_key = (settings.deepseek_api_key or default_api_key or "").strip()
+        effective_api_key = deepseek_api_key or default_api_key
+        if settings.deepseek_model.strip():
+            model_override = settings.deepseek_model
+        if mode == "deepseek_thinking":
+            thinking = True
+            request_message = (
+                "Thinking analysis profile.\n"
+                "Explore alternatives and tradeoffs before final recommendations.\n\n"
+                f"{message}"
+            )
+        else:
+            request_message = (
+                "Reasoning analysis profile.\n"
+                "Use direct, stepwise reasoning and clear final recommendations.\n\n"
+                f"{message}"
+            )
 
     try:
         return await _chat_service().generate_reply(
             request_message,
             history=[],
-            mode=mode,
+            mode=service_mode,
             model_override=model_override,
             api_key_override=effective_api_key,
-            thinking=False,
+            thinking=thinking,
         )
     except AIServiceError as exc:
         logger.warning("Text completion failed mode=%s", mode, exc_info=True)
@@ -422,7 +447,7 @@ async def telegram_webhook(request: Request) -> JSONResponse:
 
 async def _handle_text_mode_request(
     *,
-    mode: Literal["chat", "code", "research", "prompt"],
+    mode: TextMode,
     message: str,
     prompt_type: str | None = None,
 ) -> JSONResponse:

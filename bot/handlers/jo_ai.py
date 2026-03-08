@@ -108,6 +108,7 @@ MODE_RESULT_TITLE = {
 
 MAX_REPLY_CHARS = 3300
 CODE_FENCE_PATTERN = re.compile(r"```(?P<lang>[a-zA-Z0-9_+#.-]*)\n(?P<code>[\s\S]*?)```", re.MULTILINE)
+CHAT_HISTORY_ENTRY_MAX_CHARS = 1800
 
 
 @dataclass(slots=True)
@@ -121,6 +122,11 @@ class ParsedCodeReply:
 
 
 def _profile_options(profile: AIModelProfile, deepseek_api_key: str | None, deepseek_model: str) -> dict[str, object]:
+    if profile == AIModelProfile.DEEPSEEK_THINKING:
+        profile_prefix = "Thinking mode: explore alternatives, then provide a concise answer."
+    else:
+        profile_prefix = "Reasoning mode: use clear, logical, stepwise reasoning for accuracy."
+
     if not (deepseek_api_key or "").strip():
         # Keep analysis available even if Deepseek credentials are absent.
         # In this case requests fall back to the default chat model path.
@@ -128,7 +134,7 @@ def _profile_options(profile: AIModelProfile, deepseek_api_key: str | None, deep
             "model_override": None,
             "api_key_override": None,
             "thinking": False,
-            "profile_prefix": "",
+            "profile_prefix": profile_prefix,
         }
 
     if profile == AIModelProfile.DEEPSEEK_THINKING:
@@ -136,13 +142,13 @@ def _profile_options(profile: AIModelProfile, deepseek_api_key: str | None, deep
             "model_override": deepseek_model,
             "api_key_override": deepseek_api_key,
             "thinking": True,
-            "profile_prefix": "Thinking mode: explore alternatives, then provide a concise answer.",
+            "profile_prefix": profile_prefix,
         }
     return {
         "model_override": deepseek_model,
         "api_key_override": deepseek_api_key,
         "thinking": False,
-        "profile_prefix": "Reasoning mode: use clear, logical, stepwise reasoning for accuracy.",
+        "profile_prefix": profile_prefix,
     }
 
 
@@ -398,6 +404,13 @@ def _friendly_error_text(title: str, exc: Exception | None = None) -> str:
     return message
 
 
+def _compact_history_entry(text: str, limit: int = CHAT_HISTORY_ENTRY_MAX_CHARS) -> str:
+    normalized = text.strip()
+    if len(normalized) <= limit:
+        return normalized
+    return f"{normalized[:limit].rstrip()}\n...[truncated for context]..."
+
+
 async def _send_progress_message(message: Message, text: str) -> Message | None:
     try:
         return await message.answer(text)
@@ -419,38 +432,6 @@ async def _send_styled_ai_reply(
     reply_markup,
 ) -> None:
     await _send_formatted_ai_reply(message, mode, reply_text, reply_markup)
-    return
-    formatter = TelegramMessageFormatter(message.bot)
-    normalized_reply = reply_text.strip() or "No output generated."
-    title = MODE_RESULT_TITLE.get(mode, "AI Result")
-    emoji = {
-        "chat": "🤖",
-        "code": "⚡",
-        "research": "🔍",
-        "prompt": "✨",
-        "image_prompt": "🎨",
-    }.get(mode, "🤖")
-    footer = "💡 <i>Need help? Use /help</i>"
-    chunks = _split_text_blocks(safe_body)
-
-    if not chunks:
-        await message.answer(
-            f"{emoji} <b>{title}</b>\n\nNo output generated.\n\n{footer}",
-            reply_markup=reply_markup,
-        )
-        return
-
-    if len(chunks) == 1:
-        await message.answer(
-            f"{emoji} <b>{title}</b>\n\n{chunks[0]}\n\n{footer}",
-            reply_markup=reply_markup,
-        )
-        return
-
-    await message.answer(f"{emoji} <b>{title}</b>\n\n{footer}")
-    for index, chunk in enumerate(chunks):
-        markup = reply_markup if index == len(chunks) - 1 else None
-        await message.answer(chunk, reply_markup=markup)
 
 
 async def _send_formatted_ai_reply(
@@ -464,39 +445,18 @@ async def _send_formatted_ai_reply(
     title = MODE_RESULT_TITLE.get(mode, "AI Result")
 
     if mode == "code" or CODE_FENCE_PATTERN.search(normalized_reply):
-        parsed = _parse_code_reply(normalized_reply, title)
-        await formatter.send_code_response(
+        await formatter.send_rich_response(
             chat_id=message.chat.id,
-            title=parsed.title,
-            explanation_lines=parsed.explanation_lines,
-            code=parsed.code or "# No code was generated.",
-            lang=parsed.lang,
-            run_steps=parsed.run_steps,
-            notes_lines=parsed.notes_lines,
+            title=title,
+            raw_text=normalized_reply,
             reply_markup=reply_markup,
         )
         return
 
-    named_sections = _collect_named_sections(normalized_reply)
-    if mode == "research":
-        sections = [
-            ("Summary", named_sections.get("summary") or _clean_list_block(normalized_reply, max_items=4)),
-            ("Details", named_sections.get("details") or _clean_list_block(normalized_reply, max_items=6)),
-            ("Risks / Tradeoffs", named_sections.get("risks/tradeoffs") or []),
-            ("Next Steps", named_sections.get("next steps") or []),
-        ]
-    elif mode == "prompt":
-        sections = [
-            ("Prompt", _clean_list_block(normalized_reply, max_items=8)),
-            ("How to use", ["Copy the prompt, adjust any tool-specific details, and run it in your target app."]),
-        ]
-    else:
-        sections = [("Highlights", _clean_list_block(normalized_reply, max_items=8))]
-
-    await formatter.send_structured_response(
+    await formatter.send_paginated_text_response(
         chat_id=message.chat.id,
         title=title,
-        sections=[section for section in sections if section[1]],
+        body_text=normalized_reply,
         reply_markup=reply_markup,
     )
 
@@ -970,14 +930,14 @@ async def _describe_kimi_file_id(
 async def _run_kimi_with_progress(message: Message, work_coro) -> str:
     task = asyncio.create_task(work_coro)
     try:
-        return await asyncio.wait_for(asyncio.shield(task), timeout=15)
+        return await asyncio.wait_for(asyncio.shield(task), timeout=25)
     except asyncio.TimeoutError:
         await message.answer(
             "⏳ Still working on it...\n"
             "I'm retrying once to extract the image details."
         )
         try:
-            return await asyncio.wait_for(asyncio.shield(task), timeout=15)
+            return await asyncio.wait_for(asyncio.shield(task), timeout=25)
         except asyncio.TimeoutError as exc:
             task.cancel()
             with suppress(asyncio.CancelledError):
@@ -1025,8 +985,8 @@ async def _process_chat_message(
     if message.from_user:
         async with session_manager.lock(message.from_user.id) as session:
             if session.active_feature == Feature.JO_AI and session.jo_ai_mode == JoAIMode.CHAT:
-                session.jo_ai_chat_history.append(("user", user_text))
-                session.jo_ai_chat_history.append(("assistant", reply))
+                session.jo_ai_chat_history.append(("user", _compact_history_entry(user_text)))
+                session.jo_ai_chat_history.append(("assistant", _compact_history_entry(reply)))
     await _send_formatted_ai_reply(message, mode, reply, jo_chat_keyboard())
 
 

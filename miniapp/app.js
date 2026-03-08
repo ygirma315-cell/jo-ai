@@ -115,6 +115,10 @@
       rows: 1,
       maxComposerHeight: 152,
       historyTitle: "Analysis thread",
+      needsPromptType: true,
+      promptTypeLabel: "Analysis profile",
+      promptTypePlaceholder: "structured (or focused)",
+      defaultPromptType: "structured",
       emptyTitle: "Ask for deeper analysis",
       emptyCopy: "Comparisons, reasoning, and structured tradeoffs show up here.",
     },
@@ -1721,7 +1725,8 @@
       resizeComposerInput(true);
     }
     if (elements.promptType) {
-      elements.promptType.value = "";
+      const config = currentTool();
+      elements.promptType.value = config && config.defaultPromptType ? config.defaultPromptType : "";
     }
     if (elements.imageType) {
       elements.imageType.selectedIndex = 0;
@@ -1848,6 +1853,20 @@
     return state.apiBase;
   }
 
+  function normalizeDeepseekProfile(rawProfile) {
+    const value = String(rawProfile || "").trim().toLowerCase();
+    if (!value) {
+      return "deepseek_reasoning";
+    }
+    if (value.includes("focus") || value.includes("think")) {
+      return "deepseek_thinking";
+    }
+    if (value.includes("struct") || value.includes("reason")) {
+      return "deepseek_reasoning";
+    }
+    return "deepseek_reasoning";
+  }
+
   function endpointAttempts(mode, payload) {
     const basePayload = { ...payload };
 
@@ -1864,105 +1883,52 @@
       ];
     }
     if (mode === "deepseek") {
+      const selectedProfile = normalizeDeepseekProfile(basePayload.analysis_profile);
+      const fallbackProfile = selectedProfile === "deepseek_thinking" ? "deepseek_reasoning" : "deepseek_thinking";
       return [
-        {
-          path: "/api/chat",
-          payload: {
-            ...basePayload,
-            message:
-              "Deep analysis mode.\n" +
-              "Respond with concise sections: Summary, Analysis, Final Answer.\n\n" +
-              `User request:\n${payload.message}`,
-          },
-        },
-        {
-          path: "/chat",
-          payload: {
-            ...basePayload,
-            message:
-              "Deep analysis mode.\n" +
-              "Respond with concise sections: Summary, Analysis, Final Answer.\n\n" +
-              `User request:\n${payload.message}`,
-          },
-        },
+        { path: "/api/ai", payload: { mode: selectedProfile, message: basePayload.message } },
+        { path: "/ai", payload: { mode: selectedProfile, message: basePayload.message } },
+        { path: "/api/ai", payload: { mode: fallbackProfile, message: basePayload.message } },
+        { path: "/ai", payload: { mode: fallbackProfile, message: basePayload.message } },
+        { path: "/api/ai", payload: { mode: "research", message: basePayload.message } },
         { path: "/api/research", payload: basePayload },
         { path: "/research", payload: basePayload },
       ];
     }
     if (mode === "research") {
       return [
+        { path: "/api/ai", payload: { mode: "research", message: basePayload.message } },
+        { path: "/ai", payload: { mode: "research", message: basePayload.message } },
         { path: "/api/research", payload: basePayload },
         { path: "/research", payload: basePayload },
-        {
-          path: "/api/chat",
-          payload: {
-            ...basePayload,
-            message:
-              `Research request:\n${payload.message}\n\n` +
-              "Return sections: Summary, Details, Risks/Tradeoffs, Next Steps.",
-          },
-        },
-        {
-          path: "/chat",
-          payload: {
-            ...basePayload,
-            message:
-              `Research request:\n${payload.message}\n\n` +
-              "Return sections: Summary, Details, Risks/Tradeoffs, Next Steps.",
-          },
-        },
       ];
     }
     if (mode === "prompt") {
       return [
+        {
+          path: "/api/ai",
+          payload: {
+            mode: "prompt",
+            message: basePayload.message,
+            prompt_type: basePayload.prompt_type || "general",
+          },
+        },
+        {
+          path: "/ai",
+          payload: {
+            mode: "prompt",
+            message: basePayload.message,
+            prompt_type: basePayload.prompt_type || "general",
+          },
+        },
         { path: "/api/prompt", payload: basePayload },
         { path: "/prompt", payload: basePayload },
-        {
-          path: "/api/chat",
-          payload: {
-            ...basePayload,
-            message:
-              `Create one optimized ${payload.prompt_type || "general"} prompt.\n` +
-              `User requirements:\n${payload.message}\n\n` +
-              "Return only the final prompt text.",
-          },
-        },
-        {
-          path: "/chat",
-          payload: {
-            ...basePayload,
-            message:
-              `Create one optimized ${payload.prompt_type || "general"} prompt.\n` +
-              `User requirements:\n${payload.message}\n\n` +
-              "Return only the final prompt text.",
-          },
-        },
       ];
     }
     if (mode === "image") {
       return [
         { path: "/api/image", payload: basePayload },
         { path: "/image", payload: basePayload },
-        {
-          path: "/api/chat",
-          payload: {
-            ...basePayload,
-            message:
-              `Generate one high-quality image prompt for:\n${payload.message}\n\n` +
-              `Preferred style: ${payload.image_type || "realistic"}.\n` +
-              "Return only the optimized prompt text.",
-          },
-        },
-        {
-          path: "/chat",
-          payload: {
-            ...basePayload,
-            message:
-              `Generate one high-quality image prompt for:\n${payload.message}\n\n` +
-              `Preferred style: ${payload.image_type || "realistic"}.\n` +
-              "Return only the optimized prompt text.",
-          },
-        },
       ];
     }
 
@@ -1970,6 +1936,19 @@
       { path: "/api/vision", payload: basePayload },
       { path: "/vision", payload: basePayload },
     ];
+  }
+
+  function requestTimeoutMsForMode(mode) {
+    if (mode === "image") {
+      return 120000;
+    }
+    if (mode === "code" || mode === "research" || mode === "deepseek") {
+      return 110000;
+    }
+    if (mode === "kimi") {
+      return 90000;
+    }
+    return 70000;
   }
 
   async function requestWithFallback(mode, payload) {
@@ -1989,7 +1968,7 @@
             headers: { "Content-Type": "application/json" },
             body: JSON.stringify(attempt.payload),
           },
-          mode === "image" ? 90000 : 45000
+          requestTimeoutMsForMode(mode)
         );
 
         if (response.ok) {
@@ -2049,6 +2028,16 @@
     }
     if (elements.promptTypeWrap) {
       elements.promptTypeWrap.hidden = !config.needsPromptType;
+      const promptTypeLabel = elements.promptTypeWrap.querySelector("label");
+      if (promptTypeLabel) {
+        promptTypeLabel.textContent = config.promptTypeLabel || "Prompt type";
+      }
+    }
+    if (elements.promptType) {
+      elements.promptType.placeholder = config.promptTypePlaceholder || "e.g. assistant prompt";
+      if (config.defaultPromptType && !elements.promptType.value.trim()) {
+        elements.promptType.value = config.defaultPromptType;
+      }
     }
     if (elements.imageTypeWrap) {
       elements.imageTypeWrap.hidden = !config.needsImageType;
@@ -2068,6 +2057,8 @@
     elements.aiInput.value = config.example;
     if (config.examplePromptType && elements.promptType) {
       elements.promptType.value = config.examplePromptType;
+    } else if (config.defaultPromptType && elements.promptType) {
+      elements.promptType.value = config.defaultPromptType;
     }
     if (config.exampleImageType && elements.imageType) {
       elements.imageType.value = config.exampleImageType;
@@ -2134,6 +2125,11 @@
       }
     }
 
+    if (mode === "deepseek") {
+      const profileText = elements.promptType ? elements.promptType.value.trim() : "";
+      payload.analysis_profile = normalizeDeepseekProfile(profileText);
+    }
+
     if (mode === "image") {
       payload.image_type = elements.imageType ? elements.imageType.value : "realistic";
     }
@@ -2161,6 +2157,9 @@
     let note = "";
     if (mode === "prompt" && payload.prompt_type) {
       note = `Prompt type: ${payload.prompt_type}`;
+    }
+    if (mode === "deepseek" && payload.analysis_profile) {
+      note = payload.analysis_profile === "deepseek_thinking" ? "Profile: focused analysis" : "Profile: structured analysis";
     }
     if (mode === "image" && payload.image_type) {
       note = `Style: ${payload.image_type}`;
