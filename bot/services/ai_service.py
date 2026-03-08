@@ -373,6 +373,15 @@ class TextToSpeechService:
 
         selected_voice = TTS_NVIDIA_VOICE_NAMES.get(language, TTS_NVIDIA_VOICE_NAMES["en"]).get(voice, "English-US.Female-1")
         payload_candidates: list[dict[str, Any]] = [
+            # Prefer LINEAR_PCM to increase chances of direct WAV output from NVIDIA.
+            {
+                "text": text,
+                "language_code": _tts_language_code(language),
+                "voice_name": selected_voice,
+                "encoding": "LINEAR_PCM",
+                "sample_rate_hz": 48000,
+                "emotion": emotion,
+            },
             {
                 "text": text,
                 "language_code": _tts_language_code(language),
@@ -752,6 +761,12 @@ async def _generate_with_edge_tts(
                     chunks.append(bytes(data))
         audio_bytes = b"".join(chunks)
     except Exception as exc:
+        message = str(exc).lower()
+        if "invalid response status" in message and "403" in message:
+            logger.warning(
+                "Edge TTS handshake failed. Installed edge-tts version=%s may be outdated.",
+                getattr(edge_tts, "__version__", "unknown"),
+            )
         raise AIServiceError(SAFE_SERVICE_UNAVAILABLE_MESSAGE) from exc
 
     if not audio_bytes:
