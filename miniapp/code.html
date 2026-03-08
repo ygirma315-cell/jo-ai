@@ -54,24 +54,12 @@
           <span id="status" class="chip">Checking studio...</span>
           <span id="userInfo" class="chip muted">Guest mode</span>
           <a class="btn small" href="help.html">Help</a>
+          <button id="downloadImageBtn" class="btn small" type="button" disabled>Save</button>
+          <button id="clearBtn" class="btn small" type="button" aria-label="Start a new chat">New</button>
         </div>
       </header>
 
       <section class="chat-main">
-        <div class="chat-thread-head">
-          <div class="chat-thread-copy">
-            <p class="eyebrow">Conversation</p>
-            <h2 id="historyTitle" class="chat-thread-title">Code chat</h2>
-            <p id="toolLead" class="chat-thread-note">Send specs, bugs, or code requests and keep the reply readable in chat.</p>
-          </div>
-          <div class="chat-thread-actions">
-            <span id="apiState" class="chip muted">idle</span>
-            <button id="copyBtn" class="btn small" type="button">Copy last</button>
-            <button id="downloadImageBtn" class="btn small" type="button" disabled>Save image</button>
-            <button id="clearBtn" class="btn small" type="button">New chat</button>
-          </div>
-        </div>
-
         <div id="historyList" class="conversation-list chat-history" role="log" aria-live="polite">
           <div id="emptyState" class="empty-state chat-empty-state">
             <div class="empty-state-mark" aria-hidden="true">JO</div>

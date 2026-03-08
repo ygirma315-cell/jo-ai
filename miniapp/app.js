@@ -1134,7 +1134,7 @@
   function setVersionBadge() {
     if (elements.versionBadge) {
       const version = getDisplayedWebVersion();
-      elements.versionBadge.textContent = getPage() === "tool" ? version : `${version} updates`;
+      elements.versionBadge.textContent = `${version} updates`;
       elements.versionBadge.setAttribute("aria-label", `Open release notes for ${version}`);
     }
     mountVersionBadge();

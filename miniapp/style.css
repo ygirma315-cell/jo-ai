@@ -2630,3 +2630,120 @@ body.tool-page .chat-thread-actions {
     padding: 0;
   }
 }
+
+body.tool-page .chat-topbar {
+  gap: 6px;
+  padding: 8px 10px 6px;
+}
+
+body.tool-page .chat-topbar-main {
+  gap: 2px;
+}
+
+body.tool-page .chat-brand-row {
+  gap: 8px;
+  align-items: flex-start;
+}
+
+body.tool-page .chat-brand-mark {
+  width: 34px;
+  height: 34px;
+  flex-basis: 34px;
+  border-radius: 12px;
+  font-size: 13px;
+}
+
+body.tool-page .chat-title {
+  font-size: clamp(16px, 2.2vw, 20px);
+  line-height: 1.1;
+}
+
+body.tool-page .chat-subtitle {
+  max-width: 28ch;
+  font-size: 11px;
+  line-height: 1.32;
+}
+
+body.tool-page .chat-topbar-actions .chip,
+body.tool-page .chat-topbar-actions .btn.small,
+body.tool-page .version-badge {
+  min-height: 28px;
+  padding: 4px 8px;
+  font-size: 10px;
+}
+
+body.tool-page .chat-main {
+  grid-template-rows: minmax(0, 1fr) auto;
+  gap: 4px;
+  padding: 0 8px 8px;
+}
+
+body.tool-page .chat-history {
+  padding: 10px 8px 10px;
+  scroll-padding-bottom: 12px;
+}
+
+body.tool-page .chat-composer {
+  gap: 4px;
+  padding-top: 4px;
+}
+
+body.tool-page .chat-input-row {
+  padding: 6px 6px 6px 12px;
+  border-radius: 18px;
+}
+
+body.tool-page .chat-input {
+  min-height: 42px;
+  font-size: 14px;
+}
+
+body.tool-page .send-btn {
+  min-width: 72px;
+  min-height: 42px;
+}
+
+body.tool-page .composer-status {
+  margin: 0 2px;
+}
+
+body.tool-page .chat-history .bubble-copy {
+  padding: 2px 0 0 6px;
+  font-size: 10px;
+  letter-spacing: 0;
+}
+
+@media (max-width: 720px) {
+  body.tool-page .chat-topbar {
+    padding: 7px 8px 5px;
+  }
+
+  body.tool-page .chat-title {
+    font-size: 15px;
+  }
+
+  body.tool-page .chat-subtitle {
+    display: block;
+    font-size: 10px;
+  }
+
+  body.tool-page .chat-topbar-actions .chip,
+  body.tool-page .chat-topbar-actions .btn.small,
+  body.tool-page .version-badge {
+    min-height: 26px;
+    padding: 3px 7px;
+    font-size: 9px;
+  }
+
+  body.tool-page .chat-main {
+    padding: 0 6px 6px;
+  }
+
+  body.tool-page .chat-history {
+    padding: 8px 6px 8px;
+  }
+
+  body.tool-page .chat-composer {
+    padding-top: 3px;
+  }
+}
