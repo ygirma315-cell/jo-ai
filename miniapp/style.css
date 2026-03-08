@@ -2572,3 +2572,61 @@ body.tool-page .composer-options {
     padding: 0 10px 10px;
   }
 }
+
+body.tool-page .back-link {
+  margin-bottom: 4px;
+}
+
+body.tool-page .chat-topbar {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  align-items: start;
+}
+
+body.tool-page .chat-topbar-actions,
+body.tool-page .chat-thread-actions {
+  flex-wrap: nowrap;
+  justify-content: flex-end;
+  overflow-x: auto;
+  scrollbar-width: none;
+}
+
+body.tool-page .chat-topbar-actions::-webkit-scrollbar,
+body.tool-page .chat-thread-actions::-webkit-scrollbar {
+  display: none;
+}
+
+body.tool-page .chat-thread-head {
+  gap: 0;
+  padding: 0 0 2px;
+}
+
+body.tool-page .chat-thread-actions {
+  width: auto;
+  max-width: 100%;
+}
+
+@media (max-width: 720px) {
+  body.tool-page .chat-topbar,
+  body.tool-page .chat-thread-head {
+    flex-direction: row;
+  }
+
+  body.tool-page .chat-topbar {
+    grid-template-columns: minmax(0, 1fr) auto;
+    gap: 8px;
+  }
+
+  body.tool-page .chat-topbar-actions {
+    justify-content: flex-end;
+  }
+
+  body.tool-page .chat-subtitle,
+  body.tool-page #apiState {
+    display: none;
+  }
+
+  body.tool-page .chat-thread-head {
+    padding: 0;
+  }
+}

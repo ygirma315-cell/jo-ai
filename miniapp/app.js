@@ -1134,7 +1134,7 @@
   function setVersionBadge() {
     if (elements.versionBadge) {
       const version = getDisplayedWebVersion();
-      elements.versionBadge.textContent = `${version} updates`;
+      elements.versionBadge.textContent = getPage() === "tool" ? version : `${version} updates`;
       elements.versionBadge.setAttribute("aria-label", `Open release notes for ${version}`);
     }
     mountVersionBadge();
@@ -1275,7 +1275,7 @@
           tg.initDataUnsafe.user.first_name) ||
         "there";
 
-      setUserInfo(`Hi, ${firstName}`);
+      setUserInfo(`Hi ${firstName}`);
       if (elements.welcomeMessage) {
         elements.welcomeMessage.textContent = `Welcome, ${firstName}. Free, fast, and flexible JO AI tools are ready.`;
       }
