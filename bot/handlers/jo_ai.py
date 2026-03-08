@@ -23,6 +23,7 @@ from bot.constants import (
     MENU_AI_KIMI,
     MENU_AI_PROMPT,
     MENU_AI_RESEARCH,
+    MENU_AI_TTS,
     MENU_AI_TOOLS,
     MENU_BUTTON_TEXTS,
     MENU_JO_AI,
@@ -34,11 +35,14 @@ from bot.keyboards.jo_ai import (
     jo_ai_menu_keyboard,
     jo_chat_keyboard,
     kimi_result_keyboard,
+    tts_emotion_keyboard,
+    tts_language_keyboard,
+    tts_voice_keyboard,
 )
 from bot.keyboards.menu import ai_tools_keyboard, main_menu_keyboard
 from bot.models.session import Feature, JoAIMode
 from bot.security import BRANDING_LINE, DEVELOPER_HANDLE
-from bot.services.ai_service import AIServiceError, ChatService, ImageGenerationService
+from bot.services.ai_service import AIServiceError, ChatService, ImageGenerationService, TextToSpeechService
 from bot.services.session_manager import SessionManager
 from bot.telegram_formatting import TelegramMessageFormatter
 
@@ -54,7 +58,8 @@ JO_AI_MENU_TEXT = (
     "• ✨ Prompt Generator\n"
     "• 🎨 Image Generator\n"
     "• 🖼️ JO AI Vision\n"
-    "• 🧠 Deep Analysis\n\n"
+    "• 🧠 Deep Analysis\n"
+    "• 🔊 Text-to-Speech\n\n"
     "💡 Tip: Use /help any time for guidance."
 )
 
@@ -94,6 +99,24 @@ IMAGE_RATIO_TO_SIZE = {
     "1:1": "1024x1024",
     "16:9": "1344x768",
     "9:16": "768x1344",
+}
+
+TTS_LANGUAGE_LABELS = {
+    "en": "English",
+    "es": "Spanish",
+    "fr": "French",
+}
+
+TTS_VOICE_LABELS = {
+    "female": "Female",
+    "male": "Male",
+}
+
+TTS_EMOTION_LABELS = {
+    "neutral": "Neutral",
+    "cheerful": "Cheerful",
+    "calm": "Calm",
+    "serious": "Serious",
 }
 
 ENGAGEMENT_LINES = (
@@ -183,6 +206,10 @@ async def _switch_to_jo_ai_mode(user_id: int, mode: JoAIMode, session_manager: S
                 session.jo_ai_code_waiting_file = False
                 session.jo_ai_code_file_name = None
                 session.jo_ai_code_file_content = None
+            if mode != JoAIMode.TEXT_TO_SPEECH:
+                session.jo_ai_tts_language = None
+                session.jo_ai_tts_voice = None
+                session.jo_ai_tts_emotion = None
 
 
 async def _activate_mode(
@@ -243,6 +270,13 @@ async def _activate_mode(
             "🎨 <b>Image Generator is active</b>\n\n"
             "Step 1/3: Choose an image style below.",
             reply_markup=image_type_keyboard(),
+        )
+        return
+    if mode == JoAIMode.TEXT_TO_SPEECH:
+        await message.answer(
+            "🔊 <b>Text-to-Speech is active</b>\n\n"
+            "Step 1/4: Choose a language.",
+            reply_markup=tts_language_keyboard(),
         )
         return
     if mode == JoAIMode.KIMI_IMAGE_DESCRIBER:
@@ -647,6 +681,7 @@ async def _send_formatted_ai_reply(
 @router.message(Command("analysis"))
 @router.message(Command("kimi"))
 @router.message(Command("vision"))
+@router.message(Command("tts"))
 @router.message(F.text == MENU_AI_CHAT)
 @router.message(F.text == "JO AI Chat")
 @router.message(F.text == MENU_AI_CODE)
@@ -659,6 +694,8 @@ async def _send_formatted_ai_reply(
 @router.message(F.text == "Image Generator")
 @router.message(F.text == MENU_AI_DEEPSEEK)
 @router.message(F.text == MENU_AI_KIMI)
+@router.message(F.text == MENU_AI_TTS)
+@router.message(F.text == "Text-to-Speech")
 @router.message(F.text == MENU_AI_TOOLS)
 @router.message(F.text == "AI Tools")
 @router.message(F.text == MENU_JO_AI)
@@ -685,6 +722,9 @@ async def open_jo_ai_menu(message: Message, session_manager: SessionManager, min
         return
     if text in {"/kimi", "/vision", MENU_AI_KIMI.lower()}:
         await _activate_mode(message, message.from_user.id, JoAIMode.KIMI_IMAGE_DESCRIBER, session_manager, miniapp_url)
+        return
+    if text in {"/tts", MENU_AI_TTS.lower()}:
+        await _activate_mode(message, message.from_user.id, JoAIMode.TEXT_TO_SPEECH, session_manager, miniapp_url)
         return
     if text in {"/deepseek", "/analysis", MENU_AI_DEEPSEEK.lower()}:
         await _activate_mode(message, message.from_user.id, JoAIMode.DEEP_ANALYSIS, session_manager, miniapp_url)
@@ -794,6 +834,159 @@ async def enable_kimi_mode(query: CallbackQuery, session_manager: SessionManager
         await _activate_mode(query.message, query.from_user.id, JoAIMode.KIMI_IMAGE_DESCRIBER, session_manager, miniapp_url)
 
 
+@router.callback_query(F.data == "joai:tts")
+async def enable_tts_mode(query: CallbackQuery, session_manager: SessionManager, miniapp_url: str | None) -> None:
+    if not query.from_user:
+        await query.answer()
+        return
+    await query.answer()
+    if isinstance(query.message, Message):
+        await _activate_mode(query.message, query.from_user.id, JoAIMode.TEXT_TO_SPEECH, session_manager, miniapp_url)
+
+
+@router.callback_query(F.data == "joaitts:lang_menu")
+async def tts_show_language_menu(query: CallbackQuery, session_manager: SessionManager) -> None:
+    if not query.from_user:
+        await query.answer()
+        return
+    async with session_manager.lock(query.from_user.id) as session:
+        if session.active_feature != Feature.JO_AI or session.jo_ai_mode != JoAIMode.TEXT_TO_SPEECH:
+            await query.answer("⏳ TTS session expired. Send /tts again.", show_alert=True)
+            return
+        session.jo_ai_tts_language = None
+        session.jo_ai_tts_voice = None
+        session.jo_ai_tts_emotion = None
+
+    await query.answer()
+    if isinstance(query.message, Message):
+        await query.message.answer(
+            "🔊 Step 1/4: Choose a language.",
+            reply_markup=tts_language_keyboard(),
+        )
+
+
+@router.callback_query(F.data == "joaitts:voice_menu")
+async def tts_show_voice_menu(query: CallbackQuery, session_manager: SessionManager) -> None:
+    if not query.from_user:
+        await query.answer()
+        return
+    async with session_manager.lock(query.from_user.id) as session:
+        if session.active_feature != Feature.JO_AI or session.jo_ai_mode != JoAIMode.TEXT_TO_SPEECH:
+            await query.answer("⏳ TTS session expired. Send /tts again.", show_alert=True)
+            return
+        if not session.jo_ai_tts_language:
+            await query.answer("Pick a language first.", show_alert=True)
+            return
+        session.jo_ai_tts_voice = None
+        session.jo_ai_tts_emotion = None
+
+    await query.answer()
+    if isinstance(query.message, Message):
+        await query.message.answer(
+            "🔊 Step 2/4: Choose a voice.",
+            reply_markup=tts_voice_keyboard(),
+        )
+
+
+@router.callback_query(F.data.startswith("joaitts:lang:"))
+async def choose_tts_language(query: CallbackQuery, session_manager: SessionManager) -> None:
+    if not query.from_user:
+        await query.answer()
+        return
+    raw = query.data or ""
+    parts = raw.split(":")
+    if len(parts) != 3:
+        await query.answer("⚠️ Invalid language option.", show_alert=True)
+        return
+    language = parts[2].strip().lower()
+    label = TTS_LANGUAGE_LABELS.get(language)
+    if not label:
+        await query.answer("⚠️ Unsupported language.", show_alert=True)
+        return
+
+    async with session_manager.lock(query.from_user.id) as session:
+        if session.active_feature != Feature.JO_AI or session.jo_ai_mode != JoAIMode.TEXT_TO_SPEECH:
+            await query.answer("⏳ TTS session expired. Send /tts again.", show_alert=True)
+            return
+        session.jo_ai_tts_language = language
+        session.jo_ai_tts_voice = None
+        session.jo_ai_tts_emotion = None
+
+    await query.answer(f"✅ {label} selected.")
+    if isinstance(query.message, Message):
+        await query.message.answer(
+            f"✅ <b>{html.escape(label)}</b> selected.\n\nStep 2/4: Choose a voice.",
+            reply_markup=tts_voice_keyboard(),
+        )
+
+
+@router.callback_query(F.data.startswith("joaitts:voice:"))
+async def choose_tts_voice(query: CallbackQuery, session_manager: SessionManager) -> None:
+    if not query.from_user:
+        await query.answer()
+        return
+    raw = query.data or ""
+    parts = raw.split(":")
+    if len(parts) != 3:
+        await query.answer("⚠️ Invalid voice option.", show_alert=True)
+        return
+    voice = parts[2].strip().lower()
+    label = TTS_VOICE_LABELS.get(voice)
+    if not label:
+        await query.answer("⚠️ Unsupported voice option.", show_alert=True)
+        return
+
+    async with session_manager.lock(query.from_user.id) as session:
+        if session.active_feature != Feature.JO_AI or session.jo_ai_mode != JoAIMode.TEXT_TO_SPEECH:
+            await query.answer("⏳ TTS session expired. Send /tts again.", show_alert=True)
+            return
+        if not session.jo_ai_tts_language:
+            await query.answer("Pick a language first.", show_alert=True)
+            return
+        session.jo_ai_tts_voice = voice
+        session.jo_ai_tts_emotion = None
+
+    await query.answer(f"✅ {label} voice selected.")
+    if isinstance(query.message, Message):
+        await query.message.answer(
+            f"✅ Voice <b>{html.escape(label)}</b> selected.\n\nStep 3/4: Choose an emotion.",
+            reply_markup=tts_emotion_keyboard(),
+        )
+
+
+@router.callback_query(F.data.startswith("joaitts:emotion:"))
+async def choose_tts_emotion(query: CallbackQuery, session_manager: SessionManager) -> None:
+    if not query.from_user:
+        await query.answer()
+        return
+    raw = query.data or ""
+    parts = raw.split(":")
+    if len(parts) != 3:
+        await query.answer("⚠️ Invalid emotion option.", show_alert=True)
+        return
+    emotion = parts[2].strip().lower()
+    label = TTS_EMOTION_LABELS.get(emotion)
+    if not label:
+        await query.answer("⚠️ Unsupported emotion.", show_alert=True)
+        return
+
+    async with session_manager.lock(query.from_user.id) as session:
+        if session.active_feature != Feature.JO_AI or session.jo_ai_mode != JoAIMode.TEXT_TO_SPEECH:
+            await query.answer("⏳ TTS session expired. Send /tts again.", show_alert=True)
+            return
+        if not session.jo_ai_tts_language or not session.jo_ai_tts_voice:
+            await query.answer("Select language and voice first.", show_alert=True)
+            return
+        session.jo_ai_tts_emotion = emotion
+
+    await query.answer(f"✅ {label} emotion selected.")
+    if isinstance(query.message, Message):
+        await query.message.answer(
+            "✅ Emotion selected.\n\nStep 4/4: Send the text you want me to convert to speech.",
+            reply_markup=jo_chat_keyboard(),
+        )
+
+
 @router.callback_query(F.data.startswith("joaiimg:type:"))
 async def choose_image_type(query: CallbackQuery, session_manager: SessionManager) -> None:
     if not query.from_user:
@@ -885,6 +1078,7 @@ async def handle_jo_ai_text(
     session_manager: SessionManager,
     chat_service: ChatService,
     image_generation_service: ImageGenerationService,
+    tts_service: TextToSpeechService,
     deepseek_api_key: str | None,
     deepseek_model: str,
 ) -> None:
@@ -902,6 +1096,9 @@ async def handle_jo_ai_text(
         image_ratio = session.jo_ai_image_ratio
         code_file_name = session.jo_ai_code_file_name
         code_file_content = session.jo_ai_code_file_content
+        tts_language = session.jo_ai_tts_language
+        tts_voice = session.jo_ai_tts_voice
+        tts_emotion = session.jo_ai_tts_emotion
         history_snapshot = [{"role": role, "content": content} for role, content in session.jo_ai_chat_history]
 
     mode_options = _default_mode_options()
@@ -958,6 +1155,16 @@ async def handle_jo_ai_text(
             image_type,
             image_ratio,
             mode_options,
+        )
+        return
+    if mode == JoAIMode.TEXT_TO_SPEECH:
+        await _process_tts_message(
+            message,
+            user_text,
+            tts_service,
+            tts_language,
+            tts_voice,
+            tts_emotion,
         )
         return
     if mode == JoAIMode.KIMI_IMAGE_DESCRIBER:
@@ -1289,6 +1496,94 @@ async def _process_chat_message(
     await _send_formatted_ai_reply(message, mode, reply, jo_chat_keyboard())
 
 
+def _tts_extension_for_mime_type(mime_type: str) -> str:
+    normalized = (mime_type or "").strip().lower()
+    if normalized in {"audio/wav", "audio/x-wav"}:
+        return "wav"
+    if normalized == "audio/ogg":
+        return "ogg"
+    if normalized == "audio/webm":
+        return "webm"
+    if normalized == "audio/flac":
+        return "flac"
+    return "mp3"
+
+
+async def _process_tts_message(
+    message: Message,
+    user_text: str,
+    tts_service: TextToSpeechService,
+    language: str | None,
+    voice: str | None,
+    emotion: str | None,
+) -> None:
+    selected_language = (language or "").strip().lower()
+    if selected_language not in TTS_LANGUAGE_LABELS:
+        await message.answer(
+            "🔊 Step 1/4: Choose a language first.",
+            reply_markup=tts_language_keyboard(),
+        )
+        return
+
+    selected_voice = (voice or "").strip().lower()
+    if selected_voice not in TTS_VOICE_LABELS:
+        await message.answer(
+            "🔊 Step 2/4: Choose a voice first.",
+            reply_markup=tts_voice_keyboard(),
+        )
+        return
+
+    selected_emotion = (emotion or "").strip().lower()
+    if selected_emotion not in TTS_EMOTION_LABELS:
+        await message.answer(
+            "🔊 Step 3/4: Choose an emotion first.",
+            reply_markup=tts_emotion_keyboard(),
+        )
+        return
+
+    progress_message = await _send_progress_message(message, "🔊 Generating speech...")
+    try:
+        async with ChatActionSender.typing(bot=message.bot, chat_id=message.chat.id):
+            generated = await tts_service.generate_speech(
+                text=user_text,
+                language=selected_language,
+                voice=selected_voice,
+                emotion=selected_emotion,
+            )
+    except AIServiceError as exc:
+        await _clear_progress_message(progress_message)
+        await message.answer(
+            _friendly_error_text("Text-to-Speech is temporarily unavailable", exc),
+            reply_markup=jo_chat_keyboard(),
+        )
+        return
+    except Exception:
+        await _clear_progress_message(progress_message)
+        logger.exception("Unexpected TTS generation error.")
+        await message.answer(
+            _friendly_error_text("Unexpected Text-to-Speech error"),
+            reply_markup=jo_chat_keyboard(),
+        )
+        return
+
+    await _clear_progress_message(progress_message)
+    extension = _tts_extension_for_mime_type(generated.mime_type)
+    audio_file = BufferedInputFile(generated.audio_bytes, filename=f"jo_ai_tts.{extension}")
+    language_label = TTS_LANGUAGE_LABELS.get(selected_language, selected_language)
+    voice_label = TTS_VOICE_LABELS.get(selected_voice, selected_voice)
+    emotion_label = TTS_EMOTION_LABELS.get(selected_emotion, selected_emotion)
+    await message.answer_audio(
+        audio=audio_file,
+        caption=(
+            "🎧 <b>Speech is ready</b>\n\n"
+            f"Language: <b>{html.escape(language_label)}</b>\n"
+            f"Voice: <b>{html.escape(voice_label)}</b>\n"
+            f"Emotion: <b>{html.escape(emotion_label)}</b>"
+        ),
+        reply_markup=jo_chat_keyboard(),
+    )
+
+
 async def _process_prompt_message(
     message: Message,
     user_text: str,
@@ -1466,6 +1761,7 @@ async def jo_ai_unexpected_input(message: Message) -> None:
         "📩 Send text in the current JO AI mode.\n"
         "📎 In Code Generator mode, you can upload a code file for debug/fix.\n"
         "🖼️ In Vision mode, send an image.\n"
+        "🔊 In Text-to-Speech mode, choose language, voice, and emotion first.\n"
         "💡 You can switch mode anytime.",
         reply_markup=jo_ai_menu_keyboard(),
     )

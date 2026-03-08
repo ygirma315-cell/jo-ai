@@ -168,6 +168,26 @@
       emptyTitle: "Create an image with Joe AI",
       emptyCopy: "Describe a scene, choose a style, and your image result will appear here.",
     },
+    tts: {
+      title: "Text-to-Speech",
+      description: "Convert text into speech with language, voice, and emotion controls.",
+      lead: "Pick your speech settings, submit text, and play or save the generated audio.",
+      example: "Welcome to JO AI. Your personalized audio summary is ready.",
+      label: "Enter text for speech",
+      placeholder: "Type the text you want to convert to speech",
+      rows: 1,
+      maxComposerHeight: 176,
+      historyTitle: "Speech results",
+      needsTtsLanguage: true,
+      needsTtsVoice: true,
+      needsTtsEmotion: true,
+      supportsAudioSave: true,
+      defaultTtsLanguage: "en",
+      defaultTtsVoice: "female",
+      defaultTtsEmotion: "neutral",
+      emptyTitle: "Create speech from text",
+      emptyCopy: "Choose language, voice, and emotion, then generate speech in one step.",
+    },
     kimi: {
       title: "JO AI Vision",
       description: "Upload an image and ask Joe AI to describe or explain it.",
@@ -196,6 +216,8 @@
     history: [],
     lastOutputText: "",
     lastImageDataUrl: "",
+    lastAudioDataUrl: "",
+    lastAudioFileName: "",
     lastCodeFileDataUrl: "",
     lastCodeFileName: "",
     toastTimer: null,
@@ -369,6 +391,12 @@
       imageType: byId("imageType"),
       imageRatioWrap: byId("imageRatioWrap"),
       imageRatio: byId("imageRatio"),
+      ttsLanguageWrap: byId("ttsLanguageWrap"),
+      ttsLanguage: byId("ttsLanguage"),
+      ttsVoiceWrap: byId("ttsVoiceWrap"),
+      ttsVoice: byId("ttsVoice"),
+      ttsEmotionWrap: byId("ttsEmotionWrap"),
+      ttsEmotion: byId("ttsEmotion"),
       codeFileWrap: byId("codeFileWrap"),
       codeFile: byId("codeFile"),
       codeFileInfo: byId("codeFileInfo"),
@@ -1248,12 +1276,13 @@
     }
     if (elements.downloadImageBtn) {
       const config = currentTool();
-      if (config && (config.supportsImageSave || config.supportsCodeSave)) {
+      if (config && (config.supportsImageSave || config.supportsCodeSave || config.supportsAudioSave)) {
         elements.downloadImageBtn.hidden = false;
         const canSaveImage = Boolean(config.supportsImageSave && state.lastImageDataUrl);
+        const canSaveAudio = Boolean(config.supportsAudioSave && state.lastAudioDataUrl);
         const canSaveCode = Boolean(config.supportsCodeSave && state.lastCodeFileDataUrl);
-        elements.downloadImageBtn.disabled = state.isBusy || (!canSaveImage && !canSaveCode);
-        elements.downloadImageBtn.textContent = canSaveCode ? "Save Code" : "Save";
+        elements.downloadImageBtn.disabled = state.isBusy || (!canSaveImage && !canSaveAudio && !canSaveCode);
+        elements.downloadImageBtn.textContent = canSaveCode ? "Save Code" : canSaveAudio ? "Save Audio" : "Save";
       } else {
         elements.downloadImageBtn.hidden = true;
       }
@@ -1506,6 +1535,21 @@
     return `data:text/plain;base64,${value.replace(/\s+/g, "")}`;
   }
 
+  function normalizeAudioUrl(rawAudio, mimeType = "audio/mpeg") {
+    const value = String(rawAudio || "").trim();
+    if (!value) {
+      return "";
+    }
+    if (/^https?:\/\//i.test(value)) {
+      return value;
+    }
+    if (value.startsWith("data:audio")) {
+      return value;
+    }
+    const normalizedMime = String(mimeType || "audio/mpeg").trim() || "audio/mpeg";
+    return `data:${normalizedMime};base64,${value.replace(/\s+/g, "")}`;
+  }
+
   function formatTime(timestamp) {
     try {
       return new Date(timestamp || Date.now()).toLocaleTimeString([], {
@@ -1600,6 +1644,15 @@
       body.appendChild(download);
     }
 
+    if (entry.audioDataUrl) {
+      const audio = document.createElement("audio");
+      audio.className = "message-audio";
+      audio.controls = true;
+      audio.preload = "metadata";
+      audio.src = entry.audioDataUrl;
+      body.appendChild(audio);
+    }
+
     if (entry.imageDataUrl) {
       const image = document.createElement("img");
       image.className = "message-image";
@@ -1630,13 +1683,14 @@
         if (!entry || typeof entry !== "object") {
           return entry;
         }
-        if (!entry.codeFileDataUrl) {
-          return entry;
+        const normalized = { ...entry };
+        if (normalized.codeFileDataUrl) {
+          normalized.codeFileDataUrl = "";
         }
-        return {
-          ...entry,
-          codeFileDataUrl: "",
-        };
+        if (normalized.audioDataUrl) {
+          normalized.audioDataUrl = "";
+        }
+        return normalized;
       });
     safeStorageSet(getSessionStorage(), getHistoryKey(), JSON.stringify(serializable));
   }
@@ -1660,6 +1714,8 @@
     const latestAssistant = [...state.history].reverse().find((entry) => entry.role === "assistant" && !entry.pending);
     state.lastOutputText = latestAssistant && latestAssistant.text ? latestAssistant.text : "";
     state.lastImageDataUrl = latestAssistant && latestAssistant.imageDataUrl ? latestAssistant.imageDataUrl : "";
+    state.lastAudioDataUrl = latestAssistant && latestAssistant.audioDataUrl ? latestAssistant.audioDataUrl : "";
+    state.lastAudioFileName = latestAssistant && latestAssistant.audioFileName ? latestAssistant.audioFileName : "";
     state.lastCodeFileDataUrl = latestAssistant && latestAssistant.codeFileDataUrl ? latestAssistant.codeFileDataUrl : "";
     state.lastCodeFileName = latestAssistant && latestAssistant.codeFileName ? latestAssistant.codeFileName : "";
   }
@@ -1674,6 +1730,8 @@
       elements.historyList.innerHTML = state.emptyTemplate;
       state.lastOutputText = "";
       state.lastImageDataUrl = "";
+      state.lastAudioDataUrl = "";
+      state.lastAudioFileName = "";
       state.lastCodeFileDataUrl = "";
       state.lastCodeFileName = "";
       syncOutputButtons();
@@ -1767,6 +1825,8 @@
     state.pendingId = "";
     state.lastOutputText = "";
     state.lastImageDataUrl = "";
+    state.lastAudioDataUrl = "";
+    state.lastAudioFileName = "";
     state.lastCodeFileDataUrl = "";
     state.lastCodeFileName = "";
     persistHistory();
@@ -1791,6 +1851,15 @@
     }
     if (elements.imageRatio) {
       elements.imageRatio.value = "1:1";
+    }
+    if (elements.ttsLanguage) {
+      elements.ttsLanguage.value = "en";
+    }
+    if (elements.ttsVoice) {
+      elements.ttsVoice.value = "female";
+    }
+    if (elements.ttsEmotion) {
+      elements.ttsEmotion.value = "neutral";
     }
     if (elements.kimiImage) {
       elements.kimiImage.value = "";
@@ -1975,6 +2044,12 @@
         { path: "/prompt", payload: basePayload },
       ];
     }
+    if (mode === "tts") {
+      return [
+        { path: "/api/tts", payload: basePayload },
+        { path: "/tts", payload: basePayload },
+      ];
+    }
     if (mode === "image") {
       return [
         { path: "/api/image", payload: basePayload },
@@ -1994,6 +2069,9 @@
     }
     if (mode === "code" || mode === "research" || mode === "deepseek") {
       return 110000;
+    }
+    if (mode === "tts") {
+      return 90000;
     }
     if (mode === "kimi") {
       return 90000;
@@ -2098,6 +2176,24 @@
     if (elements.imageRatio && config.defaultImageRatio && !elements.imageRatio.value) {
       elements.imageRatio.value = config.defaultImageRatio;
     }
+    if (elements.ttsLanguageWrap) {
+      elements.ttsLanguageWrap.hidden = !config.needsTtsLanguage;
+    }
+    if (elements.ttsLanguage && config.defaultTtsLanguage && !elements.ttsLanguage.value) {
+      elements.ttsLanguage.value = config.defaultTtsLanguage;
+    }
+    if (elements.ttsVoiceWrap) {
+      elements.ttsVoiceWrap.hidden = !config.needsTtsVoice;
+    }
+    if (elements.ttsVoice && config.defaultTtsVoice && !elements.ttsVoice.value) {
+      elements.ttsVoice.value = config.defaultTtsVoice;
+    }
+    if (elements.ttsEmotionWrap) {
+      elements.ttsEmotionWrap.hidden = !config.needsTtsEmotion;
+    }
+    if (elements.ttsEmotion && config.defaultTtsEmotion && !elements.ttsEmotion.value) {
+      elements.ttsEmotion.value = config.defaultTtsEmotion;
+    }
     if (elements.codeFileWrap) {
       elements.codeFileWrap.hidden = !config.needsCodeUpload;
     }
@@ -2129,6 +2225,15 @@
       elements.imageRatio.value = config.exampleImageRatio;
     } else if (config.defaultImageRatio && elements.imageRatio) {
       elements.imageRatio.value = config.defaultImageRatio;
+    }
+    if (config.defaultTtsLanguage && elements.ttsLanguage) {
+      elements.ttsLanguage.value = config.defaultTtsLanguage;
+    }
+    if (config.defaultTtsVoice && elements.ttsVoice) {
+      elements.ttsVoice.value = config.defaultTtsVoice;
+    }
+    if (config.defaultTtsEmotion && elements.ttsEmotion) {
+      elements.ttsEmotion.value = config.defaultTtsEmotion;
     }
     resizeComposerInput();
     updateSendButtonState();
@@ -2216,6 +2321,13 @@
       payload.ratio = elements.imageRatio ? elements.imageRatio.value : "1:1";
     }
 
+    if (mode === "tts") {
+      payload.text = message;
+      payload.language = elements.ttsLanguage ? elements.ttsLanguage.value : "en";
+      payload.voice = elements.ttsVoice ? elements.ttsVoice.value : "female";
+      payload.emotion = elements.ttsEmotion ? elements.ttsEmotion.value : "neutral";
+    }
+
     if (mode === "code") {
       const file = elements.codeFile && elements.codeFile.files ? elements.codeFile.files[0] : null;
       if (file) {
@@ -2262,6 +2374,12 @@
     }
     if (mode === "code" && payload.code_file_name) {
       note = `File: ${payload.code_file_name}`;
+    }
+    if (mode === "tts") {
+      const lang = payload.language || "en";
+      const voice = payload.voice || "female";
+      const emotion = payload.emotion || "neutral";
+      note = `Language: ${lang} | Voice: ${voice} | Emotion: ${emotion}`;
     }
     if (mode === "kimi" && elements.kimiImage && elements.kimiImage.files && elements.kimiImage.files[0]) {
       note = `File: ${elements.kimiImage.files[0].name}`;
@@ -2347,6 +2465,8 @@
       };
       state.lastOutputText = refusal.text;
       state.lastImageDataUrl = "";
+      state.lastAudioDataUrl = "";
+      state.lastAudioFileName = "";
       state.lastCodeFileDataUrl = "";
       state.lastCodeFileName = "";
       pushHistory(refusal);
@@ -2369,6 +2489,16 @@
         : data && typeof data.image_url === "string" && data.image_url.trim()
           ? normalizeImageUrl(data.image_url)
           : "";
+      const audioDataUrl =
+        data && data.audio_base64
+          ? normalizeAudioUrl(data.audio_base64, data.audio_mime_type || "audio/mpeg")
+          : data && typeof data.audio_url === "string" && data.audio_url.trim()
+            ? normalizeAudioUrl(data.audio_url, data.audio_mime_type || "audio/mpeg")
+            : "";
+      const audioFileName =
+        data && typeof data.audio_file_name === "string" && data.audio_file_name.trim()
+          ? data.audio_file_name.trim()
+          : "";
       const codeFileDataUrl = data && data.code_file_base64 ? normalizeCodeFileUrl(data.code_file_base64) : "";
       const codeFileName =
         data && typeof data.code_file_name === "string" && data.code_file_name.trim() ? data.code_file_name.trim() : "";
@@ -2380,12 +2510,17 @@
       if (!text && imageDataUrl) {
         text = "Your image is ready.";
       }
+      if (!text && audioDataUrl) {
+        text = "Your audio is ready.";
+      }
       if (!text) {
         text = "No output returned.";
       }
 
       state.lastOutputText = text;
       state.lastImageDataUrl = imageDataUrl;
+      state.lastAudioDataUrl = audioDataUrl;
+      state.lastAudioFileName = audioFileName;
       state.lastCodeFileDataUrl = codeFileDataUrl;
       state.lastCodeFileName = codeFileName;
 
@@ -2401,6 +2536,8 @@
             ? data.warning.trim()
             : "",
         imageDataUrl,
+        audioDataUrl,
+        audioFileName,
         codeFileDataUrl,
         codeFileName,
         timestamp: Date.now(),
@@ -2427,7 +2564,8 @@
     const config = currentTool();
     const saveCode = Boolean(config && config.supportsCodeSave && state.lastCodeFileDataUrl);
     const saveImage = Boolean(config && config.supportsImageSave && state.lastImageDataUrl);
-    if (!saveCode && !saveImage) {
+    const saveAudio = Boolean(config && config.supportsAudioSave && state.lastAudioDataUrl);
+    if (!saveCode && !saveImage && !saveAudio) {
       showToast("No file available to save.", "error");
       return;
     }
@@ -2435,6 +2573,9 @@
     if (saveCode) {
       link.href = state.lastCodeFileDataUrl;
       link.download = state.lastCodeFileName || `jo-ai-code-${Date.now()}.txt`;
+    } else if (saveAudio) {
+      link.href = state.lastAudioDataUrl;
+      link.download = state.lastAudioFileName || `jo-ai-audio-${Date.now()}.mp3`;
     } else {
       link.href = state.lastImageDataUrl;
       link.download = `jo-ai-image-${Date.now()}.png`;
@@ -2524,6 +2665,15 @@
     }
     if (elements.imageRatio) {
       elements.imageRatio.addEventListener("change", updateSendButtonState);
+    }
+    if (elements.ttsLanguage) {
+      elements.ttsLanguage.addEventListener("change", updateSendButtonState);
+    }
+    if (elements.ttsVoice) {
+      elements.ttsVoice.addEventListener("change", updateSendButtonState);
+    }
+    if (elements.ttsEmotion) {
+      elements.ttsEmotion.addEventListener("change", updateSendButtonState);
     }
     if (elements.codeFile) {
       elements.codeFile.addEventListener("change", () => {

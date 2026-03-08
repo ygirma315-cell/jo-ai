@@ -91,6 +91,9 @@ class SessionManager:
         session.jo_ai_code_waiting_file = False
         session.jo_ai_code_file_name = None
         session.jo_ai_code_file_content = None
+        session.jo_ai_tts_language = None
+        session.jo_ai_tts_voice = None
+        session.jo_ai_tts_emotion = None
         session.jo_ai_chat_history.clear()
 
     def _transition_notice(self, previous: Feature, new_feature: Feature) -> str:

@@ -10,6 +10,7 @@ MENU_AI_PROMPT = "\u2728 Prompt Generator"
 MENU_AI_IMAGE = "\U0001F3A8 Image Generator"
 MENU_AI_DEEPSEEK = "\U0001F9E0 Deep Analysis"
 MENU_AI_KIMI = "\U0001F5BC\ufe0f Vision"
+MENU_AI_TTS = "\U0001F50A Text-to-Speech"
 MENU_HELP = "\U0001F4A1 Help"
 MENU_VERSION_MODELS = "\u2139\ufe0f Version"
 MENU_CANCEL = "\u21a9\ufe0f Cancel / Back to Menu"
@@ -27,6 +28,7 @@ _PRIMARY_MENU_BUTTON_TEXTS = {
     MENU_AI_IMAGE,
     MENU_AI_DEEPSEEK,
     MENU_AI_KIMI,
+    MENU_AI_TTS,
     MENU_HELP,
     MENU_VERSION_MODELS,
     MENU_CANCEL,
@@ -45,6 +47,7 @@ _LEGACY_MENU_BUTTON_TEXTS = {
     "Image Generator",
     "Deep Analysis",
     "Vision",
+    "Text-to-Speech",
     "Version",
     "Help",
     "Cancel / Back to Menu",

@@ -6,9 +6,10 @@ from dataclasses import dataclass
 import json
 import logging
 import time
-from typing import Literal
+from typing import Any, Literal
 
 import aiohttp
+import edge_tts
 
 from bot.security import SAFE_INTERNAL_DETAILS_REFUSAL, SAFE_SERVICE_UNAVAILABLE_MESSAGE, contains_internal_detail_request
 
@@ -19,13 +20,35 @@ class AIServiceError(RuntimeError):
 
 NVIDIA_BASE_URL = "https://integrate.api.nvidia.com/v1"
 NVIDIA_IMAGE_BASE_URL = "https://ai.api.nvidia.com/v1"
+NVIDIA_TTS_BASE_URL = "https://api.ngc.nvidia.com"
 DEFAULT_CHAT_MODEL = "meta/llama-3.1-8b-instruct"
 FALLBACK_CHAT_MODEL = "meta/llama-3.1-8b-instruct"
 DEFAULT_IMAGE_MODEL = "black-forest-labs/flux.1-dev"
+DEFAULT_TTS_FUNCTION_ID = "bc45d9e9-7c78-4d56-9737-e27011962ba8"
 DEFAULT_RETRY_COUNT = 1
 DEFAULT_RETRY_BACKOFF_SECONDS = 0.6
 RETRYABLE_HTTP_STATUSES = {408, 409, 425, 429}
 MAX_AUTO_CONTINUATIONS = 6
+
+TTS_SUPPORTED_LANGUAGES = {"en", "es", "fr"}
+TTS_SUPPORTED_VOICES = {"female", "male"}
+TTS_SUPPORTED_EMOTIONS = {"neutral", "cheerful", "calm", "serious"}
+TTS_NVIDIA_VOICE_NAMES: dict[str, dict[str, str]] = {
+    "en": {"female": "English-US.Female-1", "male": "English-US.Male-1"},
+    "es": {"female": "Spanish-LA.Female-1", "male": "Spanish-LA.Male-1"},
+    "fr": {"female": "French-FR.Female-1", "male": "French-FR.Male-1"},
+}
+TTS_EDGE_VOICE_NAMES: dict[str, dict[str, str]] = {
+    "en": {"female": "en-US-JennyNeural", "male": "en-US-GuyNeural"},
+    "es": {"female": "es-ES-ElviraNeural", "male": "es-ES-AlvaroNeural"},
+    "fr": {"female": "fr-FR-DeniseNeural", "male": "fr-FR-HenriNeural"},
+}
+TTS_EMOTION_PROSODY: dict[str, tuple[str, str]] = {
+    "neutral": ("+0%", "+0Hz"),
+    "cheerful": ("+10%", "+20Hz"),
+    "calm": ("-10%", "-10Hz"),
+    "serious": ("-5%", "-20Hz"),
+}
 
 logger = logging.getLogger(__name__)
 
@@ -290,6 +313,144 @@ class ImageGenerationService:
 
 
 @dataclass
+class GeneratedAudioResult:
+    audio_bytes: bytes
+    mime_type: str = "audio/mpeg"
+    file_extension: str = "mp3"
+
+
+@dataclass
+class TextToSpeechService:
+    api_key: str | None = None
+    function_id: str = DEFAULT_TTS_FUNCTION_ID
+    base_url: str = NVIDIA_TTS_BASE_URL
+
+    async def generate_speech(
+        self,
+        text: str,
+        language: str = "en",
+        voice: str = "female",
+        emotion: str = "neutral",
+    ) -> GeneratedAudioResult:
+        if contains_internal_detail_request(text):
+            raise AIServiceError(SAFE_INTERNAL_DETAILS_REFUSAL)
+
+        normalized_text = (text or "").strip()
+        if not normalized_text:
+            raise AIServiceError("Text is required for speech synthesis.")
+
+        normalized_language = _normalize_tts_language(language)
+        normalized_voice = _normalize_tts_voice(voice)
+        normalized_emotion = _normalize_tts_emotion(emotion)
+
+        if self.api_key:
+            nvidia_result = await self._generate_with_nvidia(
+                text=normalized_text,
+                language=normalized_language,
+                voice=normalized_voice,
+                emotion=normalized_emotion,
+            )
+            if nvidia_result is not None:
+                return nvidia_result
+
+        return await _generate_with_edge_tts(
+            text=normalized_text,
+            language=normalized_language,
+            voice=normalized_voice,
+            emotion=normalized_emotion,
+        )
+
+    async def _generate_with_nvidia(
+        self,
+        *,
+        text: str,
+        language: str,
+        voice: str,
+        emotion: str,
+    ) -> GeneratedAudioResult | None:
+        if not self.api_key:
+            return None
+
+        selected_voice = TTS_NVIDIA_VOICE_NAMES.get(language, TTS_NVIDIA_VOICE_NAMES["en"]).get(voice, "English-US.Female-1")
+        payload_candidates: list[dict[str, Any]] = [
+            {
+                "text": text,
+                "language_code": _tts_language_code(language),
+                "voice_name": selected_voice,
+                "emotion": emotion,
+            },
+            {
+                "text": text,
+                "language": language,
+                "voice": voice,
+                "emotion": emotion,
+            },
+            {
+                "input": text,
+                "language": language,
+                "voice": voice,
+                "emotion": emotion,
+            },
+        ]
+
+        headers = {
+            "Authorization": f"Bearer {self.api_key}",
+            "Content-Type": "application/json",
+            "Accept": "application/json, audio/mpeg, audio/wav, audio/*",
+            "nv-function-id": self.function_id,
+        }
+
+        timeout = aiohttp.ClientTimeout(total=40)
+        endpoint = f"{self.base_url.rstrip('/')}/v2/riva/tts/synthesize"
+        for payload in payload_candidates:
+            started_at = time.perf_counter()
+            try:
+                async with aiohttp.ClientSession(timeout=timeout) as session:
+                    async with session.post(endpoint, headers=headers, json=payload) as response:
+                        body_bytes = await response.read()
+                        content_type = (response.headers.get("Content-Type") or "").lower()
+                        if response.status >= 400:
+                            detail = _extract_api_error_bytes(body_bytes)
+                            elapsed_ms = int((time.perf_counter() - started_at) * 1000)
+                            logger.warning(
+                                "TTS upstream HTTP error status=%s elapsed_ms=%s detail=%s",
+                                response.status,
+                                elapsed_ms,
+                                detail[:220],
+                            )
+                            # NVIDIA TTS endpoints can return captcha-gated responses for some keys.
+                            if "captcha required" in detail.lower():
+                                return None
+                            continue
+                        if body_bytes and _looks_like_audio(content_type, body_bytes):
+                            ext = _audio_extension_for_content_type(content_type, fallback="mp3")
+                            return GeneratedAudioResult(
+                                audio_bytes=body_bytes,
+                                mime_type=_normalize_audio_mime_type(content_type, fallback="audio/mpeg"),
+                                file_extension=ext,
+                            )
+                        parsed_json = _decode_json_bytes(body_bytes)
+                        audio_b64 = _extract_audio_base64(parsed_json)
+                        if audio_b64:
+                            try:
+                                decoded = base64.b64decode("".join(audio_b64.split()), validate=True)
+                            except ValueError:
+                                continue
+                            return GeneratedAudioResult(
+                                audio_bytes=decoded,
+                                mime_type="audio/wav",
+                                file_extension="wav",
+                            )
+            except (aiohttp.ClientError, asyncio.TimeoutError):
+                continue
+            except Exception:
+                logger.warning("NVIDIA TTS attempt failed unexpectedly.", exc_info=True)
+                continue
+
+        return None
+
+
+@dataclass
 class GeneratedImageResult:
     image_bytes: bytes | None
     image_url: str | None = None
@@ -456,6 +617,146 @@ def _extract_image_data(data: dict[str, object]) -> tuple[str | None, str | None
             return None, image_url
 
     return None, None
+
+
+def _normalize_tts_language(language: str | None) -> str:
+    value = (language or "").strip().lower()
+    if value in TTS_SUPPORTED_LANGUAGES:
+        return value
+    if value.startswith("en"):
+        return "en"
+    if value.startswith("es"):
+        return "es"
+    if value.startswith("fr"):
+        return "fr"
+    return "en"
+
+
+def _normalize_tts_voice(voice: str | None) -> str:
+    value = (voice or "").strip().lower()
+    if value in TTS_SUPPORTED_VOICES:
+        return value
+    if "male" in value:
+        return "male"
+    return "female"
+
+
+def _normalize_tts_emotion(emotion: str | None) -> str:
+    value = (emotion or "").strip().lower()
+    if value in TTS_SUPPORTED_EMOTIONS:
+        return value
+    if value in {"happy", "excited"}:
+        return "cheerful"
+    if value in {"relaxed", "soft"}:
+        return "calm"
+    if value in {"formal", "focused"}:
+        return "serious"
+    return "neutral"
+
+
+def _tts_language_code(language: str) -> str:
+    mapping = {"en": "en-US", "es": "es-ES", "fr": "fr-FR"}
+    return mapping.get(language, "en-US")
+
+
+def _extract_api_error_bytes(raw_body: bytes) -> str:
+    text = raw_body.decode("utf-8", errors="ignore")
+    if not text:
+        return "Unknown error."
+    return _extract_api_error(text)
+
+
+def _decode_json_bytes(raw_body: bytes) -> dict[str, Any]:
+    if not raw_body:
+        return {}
+    try:
+        parsed = json.loads(raw_body.decode("utf-8", errors="ignore"))
+    except json.JSONDecodeError:
+        return {}
+    return parsed if isinstance(parsed, dict) else {}
+
+
+def _extract_audio_base64(payload: dict[str, Any]) -> str | None:
+    if not isinstance(payload, dict):
+        return None
+
+    candidates: list[dict[str, Any]] = [payload]
+    data_value = payload.get("data")
+    if isinstance(data_value, dict):
+        candidates.append(data_value)
+    elif isinstance(data_value, list):
+        candidates.extend(item for item in data_value if isinstance(item, dict))
+
+    for candidate in candidates:
+        for key in ("audio_base64", "audio", "audioContent", "audio_content", "b64_json", "base64"):
+            raw = candidate.get(key)
+            if isinstance(raw, str) and raw.strip():
+                return raw.strip()
+    return None
+
+
+def _looks_like_audio(content_type: str, payload: bytes) -> bool:
+    lowered = (content_type or "").lower()
+    if "audio/" in lowered or "application/octet-stream" in lowered:
+        return True
+    if payload.startswith(b"RIFF") and b"WAVE" in payload[:16]:
+        return True
+    if payload.startswith(b"ID3") or payload.startswith(b"\xff\xfb"):
+        return True
+    return False
+
+
+def _normalize_audio_mime_type(content_type: str, fallback: str = "audio/mpeg") -> str:
+    lowered = (content_type or "").split(";")[0].strip().lower()
+    if lowered.startswith("audio/"):
+        return lowered
+    return fallback
+
+
+def _audio_extension_for_content_type(content_type: str, fallback: str = "mp3") -> str:
+    lowered = _normalize_audio_mime_type(content_type, fallback="")
+    if lowered == "audio/wav" or lowered == "audio/x-wav":
+        return "wav"
+    if lowered == "audio/ogg":
+        return "ogg"
+    if lowered == "audio/webm":
+        return "webm"
+    if lowered == "audio/flac":
+        return "flac"
+    if lowered == "audio/mpeg":
+        return "mp3"
+    return fallback
+
+
+async def _generate_with_edge_tts(
+    *,
+    text: str,
+    language: str,
+    voice: str,
+    emotion: str,
+) -> GeneratedAudioResult:
+    selected_voice = TTS_EDGE_VOICE_NAMES.get(language, TTS_EDGE_VOICE_NAMES["en"]).get(voice, "en-US-JennyNeural")
+    rate, pitch = TTS_EMOTION_PROSODY.get(emotion, TTS_EMOTION_PROSODY["neutral"])
+    try:
+        communicator = edge_tts.Communicate(
+            text=text,
+            voice=selected_voice,
+            rate=rate,
+            pitch=pitch,
+        )
+        chunks: list[bytes] = []
+        async for chunk in communicator.stream():
+            if isinstance(chunk, dict) and chunk.get("type") == "audio":
+                data = chunk.get("data")
+                if isinstance(data, (bytes, bytearray)):
+                    chunks.append(bytes(data))
+        audio_bytes = b"".join(chunks)
+    except Exception as exc:
+        raise AIServiceError(SAFE_SERVICE_UNAVAILABLE_MESSAGE) from exc
+
+    if not audio_bytes:
+        raise AIServiceError(SAFE_SERVICE_UNAVAILABLE_MESSAGE)
+    return GeneratedAudioResult(audio_bytes=audio_bytes, mime_type="audio/mpeg", file_extension="mp3")
 
 
 def _parse_image_size(size: str) -> tuple[int | None, int | None]:

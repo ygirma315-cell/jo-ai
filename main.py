@@ -33,7 +33,7 @@ from bot.app import (
 from bot.config import load_settings
 from bot.logging_config import setup_logging
 from bot.runtime_info import build_runtime_info
-from bot.services.ai_service import AIServiceError, ChatService, ImageGenerationService
+from bot.services.ai_service import AIServiceError, ChatService, ImageGenerationService, TextToSpeechService
 from bot.security import (
     SAFE_INTERNAL_DETAILS_REFUSAL,
     SAFE_SERVICE_UNAVAILABLE_MESSAGE,
@@ -167,6 +167,60 @@ class VisionDescribeRequest(BaseModel):
         return self.message or "Describe this image."
 
 
+class TTSRequest(BaseModel):
+    model_config = ConfigDict(str_strip_whitespace=True)
+
+    text: str | None = Field(default=None, max_length=12000)
+    message: str | None = Field(default=None, max_length=12000)
+    language: str | None = Field(default="en", max_length=16)
+    voice: str | None = Field(default="female", max_length=32)
+    emotion: str | None = Field(default="neutral", max_length=32)
+
+    @model_validator(mode="after")
+    def _validate_text(self) -> "TTSRequest":
+        if not self.text and not self.message:
+            raise ValueError("Either 'text' or 'message' must be provided.")
+        return self
+
+    @property
+    def effective_text(self) -> str:
+        return self.text or self.message or ""
+
+    @property
+    def effective_language(self) -> str:
+        value = (self.language or "en").strip().lower()
+        if value in {"en", "en-us", "english"}:
+            return "en"
+        if value in {"es", "es-es", "spanish"}:
+            return "es"
+        if value in {"fr", "fr-fr", "french"}:
+            return "fr"
+        return "en"
+
+    @property
+    def effective_voice(self) -> str:
+        value = (self.voice or "female").strip().lower()
+        if value in {"male", "man"}:
+            return "male"
+        return "female"
+
+    @property
+    def effective_emotion(self) -> str:
+        value = (self.emotion or "neutral").strip().lower()
+        allowed = {"neutral", "cheerful", "calm", "serious"}
+        if value in allowed:
+            return value
+        aliases = {
+            "happy": "cheerful",
+            "excited": "cheerful",
+            "relaxed": "calm",
+            "soft": "calm",
+            "formal": "serious",
+            "focused": "serious",
+        }
+        return aliases.get(value, "neutral")
+
+
 def _read_env(name: str) -> str:
     return os.getenv(name, "").strip()
 
@@ -257,6 +311,15 @@ def _image_service() -> ImageGenerationService:
         api_key=settings.image_api_key or settings.nvidia_api_key or settings.ai_api_key,
         model=settings.image_model,
         base_url=settings.ai_base_url,
+    )
+
+
+@lru_cache(maxsize=1)
+def _tts_service() -> TextToSpeechService:
+    settings = get_settings()
+    return TextToSpeechService(
+        api_key=settings.tts_api_key or settings.nvidia_api_key or settings.ai_api_key,
+        function_id=settings.tts_function_id,
     )
 
 
@@ -485,6 +548,30 @@ async def _generate_image(prompt: str, size: str, ratio: Literal["1:1", "16:9", 
         raise AIServiceError(SAFE_SERVICE_UNAVAILABLE_MESSAGE)
     except AIServiceError as exc:
         logger.warning("Image generation failed.", exc_info=True)
+        raise _safe_service_error() from exc
+
+
+async def _generate_tts(
+    *,
+    text: str,
+    language: str,
+    voice: str,
+    emotion: str,
+) -> dict[str, str]:
+    try:
+        generated = await _tts_service().generate_speech(
+            text=text,
+            language=language,
+            voice=voice,
+            emotion=emotion,
+        )
+        return {
+            "audio_base64": base64.b64encode(generated.audio_bytes).decode("utf-8"),
+            "audio_mime_type": generated.mime_type,
+            "audio_file_name": f"jo_ai_tts.{generated.file_extension}",
+        }
+    except AIServiceError as exc:
+        logger.warning("Text-to-speech generation failed.", exc_info=True)
         raise _safe_service_error() from exc
 
 
@@ -743,6 +830,36 @@ async def vision_endpoint(payload: VisionDescribeRequest) -> JSONResponse:
     try:
         output = await _describe_image_with_vision(payload.effective_message, payload.image_base64)
         return JSONResponse(status_code=200, content={"output": output})
+    except BackendError as exc:
+        return JSONResponse(status_code=exc.status_code, content={"error": exc.message})
+
+
+@app.post("/tts")
+@app.post("/api/tts")
+async def tts_endpoint(payload: TTSRequest) -> JSONResponse:
+    refusal = _maybe_block_sensitive_request(
+        payload.effective_text,
+        payload.effective_language,
+        payload.effective_voice,
+        payload.effective_emotion,
+    )
+    if refusal:
+        return refusal
+    try:
+        generated = await _generate_tts(
+            text=payload.effective_text,
+            language=payload.effective_language,
+            voice=payload.effective_voice,
+            emotion=payload.effective_emotion,
+        )
+        response_payload: dict[str, Any] = {
+            "output": "Speech generated successfully.",
+            "language": payload.effective_language,
+            "voice": payload.effective_voice,
+            "emotion": payload.effective_emotion,
+        }
+        response_payload.update(generated)
+        return JSONResponse(status_code=200, content=response_payload)
     except BackendError as exc:
         return JSONResponse(status_code=exc.status_code, content={"error": exc.message})
 

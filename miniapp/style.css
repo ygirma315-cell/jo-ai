@@ -369,7 +369,7 @@ body.modal-active .version-badge {
 }
 
 .secondary-grid {
-  grid-template-columns: repeat(3, minmax(0, 1fr));
+  grid-template-columns: repeat(4, minmax(0, 1fr));
 }
 
 .tool-card {
@@ -832,6 +832,10 @@ select:focus {
   display: block;
 }
 
+.message-audio {
+  width: 100%;
+}
+
 .upload-zone {
   display: grid;
   gap: 6px;
@@ -1040,6 +1044,10 @@ body[data-tool="kimi"] .page-title::before {
   content: "\1F5BC\FE0F";
 }
 
+body[data-tool="tts"] .page-title::before {
+  content: "\1F50A";
+}
+
 body[data-page="help"] .page-title::before {
   content: "\2753";
 }
@@ -1218,7 +1226,7 @@ body[data-keyboard-open="true"] .tool-page .prompt-input {
   }
 
   .secondary-grid {
-    grid-template-columns: repeat(3, minmax(0, 1fr));
+    grid-template-columns: repeat(2, minmax(0, 1fr));
   }
 }
 

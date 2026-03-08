@@ -12,8 +12,11 @@ from bot.services.ai_service import DEFAULT_IMAGE_MODEL
 DEFAULT_CHAT_MODEL = "meta/llama-3.1-8b-instruct"
 DEFAULT_DEEPSEEK_MODEL = "deepseek-ai/deepseek-v3.2"
 DEFAULT_KIMI_MODEL = "moonshotai/kimi-k2.5"
+DEFAULT_TTS_FUNCTION_ID = "bc45d9e9-7c78-4d56-9737-e27011962ba8"
 DEFAULT_AI_BASE_URL = "https://integrate.api.nvidia.com/v1"
 DEFAULT_MINIAPP_URL = "https://ygirma315-cell.github.io/jo-ai/"
+
+
 @dataclass(frozen=True)
 class Settings:
     bot_token: str
@@ -31,6 +34,8 @@ class Settings:
     deepseek_model: str
     kimi_api_key: str | None
     kimi_model: str
+    tts_api_key: str | None
+    tts_function_id: str
     miniapp_url: str | None
     miniapp_api_base: str | None
     public_base_url: str | None
@@ -190,6 +195,9 @@ def load_settings() -> Settings:
     kimi_api_key = _read_env("KIMI_API_KEY") or (ai_api_key or "")
     kimi_api_key = kimi_api_key or None
     kimi_model = _read_env("KIMI_MODEL") or DEFAULT_KIMI_MODEL
+    tts_api_key = _read_env("TTS_API_KEY") or _read_env("NVIDIA_TTS_API_KEY") or nvidia_api_key or ai_api_key
+    tts_api_key = tts_api_key or None
+    tts_function_id = _read_env("TTS_FUNCTION_ID") or DEFAULT_TTS_FUNCTION_ID
 
     public_base_url = (
         _normalize_public_url(_read_env("PUBLIC_BASE_URL"))
@@ -224,6 +232,8 @@ def load_settings() -> Settings:
         validation_warnings.append("Deep Analysis credentials are missing. Deep Analysis will use default credentials.")
     if not kimi_api_key:
         validation_warnings.append("Vision mode credentials are missing. Vision requests will fail until configured.")
+    if not tts_api_key:
+        validation_warnings.append("Text-to-Speech credentials are missing. TTS will use fallback synthesis.")
 
     return Settings(
         bot_token=bot_token,
@@ -241,6 +251,8 @@ def load_settings() -> Settings:
         deepseek_model=deepseek_model,
         kimi_api_key=kimi_api_key,
         kimi_model=kimi_model,
+        tts_api_key=tts_api_key,
+        tts_function_id=tts_function_id,
         miniapp_url=miniapp_url,
         miniapp_api_base=miniapp_api_base,
         public_base_url=public_base_url,

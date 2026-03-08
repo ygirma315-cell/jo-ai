@@ -21,6 +21,7 @@ WELCOME_TEXT = (
     "\u2022 \U0001F50D Research and analysis\n"
     "\u2022 \U0001F3A8 Image generation\n"
     "\u2022 \U0001F5BC\ufe0f Vision mode for image description\n"
+    "\u2022 \U0001F50A Text-to-Speech generation\n"
     "\u2022 \U0001F9EE Calculator and \U0001F3AE Games\n\n"
     "\U0001F9E0 Ask me anything, or tap a menu button below to start."
 )
@@ -34,7 +35,8 @@ HELP_TEXT = (
     "\u2022 /prompt - prompt generator mode\n"
     "\u2022 /image - image generator mode\n"
     "\u2022 /analysis - deep analysis mode\n"
-    "\u2022 /vision - vision mode (send photo)\n\n"
+    "\u2022 /vision - vision mode (send photo)\n"
+    "\u2022 /tts - text-to-speech mode\n\n"
     "\U0001F6E0\ufe0f <b>Other Features</b>\n"
     "\u2022 /calculator - safe calculator\n"
     "\u2022 /games - Tic-Tac-Toe and Guess Number\n"
@@ -70,7 +72,7 @@ async def handle_start(
     await message.answer(format_release_summary_html(runtime_info), reply_markup=main_menu_keyboard(miniapp_url))
     await message.answer(
         "\U0001F3AF <b>Quick Start</b>\n\n"
-        "\u2022 Tap <b>\U0001F916 AI Tools</b> to chat, code, research, build prompts, create images, or use vision mode.\n"
+        "\u2022 Tap <b>\U0001F916 AI Tools</b> to chat, code, research, build prompts, create images, use vision, or generate speech.\n"
         "\u2022 Tap <b>\U0001F6E0\ufe0f Utilities</b> for calculator and games.\n"
         "\u2022 Tap <b>\u2139\ufe0f Version</b> for public build info.\n\n"
         "\U0001F9E0 Ask me anything when you're ready.",
@@ -142,7 +144,8 @@ async def handle_ai_tools_menu(
         "\u2022 \U0001F50D Research\n"
         "\u2022 \u2728 Build prompts\n"
         "\u2022 \U0001F3A8 Generate images\n"
-        "\u2022 \U0001F5BC\ufe0f Vision mode",
+        "\u2022 \U0001F5BC\ufe0f Vision mode\n"
+        "\u2022 \U0001F50A Text-to-Speech",
         reply_markup=ai_tools_keyboard(),
     )
 

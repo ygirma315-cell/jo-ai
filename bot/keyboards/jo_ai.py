@@ -13,6 +13,7 @@ def jo_ai_menu_keyboard() -> InlineKeyboardMarkup:
     builder.button(text="\u2728 Prompt Generator", callback_data="joai:prompt")
     builder.button(text="\U0001F3A8 Image Generator", callback_data="joai:image")
     builder.button(text="\U0001F5BC\ufe0f Vision", callback_data="joai:kimi")
+    builder.button(text="\U0001F50A Text-to-Speech", callback_data="joai:tts")
     builder.button(text="\U0001F3E0 Back to Main Menu", callback_data="menu:main")
     builder.adjust(1)
     return builder.as_markup()
@@ -63,5 +64,35 @@ def image_ratio_keyboard() -> InlineKeyboardMarkup:
     builder.button(text="16:9", callback_data="joaiimg:ratio:16_9")
     builder.button(text="9:16", callback_data="joaiimg:ratio:9_16")
     builder.button(text="\u21A9\ufe0f Back to image styles", callback_data="joai:image")
+    builder.adjust(1)
+    return builder.as_markup()
+
+
+def tts_language_keyboard() -> InlineKeyboardMarkup:
+    builder = InlineKeyboardBuilder()
+    builder.button(text="English", callback_data="joaitts:lang:en")
+    builder.button(text="Spanish", callback_data="joaitts:lang:es")
+    builder.button(text="French", callback_data="joaitts:lang:fr")
+    builder.button(text="\u21A9\ufe0f Back to AI Tools", callback_data="joai:menu")
+    builder.adjust(1)
+    return builder.as_markup()
+
+
+def tts_voice_keyboard() -> InlineKeyboardMarkup:
+    builder = InlineKeyboardBuilder()
+    builder.button(text="Female", callback_data="joaitts:voice:female")
+    builder.button(text="Male", callback_data="joaitts:voice:male")
+    builder.button(text="\u21A9\ufe0f Back to language", callback_data="joaitts:lang_menu")
+    builder.adjust(1)
+    return builder.as_markup()
+
+
+def tts_emotion_keyboard() -> InlineKeyboardMarkup:
+    builder = InlineKeyboardBuilder()
+    builder.button(text="Neutral", callback_data="joaitts:emotion:neutral")
+    builder.button(text="Cheerful", callback_data="joaitts:emotion:cheerful")
+    builder.button(text="Calm", callback_data="joaitts:emotion:calm")
+    builder.button(text="Serious", callback_data="joaitts:emotion:serious")
+    builder.button(text="\u21A9\ufe0f Back to voice", callback_data="joaitts:voice_menu")
     builder.adjust(1)
     return builder.as_markup()

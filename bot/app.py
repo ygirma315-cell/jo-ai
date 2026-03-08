@@ -23,7 +23,7 @@ from bot.handlers.jo_ai import router as jo_ai_router
 from bot.middlewares.logging import UserActionLoggingMiddleware
 from bot.runtime_info import build_runtime_info
 from version import WEB_VERSION, latest_release, latest_release_lines
-from bot.services.ai_service import ChatService, ImageGenerationService, VideoGenerationService
+from bot.services.ai_service import ChatService, ImageGenerationService, TextToSpeechService, VideoGenerationService
 from bot.services.calculator_service import CalculatorService
 from bot.services.guess_number_service import GuessNumberService
 from bot.services.session_manager import SessionManager
@@ -255,6 +255,10 @@ async def create_bot_runtime() -> BotRuntime:
         api_key=settings.image_api_key or settings.nvidia_api_key or settings.ai_api_key,
         model=settings.image_model,
         base_url=settings.ai_base_url,
+    )
+    dispatcher["tts_service"] = TextToSpeechService(
+        api_key=settings.tts_api_key or settings.nvidia_api_key or settings.ai_api_key,
+        function_id=settings.tts_function_id,
     )
     dispatcher["video_generation_service"] = VideoGenerationService(api_key=settings.nvidia_api_key)
     dispatcher["deepseek_api_key"] = settings.deepseek_api_key

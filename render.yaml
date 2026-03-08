@@ -20,6 +20,8 @@ services:
         value: deepseek-ai/deepseek-v3.2
       - key: KIMI_MODEL
         value: moonshotai/kimi-k2.5
+      - key: TTS_FUNCTION_ID
+        value: bc45d9e9-7c78-4d56-9737-e27011962ba8
       # Manual check: keep this aligned with the final GitHub Pages URL for ygirma315-cell/jo-ai.
       - key: MINIAPP_URL
         value: https://ygirma315-cell.github.io/jo-ai/
@@ -32,6 +34,8 @@ services:
       - key: DEEPSEEK_API_KEY
         sync: false
       - key: KIMI_API_KEY
+        sync: false
+      - key: TTS_API_KEY
         sync: false
       - key: PUBLIC_BASE_URL
         sync: false

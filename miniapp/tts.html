@@ -1,0 +1,141 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover, interactive-widget=overlays-content">
+  <meta name="theme-color" content="#fffaf2">
+  <meta http-equiv="Cache-Control" content="no-store, max-age=0">
+  <meta http-equiv="Pragma" content="no-cache">
+  <meta http-equiv="Expires" content="0">
+  <title>Text-to-Speech</title>
+  <script>
+    const onGitHubPagesProject =
+      window.location.hostname === "ygirma315-cell.github.io" &&
+      /^\/jo-ai(?:\/|$)/.test(window.location.pathname);
+    if (onGitHubPagesProject) {
+      const base = document.createElement("base");
+      base.href = "https://ygirma315-cell.github.io/jo-ai/";
+      document.head.appendChild(base);
+    }
+  </script>
+  <link rel="canonical" href="https://ygirma315-cell.github.io/jo-ai/tts.html">
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link
+    href="https://fonts.googleapis.com/css2?family=DM+Sans:wght@400;500;700&family=Space+Grotesk:wght@500;700&display=swap"
+    rel="stylesheet"
+  >
+  <link rel="stylesheet" href="style.css?v=1.4.2">
+  <script src="https://telegram.org/js/telegram-web-app.js"></script>
+  <script src="bootstrap.js?v=1.4.2" defer></script>
+  <script src="config.js?v=1.4.2"></script>
+  <script src="app.js?v=1.4.2" defer></script>
+</head>
+<body data-page="tool" data-tool="tts" class="tool-page">
+  <section id="appFallback" class="app-fallback" hidden>
+    <h1>Mini App failed to load</h1>
+    <p id="appFallbackMessage">Unknown startup error.</p>
+  </section>
+  <main id="appRoot" class="page-shell">
+    <section class="shell chat-shell">
+      <header class="chat-topbar">
+        <div class="chat-topbar-main">
+          <a class="back-link" href="index.html">Back</a>
+          <div class="chat-brand-row">
+            <div class="chat-brand-mark" aria-hidden="true">JO</div>
+            <div class="chat-brand-copy">
+              <p class="eyebrow">JO AI Chatbot</p>
+              <h1 id="toolTitle" class="chat-title">Text-to-Speech</h1>
+            </div>
+          </div>
+        </div>
+        <div class="chat-topbar-actions">
+          <span id="status" class="chip">Checking studio...</span>
+          <span id="userInfo" class="chip muted">Guest mode</span>
+          <a class="btn small" href="help.html">Help</a>
+          <button id="downloadImageBtn" class="btn small" type="button" disabled>Save</button>
+          <button id="clearBtn" class="btn small" type="button" aria-label="Start a new chat">New</button>
+        </div>
+      </header>
+
+      <section class="chat-main">
+        <div id="historyList" class="conversation-list chat-history" role="log" aria-live="polite">
+          <div id="emptyState" class="empty-state chat-empty-state">
+            <div class="empty-state-mark" aria-hidden="true">JO</div>
+            <h3>Create speech from text</h3>
+            <p>Choose language, voice, and emotion, then generate speech in one step.</p>
+          </div>
+        </div>
+
+        <form id="toolForm" class="chat-composer" autocomplete="off">
+          <div class="composer-options">
+            <div id="promptTypeWrap" class="composer-field" hidden>
+              <label for="promptType">Prompt type</label>
+              <input id="promptType" type="text" placeholder="e.g. assistant prompt">
+            </div>
+
+            <div id="imageTypeWrap" class="composer-field" hidden>
+              <label for="imageType">Image style</label>
+              <select id="imageType">
+                <option value="realistic">Realistic image</option>
+                <option value="ai_art">AI art</option>
+                <option value="anime">Anime style</option>
+                <option value="cyberpunk">Cyberpunk style</option>
+                <option value="logo_icon">Logo or icon</option>
+                <option value="render_3d">3D render</option>
+                <option value="concept_art">Concept art</option>
+              </select>
+            </div>
+
+            <div id="ttsLanguageWrap" class="composer-field">
+              <label for="ttsLanguage">Language</label>
+              <select id="ttsLanguage">
+                <option value="en">English</option>
+                <option value="es">Spanish</option>
+                <option value="fr">French</option>
+              </select>
+            </div>
+
+            <div id="ttsVoiceWrap" class="composer-field">
+              <label for="ttsVoice">Voice</label>
+              <select id="ttsVoice">
+                <option value="female">Female</option>
+                <option value="male">Male</option>
+              </select>
+            </div>
+
+            <div id="ttsEmotionWrap" class="composer-field">
+              <label for="ttsEmotion">Emotion</label>
+              <select id="ttsEmotion">
+                <option value="neutral">Neutral</option>
+                <option value="cheerful">Cheerful</option>
+                <option value="calm">Calm</option>
+                <option value="serious">Serious</option>
+              </select>
+            </div>
+
+            <div id="kimiImageWrap" class="composer-upload" hidden>
+              <label class="upload-zone" for="kimiImage">
+                <input id="kimiImage" type="file" accept=".png,.jpg,.jpeg,.webp,.gif,.bmp,image/*">
+                <span class="upload-title">Upload an image</span>
+                <span class="upload-copy">PNG, JPG, JPEG, WEBP, GIF, and more</span>
+              </label>
+              <div id="kimiPreviewWrap" class="upload-preview" hidden>
+                <img id="kimiPreview" alt="Selected image preview">
+              </div>
+              <p id="uploadInfo" class="hint">No image selected.</p>
+            </div>
+          </div>
+
+          <label for="aiInput" id="inputLabel" class="sr-only">Enter text for speech</label>
+          <div class="chat-input-row">
+            <textarea id="aiInput" class="chat-input" rows="1" placeholder="Type the text you want to convert to speech" enterkeyhint="send"></textarea>
+            <button id="sendBtn" class="btn primary send-btn" type="submit" aria-label="Send message">Send</button>
+          </div>
+          <p id="loadingHint" class="hint composer-status">Ready when you are.</p>
+        </form>
+      </section>
+    </section>
+  </main>
+</body>
+</html>

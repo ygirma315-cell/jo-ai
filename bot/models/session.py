@@ -29,6 +29,7 @@ class JoAIMode(str, Enum):
     PROMPT = "prompt"
     IMAGE = "image"
     KIMI_IMAGE_DESCRIBER = "kimi_image_describer"
+    TEXT_TO_SPEECH = "text_to_speech"
 
 
 def is_game_feature(feature: Feature) -> bool:
@@ -82,5 +83,8 @@ class UserSession:
     jo_ai_code_waiting_file: bool = False
     jo_ai_code_file_name: str | None = None
     jo_ai_code_file_content: str | None = None
+    jo_ai_tts_language: str | None = None
+    jo_ai_tts_voice: str | None = None
+    jo_ai_tts_emotion: str | None = None
     jo_ai_chat_history: deque[tuple[str, str]] = field(default_factory=lambda: deque(maxlen=20))
     last_updated: datetime = field(default_factory=lambda: datetime.now(timezone.utc))
