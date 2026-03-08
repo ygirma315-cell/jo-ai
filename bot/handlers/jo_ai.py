@@ -41,7 +41,13 @@ from bot.keyboards.jo_ai import (
 )
 from bot.keyboards.menu import ai_tools_keyboard, main_menu_keyboard
 from bot.models.session import Feature, JoAIMode
-from bot.security import BRANDING_LINE, DEVELOPER_HANDLE
+from bot.security import (
+    BRANDING_LINE,
+    DEVELOPER_HANDLE,
+    SAFE_INTERNAL_DETAILS_REFUSAL,
+    SAFE_SERVICE_UNAVAILABLE_MESSAGE,
+    contains_internal_detail_request,
+)
 from bot.services.ai_service import AIServiceError, ChatService, ImageGenerationService, TextToSpeechService
 from bot.services.session_manager import SessionManager
 from bot.telegram_formatting import TelegramMessageFormatter
@@ -464,6 +470,83 @@ def _friendly_error_text(title: str, exc: Exception | None = None) -> str:
     if exc is not None:
         logger.warning("JO AI request failed.")
     return message
+
+
+def _is_internal_rule_block(text: str | None) -> bool:
+    normalized = str(text or "").strip()
+    if not normalized:
+        return False
+    return normalized == SAFE_INTERNAL_DETAILS_REFUSAL
+
+
+def _is_service_unavailable_error(exc: Exception | None) -> bool:
+    if exc is None:
+        return False
+    normalized = str(exc).strip()
+    if not normalized:
+        return False
+    return normalized == SAFE_SERVICE_UNAVAILABLE_MESSAGE
+
+
+def _normalize_image_prompt_text(prompt: str) -> str:
+    normalized = CODE_FENCE_PATTERN.sub(lambda match: match.group("code"), prompt, count=1)
+    normalized = normalized.replace("Optimized Prompt:", " ").replace("optimized prompt:", " ")
+    normalized = " ".join(normalized.split())
+    return normalized.strip("` ").strip()
+
+
+def _build_local_image_prompt(
+    *,
+    user_text: str,
+    style_label: str,
+    style_hint: str,
+    ratio_label: str,
+) -> str:
+    cleaned_request = " ".join((user_text or "").split())
+    aspect_hint = {
+        "1:1": "square composition, centered framing",
+        "16:9": "wide cinematic composition, landscape framing",
+        "9:16": "vertical composition, mobile-friendly framing",
+    }.get(ratio_label, "balanced composition")
+    parts = [
+        cleaned_request,
+        f"{style_label.lower()} style",
+        style_hint,
+        aspect_hint,
+        "subject-focused composition",
+        "detailed lighting",
+        "clean background separation",
+        "high detail",
+        "high quality",
+    ]
+    return ", ".join(part.strip() for part in parts if part and part.strip())
+
+
+def _image_request_blocked_text() -> str:
+    return (
+        "âš ï¸ <b>Image request blocked by rules.</b>\n"
+        "This prompt asks for internal or backend details, so I did not send it to the image generator.\n"
+        "Rewrite it as a visual description only and send it again."
+    )
+
+
+def _image_generation_failed_text(
+    *,
+    prompt: str,
+    confirmed_unavailable: bool,
+) -> str:
+    title = "Image generation is unavailable right now." if confirmed_unavailable else "Image generation failed for this request."
+    detail = (
+        "The image API is missing, inactive, or did not return a valid image."
+        if confirmed_unavailable
+        else "I kept the optimized prompt below so you can retry without losing the request."
+    )
+    return (
+        f"âš ï¸ <b>{title}</b>\n"
+        f"{detail}\n\n"
+        "Optimized prompt:\n"
+        f"<code>{html.escape(prompt[:900])}</code>"
+    )
 
 
 def _compact_history_entry(text: str, limit: int = CHAT_HISTORY_ENTRY_MAX_CHARS) -> str:
@@ -1633,7 +1716,34 @@ async def _process_prompt_message(
     await _send_formatted_ai_reply(message, "prompt", prompt_output, jo_chat_keyboard())
 
 
-async def _process_image_message(
+def _image_request_blocked_text() -> str:
+    return (
+        "Warning: <b>Image request blocked by rules.</b>\n"
+        "This prompt asks for internal or backend details, so I did not send it to the image generator.\n"
+        "Rewrite it as a visual description only and send it again."
+    )
+
+
+def _image_generation_failed_text(
+    *,
+    prompt: str,
+    confirmed_unavailable: bool,
+) -> str:
+    title = "Image generation is unavailable right now." if confirmed_unavailable else "Image generation failed for this request."
+    detail = (
+        "The image API is missing, inactive, or did not return a valid image."
+        if confirmed_unavailable
+        else "I kept the optimized prompt below so you can retry without losing the request."
+    )
+    return (
+        f"Warning: <b>{title}</b>\n"
+        f"{detail}\n\n"
+        "Optimized prompt:\n"
+        f"<code>{html.escape(prompt[:900])}</code>"
+    )
+
+
+async def _process_image_message_old(
     message: Message,
     user_text: str,
     session_manager: SessionManager,
@@ -1751,6 +1861,148 @@ async def _process_image_message(
 
     await message.answer(
         _friendly_error_text("Image generation is temporarily unavailable"),
+        reply_markup=jo_chat_keyboard(),
+    )
+
+
+async def _process_image_message(
+    message: Message,
+    user_text: str,
+    session_manager: SessionManager,
+    chat_service: ChatService,
+    image_generation_service: ImageGenerationService,
+    current_image_type: str | None,
+    current_image_ratio: str | None,
+    mode_options: dict[str, object],
+) -> None:
+    _ = session_manager
+
+    if not current_image_type:
+        await message.answer(
+            "Step 1/3: Choose an image style first.",
+            reply_markup=image_type_keyboard(),
+        )
+        return
+    if current_image_ratio not in IMAGE_RATIO_TO_SIZE:
+        await message.answer(
+            "Step 2/3: Choose an aspect ratio first.",
+            reply_markup=image_ratio_keyboard(),
+        )
+        return
+
+    style_label = IMAGE_TYPE_LABELS.get(current_image_type, current_image_type)
+    ratio_label = IMAGE_RATIO_LABELS.get(current_image_ratio, "1:1")
+    image_size = IMAGE_RATIO_TO_SIZE.get(current_image_ratio, IMAGE_RATIO_TO_SIZE["1:1"])
+    style_hint = IMAGE_TYPE_STYLE_HINTS.get(current_image_type, "high quality image")
+
+    if contains_internal_detail_request(user_text, style_label, ratio_label):
+        await message.answer(_image_request_blocked_text(), reply_markup=jo_chat_keyboard())
+        return
+
+    await _maybe_send_engagement(message)
+
+    fallback_prompt = _build_local_image_prompt(
+        user_text=user_text,
+        style_label=style_label,
+        style_hint=style_hint,
+        ratio_label=ratio_label,
+    )
+    prompt_request = (
+        f"Image type: {style_label}\n"
+        f"Aspect ratio: {ratio_label}\n"
+        f"Style hints: {style_hint}\n"
+        f"User description: {user_text}\n"
+        "Generate one optimized image prompt with subject detail, lighting, environment, style and quality tags."
+    )
+
+    progress_message = await _send_progress_message(message, "Optimizing your image prompt...")
+    cleaned_prompt = fallback_prompt
+
+    try:
+        async with ChatActionSender.typing(bot=message.bot, chat_id=message.chat.id):
+            optimized_prompt = await chat_service.generate_reply(
+                prompt_request,
+                history=[],
+                mode="image_prompt",
+                model_override=mode_options.get("model_override"),  # type: ignore[arg-type]
+                api_key_override=mode_options.get("api_key_override"),  # type: ignore[arg-type]
+                thinking=bool(mode_options.get("thinking", False)),
+            )
+        normalized_prompt = _normalize_image_prompt_text(optimized_prompt)
+        if normalized_prompt and not _is_internal_rule_block(normalized_prompt):
+            cleaned_prompt = normalized_prompt
+        else:
+            logger.warning("Image prompt optimizer returned an unusable response; using local fallback prompt.")
+    except AIServiceError:
+        logger.warning("Image prompt optimization failed; using local fallback prompt.", exc_info=True)
+    except Exception:
+        logger.exception("Unexpected image prompt optimization error; using local fallback prompt.")
+
+    if progress_message is not None:
+        with suppress(TelegramBadRequest):
+            await progress_message.edit_text("Creating your image...")
+
+    try:
+        async with ChatActionSender.upload_photo(bot=message.bot, chat_id=message.chat.id):
+            generated = await image_generation_service.generate_image(
+                cleaned_prompt,
+                size=image_size,
+                ratio=ratio_label,
+            )
+    except AIServiceError as exc:
+        await _clear_progress_message(progress_message)
+        if _is_internal_rule_block(str(exc)):
+            await message.answer(_image_request_blocked_text(), reply_markup=jo_chat_keyboard())
+            return
+        await message.answer(
+            _image_generation_failed_text(
+                prompt=cleaned_prompt,
+                confirmed_unavailable=_is_service_unavailable_error(exc) or not bool(image_generation_service.api_key),
+            ),
+            reply_markup=jo_chat_keyboard(),
+        )
+        return
+    except Exception:
+        await _clear_progress_message(progress_message)
+        logger.exception("Unexpected image generation error.")
+        await message.answer(
+            _image_generation_failed_text(prompt=cleaned_prompt, confirmed_unavailable=False),
+            reply_markup=jo_chat_keyboard(),
+        )
+        return
+
+    await _clear_progress_message(progress_message)
+    if generated.image_bytes:
+        image_file = BufferedInputFile(generated.image_bytes, filename="jo_ai_generated.png")
+        await message.answer_photo(
+            photo=image_file,
+            caption=(
+                "<b>Your image is ready</b>\n\n"
+                f"Style: <b>{html.escape(style_label)}</b>\n"
+                f"Ratio: <b>{html.escape(ratio_label)}</b>\n"
+                "Prompt used:\n"
+                f"<code>{html.escape(cleaned_prompt[:900])}</code>"
+            ),
+            reply_markup=jo_chat_keyboard(),
+        )
+        return
+
+    if generated.image_url:
+        await message.answer_photo(
+            photo=generated.image_url,
+            caption=(
+                "<b>Your image is ready</b>\n\n"
+                f"Style: <b>{html.escape(style_label)}</b>\n"
+                f"Ratio: <b>{html.escape(ratio_label)}</b>\n"
+                "Prompt used:\n"
+                f"<code>{html.escape(cleaned_prompt[:900])}</code>"
+            ),
+            reply_markup=jo_chat_keyboard(),
+        )
+        return
+
+    await message.answer(
+        _image_generation_failed_text(prompt=cleaned_prompt, confirmed_unavailable=True),
         reply_markup=jo_chat_keyboard(),
     )
 
