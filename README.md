@@ -53,6 +53,7 @@ pip install -r requirements.txt
 
 - `BOT_TOKEN`
 - `NVIDIA_API_KEY`
+- `IMAGE_API_KEY` (recommended for Image Generator; falls back to `NVIDIA_API_KEY` if unset)
 
 3. Run the backend/API:
 
@@ -107,6 +108,7 @@ Required:
 
 Optional:
 
+- `IMAGE_API_KEY`
 - `DEEPSEEK_API_KEY`
 - `KIMI_API_KEY`
 - `PUBLIC_BASE_URL`

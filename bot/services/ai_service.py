@@ -18,6 +18,7 @@ class AIServiceError(RuntimeError):
 
 
 NVIDIA_BASE_URL = "https://integrate.api.nvidia.com/v1"
+NVIDIA_IMAGE_BASE_URL = "https://ai.api.nvidia.com/v1"
 DEFAULT_CHAT_MODEL = "meta/llama-3.1-8b-instruct"
 FALLBACK_CHAT_MODEL = "meta/llama-3.1-8b-instruct"
 DEFAULT_IMAGE_MODEL = "black-forest-labs/flux.1-dev"
@@ -180,6 +181,18 @@ class ImageGenerationService:
         if not self.api_key:
             raise AIServiceError(SAFE_SERVICE_UNAVAILABLE_MESSAGE)
 
+        width, height = _parse_image_size(size)
+        model_path = self.model.strip().strip("/")
+        infer_payload_candidates: list[dict[str, object]] = []
+        if width and height:
+            infer_payload_candidates.append(
+                {
+                    "prompt": prompt,
+                    "width": width,
+                    "height": height,
+                }
+            )
+        infer_payload_candidates.append({"prompt": prompt})
         payload_candidates = [
             {
                 "model": self.model,
@@ -208,6 +221,38 @@ class ImageGenerationService:
         ]
 
         last_error: AIServiceError | None = None
+        if model_path:
+            for payload in infer_payload_candidates:
+                try:
+                    data = await _post_nvidia_json(
+                        self.api_key,
+                        f"/genai/{model_path}",
+                        payload,
+                        timeout_seconds=60,
+                        max_retries=DEFAULT_RETRY_COUNT,
+                        base_url=NVIDIA_IMAGE_BASE_URL,
+                    )
+                except AIServiceError as exc:
+                    last_error = exc
+                    continue
+
+                image_b64, image_url = _extract_image_data(data)
+                if image_b64:
+                    try:
+                        compact_b64 = "".join(image_b64.split())
+                        return GeneratedImageResult(image_bytes=base64.b64decode(compact_b64), image_url=image_url)
+                    except ValueError:
+                        pass
+                if image_url:
+                    try:
+                        return GeneratedImageResult(
+                            image_bytes=await _download_image_bytes(image_url),
+                            image_url=image_url,
+                        )
+                    except AIServiceError:
+                        # Keep the URL as a fallback for clients that can render remote images directly.
+                        return GeneratedImageResult(image_bytes=None, image_url=image_url)
+
         for payload in payload_candidates:
             try:
                 data = await _post_nvidia_json(
@@ -389,6 +434,11 @@ def _extract_image_data(data: dict[str, object]) -> tuple[str | None, str | None
         candidates.extend(item for item in output if isinstance(item, dict))
     elif isinstance(output, dict):
         candidates.append(output)
+    artifacts = data.get("artifacts")
+    if isinstance(artifacts, list):
+        candidates.extend(item for item in artifacts if isinstance(item, dict))
+    elif isinstance(artifacts, dict):
+        candidates.append(artifacts)
 
     for candidate in candidates:
         b64_payload = (
@@ -396,6 +446,7 @@ def _extract_image_data(data: dict[str, object]) -> tuple[str | None, str | None
             or candidate.get("image_base64")
             or candidate.get("base64")
             or candidate.get("b64")
+            or candidate.get("image")
         )
         if isinstance(b64_payload, str) and b64_payload.strip():
             return b64_payload.strip(), _normalize_image_url(candidate.get("url") or candidate.get("image_url"))
@@ -405,6 +456,21 @@ def _extract_image_data(data: dict[str, object]) -> tuple[str | None, str | None
             return None, image_url
 
     return None, None
+
+
+def _parse_image_size(size: str) -> tuple[int | None, int | None]:
+    raw = (size or "").strip().lower()
+    if "x" not in raw:
+        return None, None
+    width_raw, height_raw = raw.split("x", maxsplit=1)
+    try:
+        width = int(width_raw)
+        height = int(height_raw)
+    except ValueError:
+        return None, None
+    if width <= 0 or height <= 0:
+        return None, None
+    return width, height
 
 
 def _normalize_image_url(value: object) -> str | None:

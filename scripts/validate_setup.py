@@ -15,6 +15,7 @@ PROJECT_ROOT = Path(__file__).resolve().parent.parent
 DEFAULT_GITHUB_PAGES_URL = "https://ygirma315-cell.github.io/jo-ai/"
 DEFAULT_RENDER_BACKEND_URL = "https://jo-ai.onrender.com"
 REQUIRED_ENV_KEYS = ("BOT_TOKEN", "NVIDIA_API_KEY")
+OPTIONAL_ENV_KEYS = ("IMAGE_API_KEY",)
 MINIAPP_REQUIRED_FILES = (
     "miniapp/index.html",
     "miniapp/app.js",
@@ -85,7 +86,7 @@ def _load_env_values(*, include_dotenv: bool = True, include_process: bool = Tru
                 values[key] = value
 
     if include_process:
-        for key in REQUIRED_ENV_KEYS + (
+        for key in REQUIRED_ENV_KEYS + OPTIONAL_ENV_KEYS + (
             "PUBLIC_BASE_URL",
             "MINIAPP_URL",
             "MINIAPP_API_BASE",
@@ -161,6 +162,11 @@ def _validate_env(report: CheckReport, *, skip_env: bool) -> None:
             report.ok(f"Required environment value detected for {key}.")
         else:
             report.fail(f"Missing required environment value: {key}. Set it in .env or your shell.")
+
+    if values.get("IMAGE_API_KEY", "").strip():
+        report.ok("Optional IMAGE_API_KEY detected for image generation.")
+    else:
+        report.warn("IMAGE_API_KEY is not set. Image generation will fall back to NVIDIA_API_KEY.")
 
 
 def _validate_repo_structure(report: CheckReport) -> None:

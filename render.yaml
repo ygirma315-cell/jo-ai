@@ -27,6 +27,8 @@ services:
         sync: false
       - key: NVIDIA_API_KEY
         sync: false
+      - key: IMAGE_API_KEY
+        sync: false
       - key: DEEPSEEK_API_KEY
         sync: false
       - key: KIMI_API_KEY
