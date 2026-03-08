@@ -2422,3 +2422,153 @@ body[data-keyboard-open="true"] .tool-page .chat-topbar-actions .chip.muted,
 body[data-keyboard-open="true"] .tool-page .chat-topbar-actions a.btn.small {
   display: none;
 }
+
+body[data-page="home"] .home-shell {
+  display: grid;
+  gap: 18px;
+  align-content: start;
+}
+
+body[data-page="home"] .home-shell > * + * {
+  margin-top: 0;
+}
+
+body[data-page="home"] .home-header {
+  align-items: center;
+  gap: 12px;
+}
+
+body[data-page="home"] .home-header .eyebrow {
+  margin: 0;
+}
+
+body[data-page="home"] .home-header .status-cluster {
+  flex-direction: row;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 6px;
+  flex-wrap: wrap;
+}
+
+body[data-page="home"] .home-header .chip,
+body[data-page="home"] .home-header .version-badge {
+  min-height: 32px;
+  padding: 6px 10px;
+  font-size: 11px;
+}
+
+body[data-page="home"] .compact-hero {
+  width: 100%;
+  max-width: none;
+  padding: 22px 24px;
+}
+
+body[data-page="home"] .compact-hero .hero-copy p {
+  max-width: 38ch;
+  margin-bottom: 16px;
+}
+
+body[data-page="home"] .menu-section {
+  gap: 10px;
+  padding-top: 8px;
+}
+
+body[data-page="home"] .section-head {
+  align-items: end;
+  margin-bottom: 4px;
+}
+
+body[data-page="home"] .section-head h2 {
+  font-size: clamp(24px, 3.6vw, 32px);
+}
+
+body[data-page="home"] .tool-grid {
+  margin-top: 8px;
+}
+
+body.tool-page .page-shell {
+  padding: calc(4px + var(--safe-top)) 4px calc(4px + var(--safe-bottom));
+}
+
+body.tool-page .chat-shell {
+  height: calc(var(--app-height) - var(--safe-top) - var(--safe-bottom) - 8px);
+}
+
+body.tool-page .chat-topbar {
+  gap: 10px;
+  padding: 10px 12px 8px;
+}
+
+body.tool-page .chat-topbar-main {
+  gap: 6px;
+}
+
+body.tool-page .chat-title {
+  font-size: clamp(17px, 2.4vw, 21px);
+}
+
+body.tool-page .chat-subtitle {
+  max-width: 30ch;
+  font-size: 12px;
+}
+
+body.tool-page .chat-main {
+  gap: 8px;
+  padding: 0 12px 12px;
+}
+
+body.tool-page .chat-thread-head {
+  min-height: 30px;
+}
+
+body.tool-page .chat-history {
+  padding: 14px 10px 16px;
+}
+
+body.tool-page .chat-composer {
+  gap: 6px;
+  padding-top: 8px;
+}
+
+body.tool-page .composer-meta {
+  display: none !important;
+}
+
+body.tool-page .composer-options {
+  margin-bottom: 0;
+}
+
+@media (max-width: 720px) {
+  body[data-page="home"] .home-header {
+    flex-direction: row;
+    align-items: flex-start;
+  }
+
+  body[data-page="home"] .home-header .status-cluster {
+    justify-content: flex-end;
+  }
+
+  body[data-page="home"] .compact-hero {
+    padding: 18px 18px 20px;
+  }
+
+  body[data-page="home"] .menu-section {
+    padding-top: 2px;
+  }
+
+  body.tool-page .page-shell {
+    padding: calc(2px + var(--safe-top)) 2px calc(2px + var(--safe-bottom));
+  }
+
+  body.tool-page .chat-shell {
+    height: calc(var(--app-height) - var(--safe-top) - var(--safe-bottom) - 4px);
+  }
+
+  body.tool-page .chat-topbar {
+    padding: 9px 10px 7px;
+  }
+
+  body.tool-page .chat-main {
+    padding: 0 10px 10px;
+  }
+}

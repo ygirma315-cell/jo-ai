@@ -1681,6 +1681,15 @@
     }
   }
 
+  function removeComposerExampleRow() {
+    const row = document.querySelector(".composer-meta");
+    if (row) {
+      row.remove();
+    }
+    elements.useExampleBtn = null;
+    elements.toolExample = null;
+  }
+
   function clearToolWorkspace() {
     state.history = [];
     state.pendingId = "";
@@ -2403,6 +2412,7 @@
 
   function initToolPage() {
     applyToolConfig();
+    removeComposerExampleRow();
     state.emptyTemplate = elements.historyList ? elements.historyList.innerHTML : "";
     loadHistory();
     renderHistory();
