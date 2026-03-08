@@ -4,6 +4,8 @@ import asyncio
 import base64
 from dataclasses import dataclass
 import json
+import logging
+import time
 from typing import Literal
 
 import aiohttp
@@ -19,6 +21,11 @@ NVIDIA_BASE_URL = "https://integrate.api.nvidia.com/v1"
 DEFAULT_CHAT_MODEL = "meta/llama-3.1-8b-instruct"
 FALLBACK_CHAT_MODEL = "meta/llama-3.1-8b-instruct"
 DEFAULT_IMAGE_MODEL = "black-forest-labs/flux.1-dev"
+DEFAULT_RETRY_COUNT = 1
+DEFAULT_RETRY_BACKOFF_SECONDS = 0.6
+RETRYABLE_HTTP_STATUSES = {408, 409, 425, 429}
+
+logger = logging.getLogger(__name__)
 
 # Backward-compatible alias for existing imports.
 OpenAIServiceError = AIServiceError
@@ -28,6 +35,7 @@ OpenAIServiceError = AIServiceError
 class ChatService:
     api_key: str | None = None
     model: str = DEFAULT_CHAT_MODEL
+    base_url: str = NVIDIA_BASE_URL
 
     async def generate_reply(
         self,
@@ -53,13 +61,27 @@ class ChatService:
         selected_model = (model_override or self.model).strip()
         payload = _build_chat_payload(model=selected_model, messages=messages, mode=mode, thinking=thinking)
         try:
-            data = await _post_nvidia_json(effective_api_key, "/chat/completions", payload)
+            data = await _post_nvidia_json(
+                effective_api_key,
+                "/chat/completions",
+                payload,
+                timeout_seconds=26,
+                max_retries=DEFAULT_RETRY_COUNT,
+                base_url=self.base_url,
+            )
         except AIServiceError as exc:
             if selected_model != FALLBACK_CHAT_MODEL and _is_timeout_error(str(exc)):
                 fallback_payload = _build_chat_payload(
                     model=FALLBACK_CHAT_MODEL, messages=messages, mode=mode, thinking=False
                 )
-                data = await _post_nvidia_json(effective_api_key, "/chat/completions", fallback_payload)
+                data = await _post_nvidia_json(
+                    effective_api_key,
+                    "/chat/completions",
+                    fallback_payload,
+                    timeout_seconds=24,
+                    max_retries=0,
+                    base_url=self.base_url,
+                )
             else:
                 raise
         choices = data.get("choices")
@@ -102,7 +124,14 @@ class ChatService:
             },
         ]
         payload = _build_chat_payload(model=selected_model, messages=messages, mode=mode, thinking=thinking)
-        data = await _post_nvidia_json(effective_api_key, "/chat/completions", payload, timeout_seconds=40)
+        data = await _post_nvidia_json(
+            effective_api_key,
+            "/chat/completions",
+            payload,
+            timeout_seconds=35,
+            max_retries=DEFAULT_RETRY_COUNT,
+            base_url=self.base_url,
+        )
 
         choices = data.get("choices")
         if not isinstance(choices, list) or not choices:
@@ -118,8 +147,9 @@ class ChatService:
 class ImageGenerationService:
     api_key: str | None = None
     model: str = DEFAULT_IMAGE_MODEL
+    base_url: str = NVIDIA_BASE_URL
 
-    async def generate_image(self, prompt: str) -> bytes:
+    async def generate_image(self, prompt: str, size: str = "1024x1024") -> bytes:
         if contains_internal_detail_request(prompt):
             raise AIServiceError(SAFE_INTERNAL_DETAILS_REFUSAL)
         if not self.api_key:
@@ -128,10 +158,17 @@ class ImageGenerationService:
         payload = {
             "model": self.model,
             "prompt": prompt,
-            "size": "1024x1024",
+            "size": size,
             "response_format": "b64_json",
         }
-        data = await _post_nvidia_json(self.api_key, "/images/generations", payload)
+        data = await _post_nvidia_json(
+            self.api_key,
+            "/images/generations",
+            payload,
+            timeout_seconds=45,
+            max_retries=DEFAULT_RETRY_COUNT,
+            base_url=self.base_url,
+        )
         image_data = data.get("data")
         if not isinstance(image_data, list) or not image_data:
             raise AIServiceError(SAFE_SERVICE_UNAVAILABLE_MESSAGE)
@@ -157,7 +194,12 @@ class VideoGenerationService:
 
 
 async def _post_nvidia_json(
-    api_key: str, path: str, payload: dict[str, object], timeout_seconds: int = 28
+    api_key: str,
+    path: str,
+    payload: dict[str, object],
+    timeout_seconds: int = 28,
+    max_retries: int = DEFAULT_RETRY_COUNT,
+    base_url: str = NVIDIA_BASE_URL,
 ) -> dict[str, object]:
     headers = {
         "Authorization": f"Bearer {api_key}",
@@ -165,27 +207,90 @@ async def _post_nvidia_json(
         "Accept": "application/json",
     }
     timeout = aiohttp.ClientTimeout(total=timeout_seconds)
+    safe_path = path if path.startswith("/") else f"/{path}"
+    request_url = f"{base_url.rstrip('/')}{safe_path}"
+    retries = max(0, int(max_retries))
+    last_error: Exception | None = None
 
-    try:
-        async with aiohttp.ClientSession(timeout=timeout) as session:
-            async with session.post(f"{NVIDIA_BASE_URL}{path}", headers=headers, json=payload) as response:
-                body = await response.text()
-    except asyncio.TimeoutError as exc:
-        raise AIServiceError(SAFE_SERVICE_UNAVAILABLE_MESSAGE) from exc
-    except aiohttp.ClientError as exc:
-        raise AIServiceError(SAFE_SERVICE_UNAVAILABLE_MESSAGE) from exc
+    for attempt in range(retries + 1):
+        started_at = time.perf_counter()
+        try:
+            async with aiohttp.ClientSession(timeout=timeout) as session:
+                async with session.post(request_url, headers=headers, json=payload) as response:
+                    body = await response.text()
+        except asyncio.TimeoutError as exc:
+            last_error = exc
+            elapsed_ms = int((time.perf_counter() - started_at) * 1000)
+            logger.warning(
+                "AI upstream timeout path=%s attempt=%s/%s elapsed_ms=%s",
+                safe_path,
+                attempt + 1,
+                retries + 1,
+                elapsed_ms,
+            )
+            if attempt < retries:
+                await asyncio.sleep(DEFAULT_RETRY_BACKOFF_SECONDS * (attempt + 1))
+                continue
+            raise AIServiceError(SAFE_SERVICE_UNAVAILABLE_MESSAGE) from exc
+        except aiohttp.ClientError as exc:
+            last_error = exc
+            elapsed_ms = int((time.perf_counter() - started_at) * 1000)
+            logger.warning(
+                "AI upstream network error path=%s attempt=%s/%s elapsed_ms=%s error=%s",
+                safe_path,
+                attempt + 1,
+                retries + 1,
+                elapsed_ms,
+                exc.__class__.__name__,
+            )
+            if attempt < retries:
+                await asyncio.sleep(DEFAULT_RETRY_BACKOFF_SECONDS * (attempt + 1))
+                continue
+            raise AIServiceError(SAFE_SERVICE_UNAVAILABLE_MESSAGE) from exc
 
-    if response.status >= 400:
-        raise AIServiceError(SAFE_SERVICE_UNAVAILABLE_MESSAGE)
+        elapsed_ms = int((time.perf_counter() - started_at) * 1000)
+        if response.status >= 400:
+            parsed_error = _extract_api_error(body)
+            logger.warning(
+                "AI upstream HTTP error path=%s status=%s attempt=%s/%s elapsed_ms=%s detail=%s",
+                safe_path,
+                response.status,
+                attempt + 1,
+                retries + 1,
+                elapsed_ms,
+                parsed_error[:220],
+            )
+            if _is_retryable_status(response.status) and attempt < retries:
+                await asyncio.sleep(DEFAULT_RETRY_BACKOFF_SECONDS * (attempt + 1))
+                continue
+            raise AIServiceError(SAFE_SERVICE_UNAVAILABLE_MESSAGE)
 
-    try:
-        parsed = json.loads(body)
-    except json.JSONDecodeError as exc:
-        raise AIServiceError(SAFE_SERVICE_UNAVAILABLE_MESSAGE) from exc
+        try:
+            parsed = json.loads(body)
+        except json.JSONDecodeError as exc:
+            logger.warning(
+                "AI upstream returned invalid JSON path=%s attempt=%s/%s elapsed_ms=%s",
+                safe_path,
+                attempt + 1,
+                retries + 1,
+                elapsed_ms,
+            )
+            raise AIServiceError(SAFE_SERVICE_UNAVAILABLE_MESSAGE) from exc
 
-    if not isinstance(parsed, dict):
-        raise AIServiceError(SAFE_SERVICE_UNAVAILABLE_MESSAGE)
-    return parsed
+        if not isinstance(parsed, dict):
+            logger.warning(
+                "AI upstream returned non-object payload path=%s attempt=%s/%s elapsed_ms=%s",
+                safe_path,
+                attempt + 1,
+                retries + 1,
+                elapsed_ms,
+            )
+            raise AIServiceError(SAFE_SERVICE_UNAVAILABLE_MESSAGE)
+        return parsed
+
+    if last_error is not None:
+        raise AIServiceError(SAFE_SERVICE_UNAVAILABLE_MESSAGE) from last_error
+    raise AIServiceError(SAFE_SERVICE_UNAVAILABLE_MESSAGE)
 
 
 def _extract_api_error(raw_text: str) -> str:
@@ -234,8 +339,8 @@ def _build_chat_payload(
     thinking: bool = False,
 ) -> dict[str, object]:
     max_tokens_map = {
-        "chat": 220,
-        "code": 420,
+        "chat": 240,
+        "code": 520,
         "research": 650,
         "prompt": 260,
         "image_prompt": 260,
@@ -286,6 +391,8 @@ def _system_instruction_for_mode(mode: Literal["chat", "code", "research", "prom
             "You are JO AI Code Generator.\n"
             "Role: produce practical, correct code.\n"
             "Task: answer with executable code and concise implementation guidance.\n"
+            "If the user requests a specific file format (for example .py, .js, .tsx, Dockerfile), "
+            "return complete file-ready content without placeholders.\n"
             "Format:\n"
             "Title: short solution title\n"
             "Explanation:\n"
@@ -359,7 +466,8 @@ def _enhance_user_prompt(
     if mode == "code":
         return (
             f"Code request:\n{text}\n\n"
-            "Return Title, Explanation bullets, one fenced code block, How to run steps, and optional Notes."
+            "Return Title, Explanation bullets, one fenced code block, How to run steps, and optional Notes.\n"
+            "If a specific file format is requested, produce full file-ready content."
         )
     if mode == "research":
         return (
@@ -377,3 +485,7 @@ def _enhance_user_prompt(
         f"Image prompt request:\n{text}\n\n"
         "Return one high-quality image prompt with lighting, environment, style and quality tags."
     )
+
+
+def _is_retryable_status(status_code: int) -> bool:
+    return status_code in RETRYABLE_HTTP_STATUSES or status_code >= 500

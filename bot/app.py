@@ -246,10 +246,15 @@ async def create_bot_runtime() -> BotRuntime:
     dispatcher["calculator_service"] = CalculatorService()
     dispatcher["tictactoe_service"] = TicTacToeService()
     dispatcher["guess_number_service"] = GuessNumberService()
-    dispatcher["chat_service"] = ChatService(api_key=settings.nvidia_api_key, model=settings.nvidia_chat_model)
+    dispatcher["chat_service"] = ChatService(
+        api_key=settings.nvidia_api_key or settings.ai_api_key,
+        model=settings.nvidia_chat_model,
+        base_url=settings.ai_base_url,
+    )
     dispatcher["image_generation_service"] = ImageGenerationService(
-        api_key=settings.nvidia_api_key,
+        api_key=settings.nvidia_api_key or settings.ai_api_key,
         model=settings.image_model,
+        base_url=settings.ai_base_url,
     )
     dispatcher["video_generation_service"] = VideoGenerationService(api_key=settings.nvidia_api_key)
     dispatcher["deepseek_api_key"] = settings.deepseek_api_key

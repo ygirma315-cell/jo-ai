@@ -7,7 +7,7 @@
   const STORAGE_VERSION_KEY = "jo_frontend_version";
   const HOME_ENTRY_STORAGE_KEY = "jo_home_entered";
   const HISTORY_PREFIX = "jo_history_";
-  const FRONTEND_VERSION = "v1.4.1";
+  const FRONTEND_VERSION = "v1.4.2";
   const SITE_BASE_URL = "https://ygirma315-cell.github.io/jo-ai/";
   const MAX_HISTORY_ITEMS = 18;
   const MAX_UPLOAD_BYTES = 8 * 1024 * 1024;
@@ -22,6 +22,15 @@
   ];
 
   const STATIC_RELEASES = [
+    {
+      version: "v1.4.2",
+      title: "Shared Chat + Code backend stability",
+      items: [
+        "JO AI Chat and Code now call one shared text API path first, reducing duplicate fallback chains",
+        "Connection checks and request timeouts are faster, so unavailable states fail cleaner instead of hanging",
+        "Backend and bot now share the same upstream service flow with clearer retry and failure-point logging",
+      ],
+    },
     {
       version: "v1.4.1",
       title: "Fixed stable chat viewport on mobile",
@@ -1796,10 +1805,10 @@
   }
 
   async function isApiHealthy(base) {
-    const paths = ["/api/health", "/health"];
+    const paths = ["/api/health"];
     for (const path of paths) {
       try {
-        const { response, data } = await fetchJsonWithTimeout(`${base}${path}`, { method: "GET" }, 5500);
+        const { response, data } = await fetchJsonWithTimeout(`${base}${path}`, { method: "GET" }, 3500);
         if (response.ok && data && (data.ok === true || data.status === "ok")) {
           state.runtimeInfo = normalizeRuntimeInfo(data) || state.runtimeInfo;
           setVersionBadge();
@@ -1844,14 +1853,14 @@
 
     if (mode === "chat") {
       return [
+        { path: "/api/ai", payload: { mode: "chat", message: basePayload.message } },
         { path: "/api/chat", payload: basePayload },
-        { path: "/chat", payload: basePayload },
       ];
     }
     if (mode === "code") {
       return [
+        { path: "/api/ai", payload: { mode: "code", message: basePayload.message } },
         { path: "/api/code", payload: basePayload },
-        { path: "/code", payload: basePayload },
       ];
     }
     if (mode === "deepseek") {
@@ -1980,7 +1989,7 @@
             headers: { "Content-Type": "application/json" },
             body: JSON.stringify(attempt.payload),
           },
-          mode === "image" ? 90000 : 65000
+          mode === "image" ? 90000 : 45000
         );
 
         if (response.ok) {

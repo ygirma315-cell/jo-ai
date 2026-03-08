@@ -121,6 +121,16 @@ class ParsedCodeReply:
 
 
 def _profile_options(profile: AIModelProfile, deepseek_api_key: str | None, deepseek_model: str) -> dict[str, object]:
+    if not (deepseek_api_key or "").strip():
+        # Keep analysis available even if Deepseek credentials are absent.
+        # In this case requests fall back to the default chat model path.
+        return {
+            "model_override": None,
+            "api_key_override": None,
+            "thinking": False,
+            "profile_prefix": "",
+        }
+
     if profile == AIModelProfile.DEEPSEEK_THINKING:
         return {
             "model_override": deepseek_model,
@@ -693,15 +703,15 @@ async def choose_model_profile(query: CallbackQuery, session_manager: SessionMan
     async with session_manager.lock(query.from_user.id) as session:
         session.ai_model_profile = profile
         session.active_feature = Feature.JO_AI
-        session.jo_ai_mode = JoAIMode.CHAT
+        session.jo_ai_mode = JoAIMode.RESEARCH
 
     label = MODEL_PROFILE_LABELS.get(profile, "Unknown")
     await query.answer(f"✅ {label} selected.")
     if isinstance(query.message, Message):
         await query.message.answer(
             f"🧠 Profile set to <b>{label}</b>.\n\n"
-            "💬 JO AI Chat is now active.\n"
-            "Ask me anything.",
+            "🔍 Analysis mode is now active.\n"
+            "Send the topic or question you want analyzed.",
             reply_markup=jo_chat_keyboard(),
         )
 
@@ -746,7 +756,18 @@ async def handle_jo_ai_text(
         image_type = session.jo_ai_image_type
         model_profile = session.ai_model_profile
         history_snapshot = [{"role": role, "content": content} for role, content in session.jo_ai_chat_history]
-    profile_options = _profile_options(model_profile, deepseek_api_key, deepseek_model)
+
+    # Keep Chat/Code on the default stable path; analysis profile only applies to Research mode.
+    if mode == JoAIMode.RESEARCH:
+        profile_options = _profile_options(model_profile, deepseek_api_key, deepseek_model)
+    else:
+        profile_options = {
+            "model_override": None,
+            "api_key_override": None,
+            "thinking": False,
+            "profile_prefix": "",
+        }
+
     profile_prefix = str(profile_options.get("profile_prefix", "")).strip()
     user_text = f"{profile_prefix}\n\n{text}" if profile_prefix else text
 
@@ -973,9 +994,13 @@ async def _process_chat_message(
     mode: Literal["chat", "code", "research", "prompt", "image_prompt"],
     profile_options: dict[str, object],
 ) -> None:
-    await _maybe_send_engagement(message)
-    progress_text = MODE_PROGRESS_TEXT.get(mode, "🤖 Working on it...")
-    progress_message = await _send_progress_message(message, progress_text)
+    show_progress_message = mode not in {"chat", "code"}
+    if show_progress_message:
+        await _maybe_send_engagement(message)
+    progress_message: Message | None = None
+    if show_progress_message:
+        progress_text = MODE_PROGRESS_TEXT.get(mode, "🤖 Working on it...")
+        progress_message = await _send_progress_message(message, progress_text)
     try:
         async with ChatActionSender.typing(bot=message.bot, chat_id=message.chat.id):
             reply = await chat_service.generate_reply(
