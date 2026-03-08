@@ -22,7 +22,7 @@ from bot.handlers.games import router as games_router
 from bot.handlers.jo_ai import router as jo_ai_router
 from bot.middlewares.logging import UserActionLoggingMiddleware
 from bot.runtime_info import build_runtime_info
-from version import WEB_VERSION
+from version import WEB_VERSION, latest_release, latest_release_lines
 from bot.services.ai_service import ChatService, ImageGenerationService, VideoGenerationService
 from bot.services.calculator_service import CalculatorService
 from bot.services.guess_number_service import GuessNumberService
@@ -33,9 +33,22 @@ from version import VERSION
 
 logger = logging.getLogger(__name__)
 
-RESTART_BROADCAST_TEXT = (
-    "Bot was restarted with updates.\n"
-    "Please send /restart to refresh your session."
+_LATEST_RELEASE = latest_release()
+_LATEST_RELEASE_VERSION = str(_LATEST_RELEASE.get("version", "") or WEB_VERSION).strip() or WEB_VERSION
+_LATEST_RELEASE_TITLE = str(_LATEST_RELEASE.get("title", "") or "").strip()
+_LATEST_RELEASE_LINES = latest_release_lines(limit=2)
+RESTART_BROADCAST_TEXT = "\n".join(
+    [
+        line
+        for line in [
+            "Bot was restarted with updates.",
+            f"Current web release: {_LATEST_RELEASE_VERSION}",
+            _LATEST_RELEASE_TITLE,
+            *[f"- {line}" for line in _LATEST_RELEASE_LINES],
+            "Please send /restart to refresh your session.",
+        ]
+        if line
+    ]
 )
 TELEGRAM_STARTUP_RETRY_DELAYS_SECONDS = (5, 15, 30, 60)
 

@@ -2,6 +2,8 @@ from __future__ import annotations
 
 import re
 
+from version import latest_release, public_releases
+
 DEVELOPER_HANDLE = "@grpbuyer3"
 BRANDING_LINE = "Created by JO AI"
 SAFE_PUBLIC_SUPPORT_LINE = f"{BRANDING_LINE}. Contact {DEVELOPER_HANDLE} to get the JO API."
@@ -113,6 +115,7 @@ def contains_internal_detail_request(*parts: str | None) -> bool:
 
 
 def build_safe_version_summary(*, bot_version: str, web_version: str | None = None) -> dict[str, object]:
+    latest = latest_release()
     payload: dict[str, object] = {
         "ok": True,
         "status": "ok",
@@ -120,6 +123,8 @@ def build_safe_version_summary(*, bot_version: str, web_version: str | None = No
         "branding": BRANDING_LINE,
         "developer": DEVELOPER_HANDLE,
         "note": SAFE_PUBLIC_VERSION_NOTE,
+        "latest_release": latest,
+        "releases": public_releases(limit=4),
     }
     normalized_web = str(web_version or "").strip()
     if normalized_web:

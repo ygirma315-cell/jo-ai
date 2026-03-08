@@ -7,10 +7,9 @@ from aiogram.types import CallbackQuery, Message
 from bot.constants import MENU_AI_TOOLS, MENU_CANCEL, MENU_HELP, MENU_UTILITIES, MENU_VERSION_MODELS
 from bot.keyboards.menu import ai_tools_keyboard, main_menu_keyboard, utilities_keyboard
 from bot.models.session import AIModelProfile, Feature
-from bot.runtime_info import format_runtime_info_html
-from bot.security import BRANDING_LINE, DEVELOPER_HANDLE
+from bot.runtime_info import format_release_summary_html, format_runtime_info_html
+from bot.security import DEVELOPER_HANDLE
 from bot.services.session_manager import SessionManager
-from version import VERSION
 
 router = Router(name="common")
 
@@ -60,7 +59,12 @@ MENU_HINT_TEXT = (
 
 
 @router.message(CommandStart())
-async def handle_start(message: Message, session_manager: SessionManager, miniapp_url: str | None) -> None:
+async def handle_start(
+    message: Message,
+    session_manager: SessionManager,
+    miniapp_url: str | None,
+    runtime_info: dict[str, object],
+) -> None:
     if not message.from_user:
         return
 
@@ -68,10 +72,7 @@ async def handle_start(message: Message, session_manager: SessionManager, miniap
     if transition.notice:
         await message.answer(transition.notice, reply_markup=main_menu_keyboard(miniapp_url))
     await message.answer(WELCOME_TEXT, reply_markup=main_menu_keyboard(miniapp_url))
-    await message.answer(
-        f"{BRANDING_LINE}\nDeveloper: {DEVELOPER_HANDLE}\nBot Version: {VERSION}",
-        reply_markup=main_menu_keyboard(miniapp_url),
-    )
+    await message.answer(format_release_summary_html(runtime_info), reply_markup=main_menu_keyboard(miniapp_url))
     await message.answer(
         "\U0001F3AF <b>Quick Start</b>\n\n"
         "\u2022 Tap <b>\U0001F916 AI Tools</b> to chat, code, research, build prompts, create images, or use vision mode.\n"
@@ -83,7 +84,12 @@ async def handle_start(message: Message, session_manager: SessionManager, miniap
 
 
 @router.message(Command("restart"))
-async def handle_restart(message: Message, session_manager: SessionManager, miniapp_url: str | None) -> None:
+async def handle_restart(
+    message: Message,
+    session_manager: SessionManager,
+    miniapp_url: str | None,
+    runtime_info: dict[str, object],
+) -> None:
     if not message.from_user:
         return
 
@@ -96,6 +102,7 @@ async def handle_restart(message: Message, session_manager: SessionManager, mini
         "Pick a mode from the menu to continue.",
         reply_markup=main_menu_keyboard(miniapp_url),
     )
+    await message.answer(format_release_summary_html(runtime_info), reply_markup=main_menu_keyboard(miniapp_url))
 
 
 @router.message(Command("help"))

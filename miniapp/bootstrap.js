@@ -47,6 +47,16 @@
     return Number.isFinite(next) && next > 0 ? next : 0;
   }
 
+  function maxPositive(values) {
+    const numbers = values.filter((value) => value > 0);
+    return numbers.length ? Math.max(...numbers) : 0;
+  }
+
+  function minPositive(values) {
+    const numbers = values.filter((value) => value > 0);
+    return numbers.length ? Math.min(...numbers) : 0;
+  }
+
   function errorToMessage(error) {
     if (!error) {
       return "Unknown startup error.";
@@ -150,7 +160,15 @@
     const platform = tg && typeof tg.platform === "string" ? tg.platform.toLowerCase() : "";
     const ua = navigator.userAgent || "";
     const isMobileUa = /android|iphone|ipad|ipod|mobile/i.test(ua);
-    return isMobileUa && (platform === "android" || platform === "ios" || /telegram/i.test(ua) || hasTelegramWebAppContext(tg));
+    return (
+      isMobileUa &&
+      (
+        platform === "android" ||
+        platform === "ios" ||
+        /telegram|plus\s*messenger|plusmessenger|nekogram|nicegram/i.test(ua) ||
+        hasTelegramWebAppContext(tg)
+      )
+    );
   }
 
   function readViewportMetrics() {
@@ -158,20 +176,30 @@
     const viewport = window.visualViewport || null;
     const innerHeight = readNumber(window.innerHeight);
     const viewportHeight = viewport ? readNumber(viewport.height) : 0;
+    const viewportTop = viewport ? readNumber(viewport.offsetTop) : 0;
+    const viewportBottom = viewportHeight > 0 ? viewportHeight + viewportTop : 0;
     const telegramHeight = tg ? readNumber(tg.viewportHeight) : 0;
     const stableHeight = tg ? readNumber(tg.viewportStableHeight) : 0;
-    const height = Math.max(viewportHeight, telegramHeight, innerHeight);
-    const stable = Math.max(stableHeight, innerHeight, height);
-    const offsetTop = viewport ? readNumber(viewport.offsetTop) : 0;
-    const offsetBottom = viewport ? Math.max(0, innerHeight - viewportHeight - offsetTop) : 0;
-    const keyboardDelta = innerHeight > 0 && viewportHeight > 0 ? innerHeight - viewportHeight : 0;
+    const stable = maxPositive([stableHeight, innerHeight, telegramHeight, viewportBottom, viewportHeight]);
+    const keyboardDeltaInner = innerHeight > 0 && viewportHeight > 0 ? innerHeight - viewportHeight : 0;
+    const keyboardDeltaStable = stable > 0 && viewportHeight > 0 ? stable - viewportHeight : 0;
+    const keyboardOpen = keyboardDeltaInner > 120 || keyboardDeltaStable > 120;
+    const height = keyboardOpen
+      ? minPositive([viewportBottom, viewportHeight, telegramHeight, innerHeight]) || maxPositive([telegramHeight, innerHeight, viewportBottom, viewportHeight])
+      : maxPositive([telegramHeight, viewportBottom, innerHeight, viewportHeight]);
+    const offsetBottom =
+      keyboardOpen && stable > height
+        ? Math.max(0, stable - height)
+        : viewport
+          ? Math.max(0, innerHeight - viewportHeight - viewportTop)
+          : 0;
 
     return {
       height: height || innerHeight || stable || 0,
       stableHeight: stable || height || innerHeight || 0,
-      offsetTop,
+      offsetTop: viewportTop,
       offsetBottom,
-      keyboardOpen: keyboardDelta > 120,
+      keyboardOpen,
     };
   }
 
@@ -229,27 +257,28 @@
   }
 
   function safeTelegramInit() {
-    state.telegramDetected = hasTelegramWebAppContext(getTelegramWebApp());
+    const tg = getTelegramWebApp();
+    state.telegramDetected = hasTelegramWebAppContext(tg) || detectTelegramMobile();
     updateBanner();
     setBodyFlag("telegramDetected", state.telegramDetected ? "true" : "false");
     setBodyFlag("telegramMobile", detectTelegramMobile() ? "true" : "false");
 
-    const tg = state.telegramDetected ? getTelegramWebApp() : null;
-    if (!tg) {
+    const shell = state.telegramDetected ? tg : null;
+    if (!shell) {
       return;
     }
 
     try {
-      if (typeof tg.ready === "function") {
-        tg.ready();
+      if (typeof shell.ready === "function") {
+        shell.ready();
       }
     } catch (error) {
       reportError("telegram.ready", error);
     }
 
     try {
-      if (typeof tg.expand === "function") {
-        tg.expand();
+      if (typeof shell.expand === "function") {
+        shell.expand();
       }
     } catch (error) {
       reportError("telegram.expand", error);
@@ -284,13 +313,13 @@
   state.syncViewportMetrics = syncViewportMetrics;
   state.safeTelegramInit = safeTelegramInit;
 
-  state.telegramDetected = hasTelegramWebAppContext(getTelegramWebApp());
+  state.telegramDetected = hasTelegramWebAppContext(getTelegramWebApp()) || detectTelegramMobile();
 
   state.startupTimer = window.setTimeout(() => {
-    if (!state.startupComplete) {
+    if (!state.startupComplete && !state.rootMounted) {
       showFallback("Mini App startup is taking longer than expected. Please reopen it.");
     }
-  }, 4500);
+  }, 6500);
 
   window.addEventListener("error", (event) => {
     reportError("window.onerror", event.error || event.message || "Unknown startup error.");

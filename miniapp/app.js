@@ -4,9 +4,10 @@
   const tg = window.Telegram && window.Telegram.WebApp ? window.Telegram.WebApp : null;
   const bootDebug = window.__joMiniAppBoot || null;
   const API_BASE_STORAGE_KEY = "jo_api_base";
+  const STORAGE_VERSION_KEY = "jo_frontend_version";
   const HOME_ENTRY_STORAGE_KEY = "jo_home_entered";
   const HISTORY_PREFIX = "jo_history_";
-  const FRONTEND_VERSION = "v1.3.2";
+  const FRONTEND_VERSION = "v1.4.0";
   const SITE_BASE_URL = "https://ygirma315-cell.github.io/jo-ai/";
   const MAX_HISTORY_ITEMS = 18;
   const MAX_UPLOAD_BYTES = 8 * 1024 * 1024;
@@ -20,7 +21,16 @@
     "Preparing response...",
   ];
 
-  const updates = [
+  const STATIC_RELEASES = [
+    {
+      version: "v1.4.0",
+      title: "Premium mobile chat refresh",
+      items: [
+        "All JO AI chat pages now use a cleaner bordered layout with a much larger conversation panel and a smaller pinned composer",
+        "Mobile webviews now respect the shrinking visible viewport better, so the input stays visible and part of the conversation remains on-screen above the keyboard",
+        "Client-side stale history and cached API base values are reset on new frontend releases, and both the website and bot now show the current version with an update summary",
+      ],
+    },
     {
       version: "v1.3.2",
       title: "Security hardening and safer public branding",
@@ -46,60 +56,6 @@
         "All AI tool pages now use one clean chat-style layout with a compact header and bottom composer",
         "Message flow, thinking states, and scrolling are smoother on mobile and inside Telegram",
         "Image, prompt, code, research, and vision tools now share the same calmer design system",
-      ],
-    },
-    {
-      version: "v1.2.4",
-      title: "Telegram webview startup hardening",
-      items: [
-        "Telegram shell initialization now runs as early as possible to clear the webview loading state sooner",
-        "Static asset URLs can be cache-busted so Telegram mobile does not keep serving stale broken frontend files",
-        "Phone-sized layouts avoid the heaviest backdrop effects to reduce Telegram white-screen rendering issues",
-      ],
-    },
-    {
-      version: "v1.2.3",
-      title: "Telegram Mini App launch and modal reliability",
-      items: [
-        "Telegram launches now open straight into the visible homepage instead of stopping behind the welcome overlay",
-        "Welcome and update overlays now lock body scroll, block background taps, and keep focus inside the modal",
-        "Mobile viewport sizing and overlay layout are tighter for Telegram webviews",
-      ],
-    },
-    {
-      version: "v1.2.2",
-      title: "Mobile webview stability and tighter chat layout",
-      items: [
-        "Telegram mobile startup now guards viewport and WebApp calls more defensively",
-        "Chat header pills are compact in the upper-right so conversation starts sooner",
-        "Mobile chat keeps the conversation visible more reliably while the keyboard is open",
-      ],
-    },
-    {
-      version: "v1.2.1",
-      title: "Telegram launch fix and cleaner layout",
-      items: [
-        "Telegram Open App paths now use the exact JO AI GitHub Pages URL",
-        "Homepage grid is tighter and more responsive on Telegram-sized screens",
-        "Tool pages open with less clutter and clearer back navigation",
-      ],
-    },
-    {
-      version: "v1.2.0",
-      title: "Multi-page JO AI refresh",
-      items: [
-        "New welcome screen and homepage tool menu",
-        "Dedicated pages for each JO AI tool",
-        "Conversation-style history with easy copy and save actions",
-        "Help page and clickable update panel",
-      ],
-    },
-    {
-      version: "v1.1.0",
-      title: "Cleaner AI-only base",
-      items: [
-        "Removed old extra categories and non-AI clutter",
-        "Kept the core JO AI tools and current API behavior",
       ],
     },
   ];
@@ -223,6 +179,7 @@
     modalTrigger: null,
     scrollLockY: 0,
     bodyLockStyles: null,
+    runtimeInfo: null,
   };
 
   const sensitiveTargetsPattern =
@@ -402,6 +359,9 @@
       contactBtn: byId("contactBtn"),
       reportBtn: byId("reportBtn"),
       versionBadge: byId("versionBadge"),
+      updatesTitle: byId("updatesTitle"),
+      updatesSummary: byId("updatesSummary"),
+      updatesList: byId("updatesList"),
       updatesModal: byId("updatesModal"),
       updatesClose: byId("updatesClose"),
       comingSoonModal: byId("comingSoonModal"),
@@ -440,6 +400,44 @@
       storage.removeItem(key);
     } catch (_error) {
       // ignore storage failures
+    }
+  }
+
+  function safeStorageKeys(storage) {
+    if (!storage || typeof storage.length !== "number" || typeof storage.key !== "function") {
+      return [];
+    }
+
+    const keys = [];
+    for (let index = 0; index < storage.length; index += 1) {
+      try {
+        const key = storage.key(index);
+        if (key) {
+          keys.push(key);
+        }
+      } catch (_error) {
+        return keys;
+      }
+    }
+    return keys;
+  }
+
+  function clearStaleClientState() {
+    const local = getLocalStorage();
+    const session = getSessionStorage();
+    const storedVersion = safeStorageGet(local, STORAGE_VERSION_KEY);
+
+    if (storedVersion === FRONTEND_VERSION) {
+      return;
+    }
+
+    safeStorageRemove(local, API_BASE_STORAGE_KEY);
+    safeStorageSet(local, STORAGE_VERSION_KEY, FRONTEND_VERSION);
+
+    for (const key of safeStorageKeys(session)) {
+      if (key.startsWith(HISTORY_PREFIX)) {
+        safeStorageRemove(session, key);
+      }
     }
   }
 
@@ -857,6 +855,110 @@
     openManagedModal(elements.welcomeOverlay);
   }
 
+  function normalizeReleaseEntry(entry) {
+    if (!entry || typeof entry !== "object") {
+      return null;
+    }
+
+    const version = typeof entry.version === "string" ? entry.version.trim() : "";
+    const title = typeof entry.title === "string" ? entry.title.trim() : "";
+    const items = Array.isArray(entry.items)
+      ? entry.items.map((item) => String(item || "").trim()).filter(Boolean)
+      : [];
+
+    if (!version && !title && !items.length) {
+      return null;
+    }
+
+    return { version, title, items };
+  }
+
+  function normalizeRuntimeInfo(payload) {
+    if (!payload || typeof payload !== "object") {
+      return null;
+    }
+
+    const releases = Array.isArray(payload.releases)
+      ? payload.releases.map(normalizeReleaseEntry).filter(Boolean)
+      : [];
+    const latest = normalizeReleaseEntry(payload.latest_release);
+
+    return {
+      version: typeof payload.version === "string" ? payload.version.trim() : "",
+      web_version: typeof payload.web_version === "string" ? payload.web_version.trim() : "",
+      latest_release: latest,
+      releases: releases.length ? releases : latest ? [latest] : [],
+    };
+  }
+
+  function getReleaseFeed() {
+    if (state.runtimeInfo && Array.isArray(state.runtimeInfo.releases) && state.runtimeInfo.releases.length) {
+      return state.runtimeInfo.releases;
+    }
+    return STATIC_RELEASES;
+  }
+
+  function getDisplayedWebVersion() {
+    if (state.runtimeInfo && typeof state.runtimeInfo.web_version === "string" && state.runtimeInfo.web_version.trim()) {
+      return state.runtimeInfo.web_version.trim();
+    }
+    return FRONTEND_VERSION;
+  }
+
+  function mountVersionBadge() {
+    if (!elements.versionBadge) {
+      return;
+    }
+
+    const host = document.querySelector(".chat-topbar-actions, .status-cluster");
+    if (host && elements.versionBadge.parentElement !== host) {
+      host.prepend(elements.versionBadge);
+      return;
+    }
+
+    if (!host && elements.versionBadge.parentElement !== document.body) {
+      document.body.appendChild(elements.versionBadge);
+    }
+  }
+
+  function renderUpdatesPanel() {
+    if (!elements.updatesList) {
+      return;
+    }
+
+    const releases = getReleaseFeed();
+    const current = releases[0] || null;
+
+    if (elements.updatesTitle) {
+      elements.updatesTitle.textContent = `${getDisplayedWebVersion()} release notes`;
+    }
+    if (elements.updatesSummary) {
+      elements.updatesSummary.textContent = current && current.title ? current.title : "Current public JO AI updates.";
+    }
+
+    elements.updatesList.innerHTML = "";
+    for (const item of releases) {
+      const row = document.createElement("section");
+      row.className = "updates-item";
+
+      const itemTitle = document.createElement("h3");
+      itemTitle.textContent = item.title ? `${item.version} · ${item.title}` : item.version || "Current release";
+
+      const itemList = document.createElement("ul");
+      for (const point of item.items) {
+        const li = document.createElement("li");
+        li.textContent = point;
+        itemList.appendChild(li);
+      }
+
+      row.appendChild(itemTitle);
+      if (item.items.length) {
+        row.appendChild(itemList);
+      }
+      elements.updatesList.appendChild(row);
+    }
+  }
+
   function ensureGlobalUi() {
     if (!byId("versionBadge")) {
       const badge = document.createElement("button");
@@ -885,12 +987,17 @@
       const copy = document.createElement("div");
       const eyebrow = document.createElement("p");
       eyebrow.className = "section-kicker";
-      eyebrow.textContent = "VERSION";
+      eyebrow.textContent = "UPDATES";
       const title = document.createElement("h2");
       title.id = "updatesTitle";
-      title.textContent = "Recent updates";
+      title.textContent = `${FRONTEND_VERSION} release notes`;
+      const summary = document.createElement("p");
+      summary.id = "updatesSummary";
+      summary.className = "hint";
+      summary.textContent = "Current public JO AI updates.";
       copy.appendChild(eyebrow);
       copy.appendChild(title);
+      copy.appendChild(summary);
       card.setAttribute("aria-labelledby", title.id);
 
       const close = document.createElement("button");
@@ -904,23 +1011,8 @@
       card.appendChild(head);
 
       const list = document.createElement("div");
+      list.id = "updatesList";
       list.className = "updates-list";
-      for (const item of updates) {
-        const row = document.createElement("section");
-        row.className = "updates-item";
-        const itemTitle = document.createElement("h3");
-        itemTitle.textContent = `${item.version} - ${item.title}`;
-        const itemList = document.createElement("ul");
-        for (const point of item.items) {
-          const li = document.createElement("li");
-          li.textContent = point;
-          itemList.appendChild(li);
-        }
-        row.appendChild(itemTitle);
-        row.appendChild(itemList);
-        list.appendChild(row);
-      }
-
       card.appendChild(list);
       modal.appendChild(card);
       document.body.appendChild(modal);
@@ -981,6 +1073,8 @@
 
     collectElements();
     prepareManagedModals();
+    mountVersionBadge();
+    renderUpdatesPanel();
   }
 
   function bindGlobalUi() {
@@ -1039,8 +1133,12 @@
 
   function setVersionBadge() {
     if (elements.versionBadge) {
-      elements.versionBadge.textContent = `Version ${FRONTEND_VERSION}`;
+      const version = getDisplayedWebVersion();
+      elements.versionBadge.textContent = `${version} updates`;
+      elements.versionBadge.setAttribute("aria-label", `Open release notes for ${version}`);
     }
+    mountVersionBadge();
+    renderUpdatesPanel();
   }
 
   function showToast(text, variant = "success", durationMs = 2600) {
@@ -1193,7 +1291,7 @@
       `time_utc=${new Date().toISOString()}`,
       `page=${getPage()}`,
       getToolId() ? `tool=${getToolId()}` : "",
-      `version=${FRONTEND_VERSION}`,
+      `version=${getDisplayedWebVersion()}`,
       `status=${elements.status ? elements.status.textContent : "unknown"}`,
       `user_agent=${navigator.userAgent}`,
     ];
@@ -1685,6 +1783,8 @@
       try {
         const { response, data } = await fetchJsonWithTimeout(`${base}${path}`, { method: "GET" }, 5500);
         if (response.ok && data && (data.ok === true || data.status === "ok")) {
+          state.runtimeInfo = normalizeRuntimeInfo(data) || state.runtimeInfo;
+          setVersionBadge();
           return true;
         }
       } catch (_error) {
@@ -2099,6 +2199,7 @@
       resizeComposerInput(true);
       if (shouldDismissKeyboardAfterSubmit()) {
         elements.aiInput.blur();
+        window.setTimeout(syncViewportState, 40);
       } else {
         elements.aiInput.focus();
       }
@@ -2333,6 +2434,7 @@
 
   async function boot() {
     normalizeHostedHomeUrl();
+    clearStaleClientState();
     polishStaticUi();
     ensureGlobalUi();
     bindGlobalUi();
