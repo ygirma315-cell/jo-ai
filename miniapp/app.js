@@ -7,7 +7,7 @@
   const STORAGE_VERSION_KEY = "jo_frontend_version";
   const HOME_ENTRY_STORAGE_KEY = "jo_home_entered";
   const HISTORY_PREFIX = "jo_history_";
-  const FRONTEND_VERSION = "v1.4.0";
+  const FRONTEND_VERSION = "v1.4.1";
   const SITE_BASE_URL = "https://ygirma315-cell.github.io/jo-ai/";
   const MAX_HISTORY_ITEMS = 18;
   const MAX_UPLOAD_BYTES = 8 * 1024 * 1024;
@@ -22,6 +22,15 @@
   ];
 
   const STATIC_RELEASES = [
+    {
+      version: "v1.4.1",
+      title: "Fixed stable chat viewport on mobile",
+      items: [
+        "Tool pages now keep one fixed conversation viewport height on load, so chat panels do not randomly start small or large",
+        "Composer stays pinned in a fixed bottom row while only the conversation list scrolls",
+        "Keyboard handling now keeps the input visible in Telegram-style webviews by reserving bottom inset space instead of shrinking layout rows",
+      ],
+    },
     {
       version: "v1.4.0",
       title: "Premium mobile chat refresh",

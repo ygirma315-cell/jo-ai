@@ -2747,3 +2747,57 @@ body.tool-page .chat-history .bubble-copy {
     padding-top: 3px;
   }
 }
+
+/* Stable fixed chat layout for Telegram mobile/webview keyboards. */
+body.tool-page {
+  height: var(--app-height);
+  min-height: var(--app-height);
+  overflow: hidden;
+}
+
+body.tool-page .page-shell {
+  height: var(--app-height) !important;
+  min-height: var(--app-height) !important;
+  padding: calc(4px + var(--safe-top)) 4px calc(4px + var(--safe-bottom)) !important;
+  overflow: hidden !important;
+}
+
+body.tool-page .chat-shell {
+  height: 100% !important;
+  min-height: 0 !important;
+  display: grid !important;
+  grid-template-rows: auto minmax(0, 1fr) !important;
+  overflow: hidden !important;
+}
+
+body.tool-page .chat-topbar {
+  flex: 0 0 auto;
+}
+
+body.tool-page .chat-main {
+  min-height: 0 !important;
+  display: grid !important;
+  grid-template-rows: minmax(0, 1fr) auto !important;
+  gap: 4px !important;
+  padding: 0 8px calc(8px + var(--safe-bottom) + var(--keyboard-inset)) !important;
+  overflow: hidden !important;
+}
+
+body.tool-page .chat-history {
+  height: 100% !important;
+  min-height: 0 !important;
+  overflow-y: auto !important;
+  overflow-x: hidden;
+}
+
+body.tool-page .chat-composer {
+  position: static !important;
+  bottom: auto !important;
+  margin: 0;
+  padding-top: 4px !important;
+  flex: 0 0 auto;
+}
+
+body.tool-page .composer-options {
+  margin-bottom: 0 !important;
+}

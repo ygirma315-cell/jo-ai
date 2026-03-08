@@ -9,6 +9,7 @@
   state.rootMounted = false;
   state.shellInitialized = false;
   state.startupTimer = state.startupTimer || 0;
+  state.maxLayoutHeight = readNumber(state.maxLayoutHeight);
 
   function byId(id) {
     return document.getElementById(id);
@@ -179,24 +180,24 @@
     const viewportTop = viewport ? readNumber(viewport.offsetTop) : 0;
     const viewportBottom = viewportHeight > 0 ? viewportHeight + viewportTop : 0;
     const telegramHeight = tg ? readNumber(tg.viewportHeight) : 0;
-    const stableHeight = tg ? readNumber(tg.viewportStableHeight) : 0;
-    const stable = maxPositive([stableHeight, innerHeight, telegramHeight, viewportBottom, viewportHeight]);
-    const keyboardDeltaInner = innerHeight > 0 && viewportHeight > 0 ? innerHeight - viewportHeight : 0;
-    const keyboardDeltaStable = stable > 0 && viewportHeight > 0 ? stable - viewportHeight : 0;
-    const keyboardOpen = keyboardDeltaInner > 120 || keyboardDeltaStable > 120;
-    const height = keyboardOpen
-      ? minPositive([viewportBottom, viewportHeight, telegramHeight, innerHeight]) || maxPositive([telegramHeight, innerHeight, viewportBottom, viewportHeight])
-      : maxPositive([telegramHeight, viewportBottom, innerHeight, viewportHeight]);
-    const offsetBottom =
-      keyboardOpen && stable > height
-        ? Math.max(0, stable - height)
-        : viewport
-          ? Math.max(0, innerHeight - viewportHeight - viewportTop)
-          : 0;
+    const telegramStableHeight = tg ? readNumber(tg.viewportStableHeight) : 0;
+
+    const stableCandidate =
+      maxPositive([telegramStableHeight, state.maxLayoutHeight, innerHeight, telegramHeight, viewportBottom]) || innerHeight;
+    state.maxLayoutHeight = Math.max(state.maxLayoutHeight || 0, stableCandidate || 0);
+
+    const stableHeight = state.maxLayoutHeight || stableCandidate || innerHeight || 0;
+    const visibleHeight =
+      minPositive([viewportBottom, viewportHeight, telegramHeight, innerHeight]) ||
+      maxPositive([viewportBottom, viewportHeight, telegramHeight, innerHeight]) ||
+      stableHeight;
+    const offsetBottom = Math.max(0, stableHeight - visibleHeight);
+    const keyboardOpen = offsetBottom > 92;
 
     return {
-      height: height || innerHeight || stable || 0,
-      stableHeight: stable || height || innerHeight || 0,
+      // Keep layout height stable; only inset the bottom region when keyboard appears.
+      height: stableHeight,
+      stableHeight,
       offsetTop: viewportTop,
       offsetBottom,
       keyboardOpen,
