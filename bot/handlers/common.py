@@ -6,17 +6,12 @@ from aiogram.types import CallbackQuery, Message
 
 from bot.constants import MENU_AI_TOOLS, MENU_CANCEL, MENU_HELP, MENU_UTILITIES, MENU_VERSION_MODELS
 from bot.keyboards.menu import ai_tools_keyboard, main_menu_keyboard, utilities_keyboard
-from bot.models.session import AIModelProfile, Feature
+from bot.models.session import Feature
 from bot.runtime_info import format_release_summary_html, format_runtime_info_html
 from bot.security import DEVELOPER_HANDLE
 from bot.services.session_manager import SessionManager
 
 router = Router(name="common")
-
-PROFILE_LABELS = {
-    AIModelProfile.DEEPSEEK_REASONING: "Structured analysis",
-    AIModelProfile.DEEPSEEK_THINKING: "Focused analysis",
-}
 
 WELCOME_TEXT = (
     "\u2728 <b>Welcome to JO AI Assistant</b>\n\n"
@@ -38,7 +33,7 @@ HELP_TEXT = (
     "\u2022 /research - research mode\n"
     "\u2022 /prompt - prompt generator mode\n"
     "\u2022 /image - image generator mode\n"
-    "\u2022 /analysis - switch analysis profile\n"
+    "\u2022 /analysis - deep analysis mode\n"
     "\u2022 /vision - vision mode (send photo)\n\n"
     "\U0001F6E0\ufe0f <b>Other Features</b>\n"
     "\u2022 /calculator - safe calculator\n"
@@ -122,14 +117,9 @@ async def handle_ping(message: Message) -> None:
 @router.message(F.text == MENU_VERSION_MODELS)
 async def handle_version(
     message: Message,
-    session_manager: SessionManager,
     runtime_info: dict[str, object],
 ) -> None:
-    active_profile: str | None = None
-    if message.from_user:
-        async with session_manager.lock(message.from_user.id) as session:
-            active_profile = PROFILE_LABELS.get(session.ai_model_profile, session.ai_model_profile.value)
-    await message.answer(format_runtime_info_html(runtime_info, active_profile=active_profile))
+    await message.answer(format_runtime_info_html(runtime_info, active_profile=None))
 
 
 @router.message(Command("aitools"))

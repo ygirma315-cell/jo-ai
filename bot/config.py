@@ -23,6 +23,7 @@ class Settings:
     ai_api_key: str | None
     ai_base_url: str
     nvidia_api_key: str | None
+    image_api_key: str | None
     nvidia_chat_model: str
     code_model: str
     image_model: str
@@ -178,6 +179,8 @@ def load_settings() -> Settings:
 
     nvidia_api_key = _read_env("NVIDIA_API_KEY") or _read_env("JOAI_API_KEY") or (ai_api_key or "")
     nvidia_api_key = nvidia_api_key or None
+    image_api_key = _read_env("IMAGE_API_KEY") or nvidia_api_key or ai_api_key
+    image_api_key = image_api_key or None
     nvidia_chat_model = _read_env("CHAT_MODEL") or _read_env("NVIDIA_CHAT_MODEL") or DEFAULT_CHAT_MODEL
     code_model = _read_env("CODE_MODEL") or nvidia_chat_model
     image_model = _read_env("IMAGE_MODEL") or DEFAULT_IMAGE_MODEL
@@ -218,7 +221,7 @@ def load_settings() -> Settings:
     if not miniapp_url:
         validation_errors.append("Mini app URL is missing.")
     if not deepseek_api_key:
-        validation_warnings.append("Analysis profile credentials are missing. Analysis profile requests will fail until configured.")
+        validation_warnings.append("Deep Analysis credentials are missing. Deep Analysis will use default credentials.")
     if not kimi_api_key:
         validation_warnings.append("Vision mode credentials are missing. Vision requests will fail until configured.")
 
@@ -230,6 +233,7 @@ def load_settings() -> Settings:
         ai_api_key=ai_api_key,
         ai_base_url=ai_base_url,
         nvidia_api_key=nvidia_api_key,
+        image_api_key=image_api_key,
         nvidia_chat_model=nvidia_chat_model,
         code_model=code_model,
         image_model=image_model,

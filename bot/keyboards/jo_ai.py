@@ -9,6 +9,7 @@ def jo_ai_menu_keyboard() -> InlineKeyboardMarkup:
     builder.button(text="\U0001F4AC JO AI Chat", callback_data="joai:chat")
     builder.button(text="\u26A1 Code Generator", callback_data="joai:code")
     builder.button(text="\U0001F50D Research", callback_data="joai:research")
+    builder.button(text="\U0001F9E0 Deep Analysis", callback_data="joai:deep_analysis")
     builder.button(text="\u2728 Prompt Generator", callback_data="joai:prompt")
     builder.button(text="\U0001F3A8 Image Generator", callback_data="joai:image")
     builder.button(text="\U0001F5BC\ufe0f Vision", callback_data="joai:kimi")
@@ -56,10 +57,11 @@ def image_type_keyboard() -> InlineKeyboardMarkup:
     return builder.as_markup()
 
 
-def deepseek_model_keyboard() -> InlineKeyboardMarkup:
+def image_ratio_keyboard() -> InlineKeyboardMarkup:
     builder = InlineKeyboardBuilder()
-    builder.button(text="\U0001F9E0 Focused Analysis", callback_data="joaimodel:deepseek_thinking")
-    builder.button(text="\U0001F3AF Structured Analysis", callback_data="joaimodel:deepseek_reasoning")
-    builder.button(text="\u21A9\ufe0f Back to AI Tools", callback_data="joai:menu")
+    builder.button(text="1:1", callback_data="joaiimg:ratio:1_1")
+    builder.button(text="16:9", callback_data="joaiimg:ratio:16_9")
+    builder.button(text="9:16", callback_data="joaiimg:ratio:9_16")
+    builder.button(text="\u21A9\ufe0f Back to image styles", callback_data="joai:image")
     builder.adjust(1)
     return builder.as_markup()

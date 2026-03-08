@@ -6,6 +6,7 @@ import binascii
 import json
 import logging
 import os
+import re
 import time
 from contextlib import suppress
 from functools import lru_cache
@@ -51,7 +52,27 @@ DEFAULT_LOCAL_ORIGINS = (
 )
 load_dotenv(dotenv_path=PROJECT_ROOT / ".env")
 logger = logging.getLogger(__name__)
-TextMode = Literal["chat", "code", "research", "prompt", "deepseek_reasoning", "deepseek_thinking"]
+TextMode = Literal["chat", "code", "research", "prompt", "deep_analysis"]
+CODE_FENCE_PATTERN = re.compile(r"```(?P<lang>[a-zA-Z0-9_+#.-]*)\n(?P<code>[\s\S]*?)```", re.MULTILINE)
+DEBUG_INTENT_PATTERN = re.compile(
+    r"\b(debug|fix|error|exception|traceback|bug|issue|crash|failing|failure|broken|not working)\b",
+    flags=re.IGNORECASE,
+)
+IMAGE_RATIO_TO_SIZE = {
+    "1:1": "1024x1024",
+    "16:9": "1344x768",
+    "9:16": "768x1344",
+}
+IMAGE_SIZE_TO_RATIO = {value: key for key, value in IMAGE_RATIO_TO_SIZE.items()}
+IMAGE_STYLE_HINTS = {
+    "realistic": "photorealistic, natural textures, realistic camera lens, ultra detailed",
+    "ai_art": "digital art, stylized illustration, painterly texture, artistic composition",
+    "anime": "anime style, clean line art, expressive characters, vibrant colors",
+    "cyberpunk": "cyberpunk, neon lighting, futuristic city, rain reflections, cinematic mood",
+    "logo_icon": "minimal clean logo design, centered icon, vector style, brand-ready composition",
+    "render_3d": "3D render, physically based materials, global illumination, high detail",
+    "concept_art": "concept art, environment storytelling, dramatic composition, matte painting quality",
+}
 
 
 class BackendError(RuntimeError):
@@ -67,12 +88,19 @@ class ChatRequest(BaseModel):
     message: str = Field(min_length=1, max_length=32000)
 
 
+class CodeRequest(ChatRequest):
+    code_file_name: str | None = Field(default=None, max_length=240)
+    code_file_base64: str | None = Field(default=None, max_length=4_000_000)
+
+
 class ImageRequest(BaseModel):
     model_config = ConfigDict(str_strip_whitespace=True)
 
     prompt: str | None = Field(default=None, max_length=4000)
     message: str | None = Field(default=None, max_length=4000)
-    size: str = Field(default="1024x1024", pattern=r"^\d+x\d+$")
+    image_type: str | None = Field(default=None, max_length=60)
+    ratio: Literal["1:1", "16:9", "9:16"] | None = Field(default=None)
+    size: str | None = Field(default=None, pattern=r"^\d+x\d+$")
 
     @model_validator(mode="after")
     def _validate_prompt(self) -> "ImageRequest":
@@ -83,6 +111,24 @@ class ImageRequest(BaseModel):
     @property
     def effective_prompt(self) -> str:
         return self.prompt or self.message or ""
+
+    @property
+    def effective_ratio(self) -> Literal["1:1", "16:9", "9:16"]:
+        if self.ratio in IMAGE_RATIO_TO_SIZE:
+            return self.ratio
+        inferred = IMAGE_SIZE_TO_RATIO.get((self.size or "").strip())
+        if inferred in IMAGE_RATIO_TO_SIZE:
+            return inferred  # type: ignore[return-value]
+        return "1:1"
+
+    @property
+    def effective_size(self) -> str:
+        return IMAGE_RATIO_TO_SIZE[self.effective_ratio]
+
+    @property
+    def effective_style_hint(self) -> str:
+        key = (self.image_type or "").strip().lower()
+        return IMAGE_STYLE_HINTS.get(key, "")
 
 
 class PromptRequest(BaseModel):
@@ -102,6 +148,8 @@ class AITextRequest(BaseModel):
     mode: TextMode = "chat"
     message: str = Field(min_length=1, max_length=32000)
     prompt_type: str | None = Field(default=None, max_length=120)
+    code_file_name: str | None = Field(default=None, max_length=240)
+    code_file_base64: str | None = Field(default=None, max_length=4_000_000)
 
     @property
     def effective_prompt_type(self) -> str:
@@ -206,7 +254,7 @@ def _chat_service() -> ChatService:
 def _image_service() -> ImageGenerationService:
     settings = get_settings()
     return ImageGenerationService(
-        api_key=settings.nvidia_api_key or settings.ai_api_key,
+        api_key=settings.image_api_key or settings.nvidia_api_key or settings.ai_api_key,
         model=settings.image_model,
         base_url=settings.ai_base_url,
     )
@@ -228,37 +276,168 @@ def _decode_base64_image(raw_image: str) -> bytes:
         raise BackendError("Invalid base64 image payload.", status_code=400) from exc
 
 
-async def _run_text_mode_completion(message: str, mode: TextMode, prompt_type: str | None = None) -> str:
+def _decode_base64_text_file(raw_file: str) -> str:
+    value = raw_file.strip()
+    if value.startswith("data:"):
+        comma = value.find(",")
+        value = value[comma + 1 :] if comma >= 0 else ""
+    compact = "".join(value.split())
+    if not compact:
+        raise BackendError("Invalid base64 code file payload.", status_code=400)
+    try:
+        payload = base64.b64decode(compact, validate=True)
+    except (binascii.Error, ValueError) as exc:
+        raise BackendError("Invalid base64 code file payload.", status_code=400) from exc
+
+    for encoding in ("utf-8", "utf-16", "latin-1"):
+        try:
+            decoded = payload.decode(encoding)
+        except UnicodeDecodeError:
+            continue
+        text = decoded.strip()
+        if text:
+            return text
+    raise BackendError("Uploaded code file must be plain text.", status_code=400)
+
+
+def _is_debug_request(text: str) -> bool:
+    return bool(DEBUG_INTENT_PATTERN.search(text or ""))
+
+
+def _code_filename_for_lang(lang: str) -> str:
+    mapping = {
+        "python": "output.py",
+        "py": "output.py",
+        "javascript": "output.js",
+        "js": "output.js",
+        "typescript": "output.ts",
+        "ts": "output.ts",
+        "cpp": "output.cpp",
+        "c++": "output.cpp",
+        "c": "output.c",
+        "java": "Main.java",
+        "go": "main.go",
+        "html": "index.html",
+        "css": "styles.css",
+        "sql": "output.sql",
+        "json": "output.json",
+        "xml": "output.xml",
+        "yaml": "output.yml",
+        "yml": "output.yml",
+        "bash": "script.sh",
+        "sh": "script.sh",
+        "php": "output.php",
+        "rust": "main.rs",
+    }
+    return mapping.get((lang or "").strip().lower(), "output.txt")
+
+
+def _guess_code_language(code: str) -> str:
+    sample = (code or "").strip().lower()
+    if not sample:
+        return ""
+    if sample.startswith("<!doctype html") or "<html" in sample:
+        return "html"
+    if "def " in sample or "import " in sample or "print(" in sample:
+        return "python"
+    if "console.log" in sample or "const " in sample or "function " in sample:
+        return "javascript"
+    if "#include" in sample or "int main(" in sample:
+        return "cpp"
+    if "public class " in sample:
+        return "java"
+    if "package main" in sample or "fmt." in sample:
+        return "go"
+    if "fn main(" in sample:
+        return "rust"
+    if "select " in sample or "insert into " in sample:
+        return "sql"
+    return ""
+
+
+def _extract_code_and_lang(text: str) -> tuple[str, str]:
+    match = CODE_FENCE_PATTERN.search(text or "")
+    if match:
+        lang = (match.group("lang") or "").strip().lower()
+        code = (match.group("code") or "").strip()
+        if code:
+            return code, (lang or _guess_code_language(code))
+    raw = (text or "").strip()
+    return raw, _guess_code_language(raw)
+
+
+def _summary_for_very_long_code(code: str, file_name: str) -> str:
+    snippet = code[:1200].rstrip()
+    return (
+        f"Code output is very long. The full version is attached as {file_name}.\n\n"
+        "Starter snippet:\n\n"
+        f"```text\n{snippet}\n```"
+    )
+
+
+def _build_code_attachment_payload(output: str) -> dict[str, str] | None:
+    code, lang = _extract_code_and_lang(output)
+    if not code:
+        return None
+    if len(code) < 2200:
+        return None
+    return {
+        "code_file_name": _code_filename_for_lang(lang),
+        "code_file_base64": base64.b64encode(code.encode("utf-8")).decode("utf-8"),
+        "code_content": code,
+    }
+
+
+async def _run_text_mode_completion(
+    message: str,
+    mode: TextMode,
+    prompt_type: str | None = None,
+    code_file_name: str | None = None,
+    code_file_base64: str | None = None,
+) -> str:
     settings = get_settings()
     default_api_key = (settings.nvidia_api_key or settings.ai_api_key or "").strip()
     if not default_api_key:
         raise _safe_service_error(status_code=503)
 
     service_mode: Literal["chat", "code", "research", "prompt"] = (
-        "prompt" if mode == "prompt" else "research" if mode in {"research", "deepseek_reasoning", "deepseek_thinking"} else mode
+        "prompt" if mode == "prompt" else "research" if mode in {"research", "deep_analysis"} else mode
     )
     request_message = _compose_prompt_request(prompt_type or "general", message) if mode == "prompt" else message
     model_override = settings.code_model if mode == "code" else settings.nvidia_chat_model
     effective_api_key = default_api_key
     thinking = False
 
-    if mode in {"deepseek_reasoning", "deepseek_thinking"}:
+    if mode == "deep_analysis":
         deepseek_api_key = (settings.deepseek_api_key or default_api_key or "").strip()
         effective_api_key = deepseek_api_key or default_api_key
         if settings.deepseek_model.strip():
             model_override = settings.deepseek_model
-        if mode == "deepseek_thinking":
-            thinking = True
+        thinking = True
+        request_message = (
+            "Deep analysis mode.\n"
+            "Use careful, stepwise reasoning and include tradeoffs where relevant.\n\n"
+            f"{message}"
+        )
+
+    if mode == "code":
+        uploaded_code: str | None = None
+        if code_file_base64:
+            uploaded_code = _decode_base64_text_file(code_file_base64)
+
+        if _is_debug_request(message) and not uploaded_code:
+            return "For debug/fix requests, upload or provide the code file first."
+
+        if uploaded_code:
+            resolved_name = (code_file_name or "uploaded_code.txt").strip() or "uploaded_code.txt"
+            if len(uploaded_code) > 70_000:
+                uploaded_code = uploaded_code[:70_000].rstrip() + "\n...[truncated for analysis]"
             request_message = (
-                "Thinking analysis profile.\n"
-                "Explore alternatives and tradeoffs before final recommendations.\n\n"
-                f"{message}"
-            )
-        else:
-            request_message = (
-                "Reasoning analysis profile.\n"
-                "Use direct, stepwise reasoning and clear final recommendations.\n\n"
-                f"{message}"
+                f"User request:\n{message}\n\n"
+                f"Uploaded file: {resolved_name}\n\n"
+                "Use this file as the primary source.\n"
+                "Return the full corrected or generated result as one complete file by default.\n\n"
+                f"```text\n{uploaded_code}\n```"
             )
 
     try:
@@ -296,10 +475,14 @@ async def _describe_image_with_vision(message: str, image_base64: str) -> str:
         raise _safe_service_error() from exc
 
 
-async def _generate_image(prompt: str, size: str) -> str:
+async def _generate_image(prompt: str, size: str, ratio: Literal["1:1", "16:9", "9:16"]) -> dict[str, str]:
     try:
-        raw_bytes = await _image_service().generate_image(prompt, size=size)
-        return base64.b64encode(raw_bytes).decode("utf-8")
+        generated = await _image_service().generate_image(prompt, size=size, ratio=ratio)
+        if generated.image_bytes:
+            return {"image_base64": base64.b64encode(generated.image_bytes).decode("utf-8")}
+        if generated.image_url:
+            return {"image_url": generated.image_url}
+        raise AIServiceError(SAFE_SERVICE_UNAVAILABLE_MESSAGE)
     except AIServiceError as exc:
         logger.warning("Image generation failed.", exc_info=True)
         raise _safe_service_error() from exc
@@ -450,13 +633,32 @@ async def _handle_text_mode_request(
     mode: TextMode,
     message: str,
     prompt_type: str | None = None,
+    code_file_name: str | None = None,
+    code_file_base64: str | None = None,
 ) -> JSONResponse:
     refusal = _maybe_block_sensitive_request(message, prompt_type)
     if refusal:
         return refusal
     try:
-        output = await _run_text_mode_completion(message, mode=mode, prompt_type=prompt_type)
-        return JSONResponse(status_code=200, content={"output": output})
+        output = await _run_text_mode_completion(
+            message,
+            mode=mode,
+            prompt_type=prompt_type,
+            code_file_name=code_file_name,
+            code_file_base64=code_file_base64,
+        )
+        payload: dict[str, Any] = {"output": output}
+
+        if mode == "code":
+            attachment = _build_code_attachment_payload(output)
+            if attachment:
+                payload["code_file_name"] = attachment["code_file_name"]
+                payload["code_file_base64"] = attachment["code_file_base64"]
+                code_content = attachment.get("code_content", "")
+                if isinstance(code_content, str) and len(code_content) >= 16_000:
+                    payload["output"] = _summary_for_very_long_code(code_content, attachment["code_file_name"])
+                    payload["warning"] = "Full code is attached as a file."
+        return JSONResponse(status_code=200, content=payload)
     except BackendError as exc:
         return JSONResponse(status_code=exc.status_code, content={"error": exc.message})
 
@@ -468,6 +670,8 @@ async def ai_endpoint(payload: AITextRequest) -> JSONResponse:
         mode=payload.mode,
         message=payload.message,
         prompt_type=payload.prompt_type,
+        code_file_name=payload.code_file_name,
+        code_file_base64=payload.code_file_base64,
     )
 
 
@@ -479,8 +683,13 @@ async def chat_endpoint(payload: ChatRequest) -> JSONResponse:
 
 @app.post("/code")
 @app.post("/api/code")
-async def code_endpoint(payload: ChatRequest) -> JSONResponse:
-    return await _handle_text_mode_request(mode="code", message=payload.message)
+async def code_endpoint(payload: CodeRequest) -> JSONResponse:
+    return await _handle_text_mode_request(
+        mode="code",
+        message=payload.message,
+        code_file_name=payload.code_file_name,
+        code_file_base64=payload.code_file_base64,
+    )
 
 
 @app.post("/research")
@@ -502,18 +711,25 @@ async def prompt_endpoint(payload: PromptRequest) -> JSONResponse:
 @app.post("/image")
 @app.post("/api/image")
 async def image_endpoint(payload: ImageRequest) -> JSONResponse:
-    refusal = _maybe_block_sensitive_request(payload.effective_prompt)
+    refusal = _maybe_block_sensitive_request(payload.effective_prompt, payload.image_type, payload.ratio)
     if refusal:
         return refusal
     try:
-        image_base64 = await _generate_image(payload.effective_prompt, payload.size)
-        return JSONResponse(
-            status_code=200,
-            content={
-                "output": "Image generated successfully.",
-                "image_base64": image_base64,
-            },
+        prompt = payload.effective_prompt
+        style_hint = payload.effective_style_hint
+        if style_hint:
+            prompt = f"{prompt}\nStyle hints: {style_hint}"
+        result_payload = await _generate_image(
+            prompt=prompt,
+            size=payload.effective_size,
+            ratio=payload.effective_ratio,
         )
+        response_payload: dict[str, Any] = {
+            "output": "Image generated successfully.",
+            "ratio": payload.effective_ratio,
+        }
+        response_payload.update(result_payload)
+        return JSONResponse(status_code=200, content=response_payload)
     except BackendError as exc:
         return JSONResponse(status_code=exc.status_code, content={"error": exc.message})
 

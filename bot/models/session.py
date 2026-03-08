@@ -25,14 +25,10 @@ class JoAIMode(str, Enum):
     CHAT = "chat"
     CODE = "code"
     RESEARCH = "research"
+    DEEP_ANALYSIS = "deep_analysis"
     PROMPT = "prompt"
     IMAGE = "image"
     KIMI_IMAGE_DESCRIBER = "kimi_image_describer"
-
-
-class AIModelProfile(str, Enum):
-    DEEPSEEK_THINKING = "deepseek_thinking"
-    DEEPSEEK_REASONING = "deepseek_reasoning"
 
 
 def is_game_feature(feature: Feature) -> bool:
@@ -78,10 +74,13 @@ class UserSession:
     tic_tac_toe: TicTacToeState | None = None
     guess_number: GuessNumberState | None = None
     jo_ai_mode: JoAIMode = JoAIMode.MENU
-    ai_model_profile: AIModelProfile = AIModelProfile.DEEPSEEK_REASONING
     jo_ai_prompt_type: str | None = None
     jo_ai_image_type: str | None = None
+    jo_ai_image_ratio: str | None = None
     jo_ai_kimi_waiting_image: bool = False
     jo_ai_last_image_file_id: str | None = None
+    jo_ai_code_waiting_file: bool = False
+    jo_ai_code_file_name: str | None = None
+    jo_ai_code_file_content: str | None = None
     jo_ai_chat_history: deque[tuple[str, str]] = field(default_factory=lambda: deque(maxlen=20))
     last_updated: datetime = field(default_factory=lambda: datetime.now(timezone.utc))

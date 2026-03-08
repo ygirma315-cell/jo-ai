@@ -252,7 +252,7 @@ async def create_bot_runtime() -> BotRuntime:
         base_url=settings.ai_base_url,
     )
     dispatcher["image_generation_service"] = ImageGenerationService(
-        api_key=settings.nvidia_api_key or settings.ai_api_key,
+        api_key=settings.image_api_key or settings.nvidia_api_key or settings.ai_api_key,
         model=settings.image_model,
         base_url=settings.ai_base_url,
     )

@@ -87,6 +87,19 @@
               </select>
             </div>
 
+            <div id="codeFileWrap" class="composer-upload" hidden>
+              <label class="upload-zone" for="codeFile">
+                <input
+                  id="codeFile"
+                  type="file"
+                  accept=".py,.js,.ts,.tsx,.jsx,.java,.cpp,.cc,.cxx,.c,.cs,.go,.rs,.php,.rb,.swift,.kt,.m,.mm,.sql,.html,.htm,.css,.scss,.json,.xml,.yaml,.yml,.toml,.ini,.cfg,.conf,.sh,.bat,.ps1,.txt,.md,.env"
+                >
+                <span class="upload-title">Upload code file (for debug/fix)</span>
+                <span class="upload-copy">Optional for generation. Required for debug/fix requests.</span>
+              </label>
+              <p id="codeFileInfo" class="hint">No code file selected.</p>
+            </div>
+
             <div id="kimiImageWrap" class="composer-upload" hidden>
               <label class="upload-zone" for="kimiImage">
                 <input id="kimiImage" type="file" accept=".png,.jpg,.jpeg,.webp,.gif,.bmp,image/*">

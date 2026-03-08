@@ -29,14 +29,14 @@ from bot.constants import (
 )
 from bot.filters.feature_filter import ActiveFeatureFilter
 from bot.keyboards.jo_ai import (
-    deepseek_model_keyboard,
+    image_ratio_keyboard,
     image_type_keyboard,
     jo_ai_menu_keyboard,
     jo_chat_keyboard,
     kimi_result_keyboard,
 )
 from bot.keyboards.menu import ai_tools_keyboard, main_menu_keyboard
-from bot.models.session import AIModelProfile, Feature, JoAIMode
+from bot.models.session import Feature, JoAIMode
 from bot.security import BRANDING_LINE, DEVELOPER_HANDLE
 from bot.services.ai_service import AIServiceError, ChatService, ImageGenerationService
 from bot.services.session_manager import SessionManager
@@ -78,9 +78,22 @@ IMAGE_TYPE_STYLE_HINTS = {
     "concept_art": "concept art, environment storytelling, dramatic composition, matte painting quality",
 }
 
-MODEL_PROFILE_LABELS = {
-    AIModelProfile.DEEPSEEK_THINKING: "Focused Analysis",
-    AIModelProfile.DEEPSEEK_REASONING: "Structured Analysis",
+IMAGE_RATIO_LABELS = {
+    "1:1": "1:1",
+    "16:9": "16:9",
+    "9:16": "9:16",
+}
+
+IMAGE_RATIO_TOKEN_MAP = {
+    "1_1": "1:1",
+    "16_9": "16:9",
+    "9_16": "9:16",
+}
+
+IMAGE_RATIO_TO_SIZE = {
+    "1:1": "1024x1024",
+    "16:9": "1344x768",
+    "9:16": "768x1344",
 }
 
 ENGAGEMENT_LINES = (
@@ -109,6 +122,13 @@ MODE_RESULT_TITLE = {
 MAX_REPLY_CHARS = 3300
 CODE_FENCE_PATTERN = re.compile(r"```(?P<lang>[a-zA-Z0-9_+#.-]*)\n(?P<code>[\s\S]*?)```", re.MULTILINE)
 CHAT_HISTORY_ENTRY_MAX_CHARS = 1800
+LONG_CODE_ATTACHMENT_THRESHOLD = 2800
+EXTREME_CODE_LENGTH_THRESHOLD = 16000
+MAX_CODE_UPLOAD_BYTES = 1_500_000
+DEBUG_INTENT_PATTERN = re.compile(
+    r"\b(debug|fix|error|exception|traceback|bug|issue|crash|failing|failure|broken|not working)\b",
+    flags=re.IGNORECASE,
+)
 
 
 @dataclass(slots=True)
@@ -121,35 +141,25 @@ class ParsedCodeReply:
     notes_lines: list[str]
 
 
-def _profile_options(profile: AIModelProfile, deepseek_api_key: str | None, deepseek_model: str) -> dict[str, object]:
-    if profile == AIModelProfile.DEEPSEEK_THINKING:
-        profile_prefix = "Thinking mode: explore alternatives, then provide a concise answer."
-    else:
-        profile_prefix = "Reasoning mode: use clear, logical, stepwise reasoning for accuracy."
-
-    if not (deepseek_api_key or "").strip():
-        # Keep analysis available even if Deepseek credentials are absent.
-        # In this case requests fall back to the default chat model path.
-        return {
-            "model_override": None,
-            "api_key_override": None,
-            "thinking": False,
-            "profile_prefix": profile_prefix,
-        }
-
-    if profile == AIModelProfile.DEEPSEEK_THINKING:
-        return {
-            "model_override": deepseek_model,
-            "api_key_override": deepseek_api_key,
-            "thinking": True,
-            "profile_prefix": profile_prefix,
-        }
+def _default_mode_options() -> dict[str, object]:
     return {
-        "model_override": deepseek_model,
-        "api_key_override": deepseek_api_key,
+        "model_override": None,
+        "api_key_override": None,
         "thinking": False,
-        "profile_prefix": profile_prefix,
+        "mode_prefix": "",
     }
+
+
+def _deep_analysis_mode_options(deepseek_api_key: str | None, deepseek_model: str) -> dict[str, object]:
+    mode_options = _default_mode_options()
+    mode_options["thinking"] = True
+    mode_options["mode_prefix"] = (
+        "Deep analysis mode: think carefully, consider tradeoffs, then provide a clear final answer."
+    )
+    if (deepseek_api_key or "").strip():
+        mode_options["api_key_override"] = deepseek_api_key
+        mode_options["model_override"] = deepseek_model
+    return mode_options
 
 
 async def _show_jo_ai_menu(message: Message) -> None:
@@ -166,8 +176,13 @@ async def _switch_to_jo_ai_mode(user_id: int, mode: JoAIMode, session_manager: S
                 session.jo_ai_prompt_type = None
             if mode != JoAIMode.IMAGE:
                 session.jo_ai_image_type = None
+                session.jo_ai_image_ratio = None
             if mode != JoAIMode.KIMI_IMAGE_DESCRIBER:
                 session.jo_ai_kimi_waiting_image = False
+            if mode != JoAIMode.CODE:
+                session.jo_ai_code_waiting_file = False
+                session.jo_ai_code_file_name = None
+                session.jo_ai_code_file_content = None
 
 
 async def _activate_mode(
@@ -194,7 +209,8 @@ async def _activate_mode(
         await message.answer(
             "⚡ <b>Code Generator is active</b>\n\n"
             "Describe what you want to build, including language/framework.\n"
-            "📌 Example: \"Create a Python FastAPI health endpoint.\"",
+            "📌 Example: \"Create a Python FastAPI health endpoint.\"\n\n"
+            "🛠 For debug/fix requests, upload the code file first.",
             reply_markup=jo_chat_keyboard(),
         )
         return
@@ -203,6 +219,14 @@ async def _activate_mode(
             "🔍 <b>Research mode is active</b>\n\n"
             "Send a topic/question and I will provide structured insights.\n"
             "🎯 Include context for better results.",
+            reply_markup=jo_chat_keyboard(),
+        )
+        return
+    if mode == JoAIMode.DEEP_ANALYSIS:
+        await message.answer(
+            "🧠 <b>Deep Analysis is active</b>\n\n"
+            "Send your question and I will analyze it deeply with careful reasoning.\n"
+            "No extra mode selection is needed.",
             reply_markup=jo_chat_keyboard(),
         )
         return
@@ -217,16 +241,20 @@ async def _activate_mode(
     if mode == JoAIMode.IMAGE:
         await message.answer(
             "🎨 <b>Image Generator is active</b>\n\n"
-            "Step 1/2: Choose an image style below.",
+            "Step 1/3: Choose an image style below.",
             reply_markup=image_type_keyboard(),
         )
         return
-    await message.answer(
-        "🖼️ <b>JO AI Vision is active</b>\n\n"
-        "Send an image and I will describe what I see.\n"
-        "💡 Optional: include a text instruction with the photo.",
-        reply_markup=jo_chat_keyboard(),
-    )
+    if mode == JoAIMode.KIMI_IMAGE_DESCRIBER:
+        await message.answer(
+            "🖼️ <b>JO AI Vision is active</b>\n\n"
+            "Send an image and I will describe what I see.\n"
+            "💡 Optional: include a text instruction with the photo.",
+            reply_markup=jo_chat_keyboard(),
+        )
+        return
+
+    await message.answer("🤖 Select a JO AI mode to continue.", reply_markup=jo_ai_menu_keyboard())
 
 
 async def _maybe_send_engagement(message: Message) -> None:
@@ -411,6 +439,155 @@ def _compact_history_entry(text: str, limit: int = CHAT_HISTORY_ENTRY_MAX_CHARS)
     return f"{normalized[:limit].rstrip()}\n...[truncated for context]..."
 
 
+def _is_code_debug_request(text: str) -> bool:
+    return bool(DEBUG_INTENT_PATTERN.search(text or ""))
+
+
+def _code_filename_for_language(lang: str) -> str:
+    mapping = {
+        "python": "output.py",
+        "py": "output.py",
+        "javascript": "output.js",
+        "js": "output.js",
+        "typescript": "output.ts",
+        "ts": "output.ts",
+        "cpp": "output.cpp",
+        "c++": "output.cpp",
+        "c": "output.c",
+        "java": "Main.java",
+        "go": "main.go",
+        "html": "index.html",
+        "css": "styles.css",
+        "sql": "output.sql",
+        "json": "output.json",
+        "xml": "output.xml",
+        "yaml": "output.yml",
+        "yml": "output.yml",
+        "bash": "script.sh",
+        "sh": "script.sh",
+        "php": "output.php",
+        "rust": "main.rs",
+    }
+    key = (lang or "").strip().lower()
+    return mapping.get(key, "output.txt")
+
+
+def _file_is_code_like(file_name: str) -> bool:
+    normalized = (file_name or "").lower()
+    allowed_suffixes = (
+        ".py",
+        ".js",
+        ".ts",
+        ".tsx",
+        ".jsx",
+        ".java",
+        ".cpp",
+        ".cc",
+        ".cxx",
+        ".c",
+        ".cs",
+        ".go",
+        ".rs",
+        ".php",
+        ".rb",
+        ".swift",
+        ".kt",
+        ".m",
+        ".mm",
+        ".sql",
+        ".html",
+        ".htm",
+        ".css",
+        ".scss",
+        ".json",
+        ".xml",
+        ".yaml",
+        ".yml",
+        ".toml",
+        ".ini",
+        ".cfg",
+        ".conf",
+        ".sh",
+        ".bat",
+        ".ps1",
+        ".txt",
+        ".md",
+        ".env",
+    )
+    return normalized.endswith(allowed_suffixes)
+
+
+def _decode_uploaded_code_file(data: bytes) -> str | None:
+    for encoding in ("utf-8", "utf-16", "latin-1"):
+        try:
+            decoded = data.decode(encoding)
+        except UnicodeDecodeError:
+            continue
+        text = decoded.strip()
+        if text:
+            return text
+    return None
+
+
+def _build_code_debug_request(user_text: str, file_name: str, file_content: str) -> str:
+    max_chars = 70_000
+    normalized_code = file_content.strip()
+    if len(normalized_code) > max_chars:
+        normalized_code = normalized_code[:max_chars].rstrip() + "\n...[truncated for analysis]"
+    return (
+        f"Debug request:\n{user_text}\n\n"
+        f"Target file: {file_name}\n\n"
+        "Return the corrected version of this file as one complete file.\n"
+        "Also include a short explanation of what was fixed.\n\n"
+        f"```text\n{normalized_code}\n```"
+    )
+
+
+async def _send_code_generator_reply(
+    message: Message,
+    formatter: TelegramMessageFormatter,
+    reply_text: str,
+    reply_markup,
+) -> None:
+    normalized_reply = reply_text.strip() or "No output generated."
+    parsed = _parse_code_reply(normalized_reply, MODE_RESULT_TITLE["code"])
+    code_body = parsed.code.strip() or normalized_reply
+    code_lang = parsed.lang or _guess_code_language(code_body, fallback="text")
+    file_name = _code_filename_for_language(code_lang)
+    attach_full_file = len(code_body) >= LONG_CODE_ATTACHMENT_THRESHOLD or len(normalized_reply) >= MAX_REPLY_CHARS
+    is_extremely_long = len(code_body) >= EXTREME_CODE_LENGTH_THRESHOLD
+
+    if is_extremely_long:
+        summary_lines = parsed.explanation_lines or _clean_list_block(normalized_reply, max_items=4)
+        starter_snippet = code_body[:900].rstrip()
+        summary_text = "Full code is attached as one file.\n\nSummary:\n" + "\n".join(
+            f"- {line}" for line in summary_lines[:6]
+        )
+        if starter_snippet:
+            summary_text += f"\n\nStarter snippet:\n```{code_lang}\n{starter_snippet}\n```"
+        await formatter.send_paginated_text_response(
+            chat_id=message.chat.id,
+            title="Code Result",
+            body_text=summary_text,
+            reply_markup=reply_markup,
+        )
+    else:
+        await formatter.send_rich_response(
+            chat_id=message.chat.id,
+            title="Code Result",
+            raw_text=normalized_reply,
+            reply_markup=reply_markup,
+        )
+
+    if attach_full_file:
+        code_file = BufferedInputFile(code_body.encode("utf-8"), filename=file_name)
+        await message.bot.send_document(
+            chat_id=message.chat.id,
+            document=code_file,
+            caption=f"📎 Full code file attached: {file_name}",
+        )
+
+
 async def _send_progress_message(message: Message, text: str) -> Message | None:
     try:
         return await message.answer(text)
@@ -444,13 +621,12 @@ async def _send_formatted_ai_reply(
     normalized_reply = reply_text.strip() or "No output generated."
     title = MODE_RESULT_TITLE.get(mode, "AI Result")
 
-    if mode == "code" or CODE_FENCE_PATTERN.search(normalized_reply):
-        await formatter.send_rich_response(
-            chat_id=message.chat.id,
-            title=title,
-            raw_text=normalized_reply,
-            reply_markup=reply_markup,
-        )
+    if mode == "code":
+        await _send_code_generator_reply(message, formatter, normalized_reply, reply_markup)
+        return
+
+    if CODE_FENCE_PATTERN.search(normalized_reply):
+        await formatter.send_rich_response(chat_id=message.chat.id, title=title, raw_text=normalized_reply, reply_markup=reply_markup)
         return
 
     await formatter.send_paginated_text_response(
@@ -511,12 +687,7 @@ async def open_jo_ai_menu(message: Message, session_manager: SessionManager, min
         await _activate_mode(message, message.from_user.id, JoAIMode.KIMI_IMAGE_DESCRIBER, session_manager, miniapp_url)
         return
     if text in {"/deepseek", "/analysis", MENU_AI_DEEPSEEK.lower()}:
-        await message.answer(
-            "🧠 <b>Choose analysis profile</b>\n\n"
-            "• Focused Analysis: broader exploration\n"
-            "• Structured Analysis: direct, stepwise accuracy",
-            reply_markup=deepseek_model_keyboard(),
-        )
+        await _activate_mode(message, message.from_user.id, JoAIMode.DEEP_ANALYSIS, session_manager, miniapp_url)
         return
 
     transition = await session_manager.switch_feature(message.from_user.id, Feature.AI_TOOLS_MENU)
@@ -583,6 +754,16 @@ async def enable_research_mode(query: CallbackQuery, session_manager: SessionMan
         await _activate_mode(query.message, query.from_user.id, JoAIMode.RESEARCH, session_manager, miniapp_url)
 
 
+@router.callback_query(F.data == "joai:deep_analysis")
+async def enable_deep_analysis_mode(query: CallbackQuery, session_manager: SessionManager, miniapp_url: str | None) -> None:
+    if not query.from_user:
+        await query.answer()
+        return
+    await query.answer()
+    if isinstance(query.message, Message):
+        await _activate_mode(query.message, query.from_user.id, JoAIMode.DEEP_ANALYSIS, session_manager, miniapp_url)
+
+
 @router.callback_query(F.data == "joai:prompt")
 async def enable_prompt_mode(query: CallbackQuery, session_manager: SessionManager, miniapp_url: str | None) -> None:
     if not query.from_user:
@@ -634,44 +815,48 @@ async def choose_image_type(query: CallbackQuery, session_manager: SessionManage
             await query.answer("⏳ Image session expired. Send /image again.", show_alert=True)
             return
         session.jo_ai_image_type = image_type
+        session.jo_ai_image_ratio = None
 
     await query.answer(f"✅ {label} selected.")
     if isinstance(query.message, Message):
         await query.message.answer(
             f"✅ <b>{label}</b> selected.\n\n"
-            "Step 2/2: Describe the image you want me to create.\n"
-            "🎯 Be specific for better results.",
-            reply_markup=jo_chat_keyboard(),
+            "Step 2/3: Choose an aspect ratio.\n"
+            "Available ratios: 1:1, 16:9, 9:16.",
+            reply_markup=image_ratio_keyboard(),
         )
 
 
-@router.callback_query(F.data.startswith("joaimodel:"))
-async def choose_model_profile(query: CallbackQuery, session_manager: SessionManager) -> None:
+@router.callback_query(F.data.startswith("joaiimg:ratio:"))
+async def choose_image_ratio(query: CallbackQuery, session_manager: SessionManager) -> None:
     if not query.from_user:
         await query.answer()
         return
-    value = (query.data or "").split(":")[-1]
-    mapping = {
-        "deepseek_thinking": AIModelProfile.DEEPSEEK_THINKING,
-        "deepseek_reasoning": AIModelProfile.DEEPSEEK_REASONING,
-    }
-    profile = mapping.get(value)
-    if not profile:
-        await query.answer("⚠️ Unknown analysis profile.", show_alert=True)
+    raw = query.data or ""
+    parts = raw.split(":")
+    if len(parts) != 3:
+        await query.answer("⚠️ Invalid ratio option.", show_alert=True)
+        return
+    ratio = IMAGE_RATIO_TOKEN_MAP.get(parts[2])
+    if not ratio:
+        await query.answer("⚠️ Unsupported ratio.", show_alert=True)
         return
 
     async with session_manager.lock(query.from_user.id) as session:
-        session.ai_model_profile = profile
-        session.active_feature = Feature.JO_AI
-        session.jo_ai_mode = JoAIMode.RESEARCH
+        if session.active_feature != Feature.JO_AI or session.jo_ai_mode != JoAIMode.IMAGE:
+            await query.answer("⏳ Image session expired. Send /image again.", show_alert=True)
+            return
+        if not session.jo_ai_image_type:
+            await query.answer("Pick an image style first.", show_alert=True)
+            return
+        session.jo_ai_image_ratio = ratio
 
-    label = MODEL_PROFILE_LABELS.get(profile, "Unknown")
-    await query.answer(f"✅ {label} selected.")
+    await query.answer(f"✅ Ratio {ratio} selected.")
     if isinstance(query.message, Message):
         await query.message.answer(
-            f"🧠 Profile set to <b>{label}</b>.\n\n"
-            "🔍 Analysis mode is now active.\n"
-            "Send the topic or question you want analyzed.",
+            f"✅ Ratio <b>{ratio}</b> selected.\n\n"
+            "Step 3/3: Describe the image you want me to create.\n"
+            "🎯 Be specific for better results.",
             reply_markup=jo_chat_keyboard(),
         )
 
@@ -714,38 +899,65 @@ async def handle_jo_ai_text(
         mode = session.jo_ai_mode if session.active_feature == Feature.JO_AI else JoAIMode.MENU
         prompt_type = session.jo_ai_prompt_type
         image_type = session.jo_ai_image_type
-        model_profile = session.ai_model_profile
+        image_ratio = session.jo_ai_image_ratio
+        code_file_name = session.jo_ai_code_file_name
+        code_file_content = session.jo_ai_code_file_content
         history_snapshot = [{"role": role, "content": content} for role, content in session.jo_ai_chat_history]
 
-    # Keep Chat/Code on the default stable path; analysis profile only applies to Research mode.
-    if mode == JoAIMode.RESEARCH:
-        profile_options = _profile_options(model_profile, deepseek_api_key, deepseek_model)
-    else:
-        profile_options = {
-            "model_override": None,
-            "api_key_override": None,
-            "thinking": False,
-            "profile_prefix": "",
-        }
-
-    profile_prefix = str(profile_options.get("profile_prefix", "")).strip()
-    user_text = f"{profile_prefix}\n\n{text}" if profile_prefix else text
+    mode_options = _default_mode_options()
+    user_text = text
 
     if mode == JoAIMode.CHAT:
-        await _process_chat_message(message, user_text, session_manager, chat_service, history_snapshot, "chat", profile_options)
+        await _process_chat_message(message, user_text, session_manager, chat_service, history_snapshot, "chat", mode_options)
         return
+
     if mode == JoAIMode.CODE:
-        await _process_chat_message(message, user_text, session_manager, chat_service, [], "code", profile_options)
+        debug_request = _is_code_debug_request(text)
+        if debug_request and not code_file_content:
+            async with session_manager.lock(message.from_user.id) as session:
+                session.jo_ai_code_waiting_file = True
+            await message.answer(
+                "🛠 To debug or fix code, upload the file first in Code Generator mode.\n"
+                "Then send your debug request.",
+                reply_markup=jo_chat_keyboard(),
+            )
+            return
+
+        if debug_request and code_file_content:
+            user_text = _build_code_debug_request(text, code_file_name or "uploaded_code.txt", code_file_content)
+        elif code_file_content and text.lower() in {"analyze file", "analyze", "review file"}:
+            user_text = (
+                f"Analyze this uploaded code file and suggest fixes.\n"
+                f"Target file: {code_file_name or 'uploaded_code.txt'}\n\n"
+                f"```text\n{code_file_content}\n```"
+            )
+
+        await _process_chat_message(message, user_text, session_manager, chat_service, [], "code", mode_options)
         return
+
     if mode == JoAIMode.RESEARCH:
-        await _process_chat_message(message, user_text, session_manager, chat_service, [], "research", profile_options)
+        await _process_chat_message(message, user_text, session_manager, chat_service, [], "research", mode_options)
         return
+    if mode == JoAIMode.DEEP_ANALYSIS:
+        mode_options = _deep_analysis_mode_options(deepseek_api_key, deepseek_model)
+        mode_prefix = str(mode_options.get("mode_prefix", "")).strip()
+        deep_text = f"{mode_prefix}\n\n{text}" if mode_prefix else text
+        await _process_chat_message(message, deep_text, session_manager, chat_service, [], "research", mode_options)
+        return
+
     if mode == JoAIMode.PROMPT:
-        await _process_prompt_message(message, user_text, session_manager, chat_service, prompt_type, profile_options)
+        await _process_prompt_message(message, user_text, session_manager, chat_service, prompt_type, mode_options)
         return
     if mode == JoAIMode.IMAGE:
         await _process_image_message(
-            message, user_text, session_manager, chat_service, image_generation_service, image_type, profile_options
+            message,
+            user_text,
+            session_manager,
+            chat_service,
+            image_generation_service,
+            image_type,
+            image_ratio,
+            mode_options,
         )
         return
     if mode == JoAIMode.KIMI_IMAGE_DESCRIBER:
@@ -759,6 +971,93 @@ async def handle_jo_ai_text(
     await message.answer(
         "🤖 Pick an AI mode first from the menu below.",
         reply_markup=jo_ai_menu_keyboard(),
+    )
+
+
+@router.message(ActiveFeatureFilter(Feature.JO_AI), F.document)
+async def handle_code_document_upload(
+    message: Message,
+    session_manager: SessionManager,
+    chat_service: ChatService,
+) -> None:
+    if not message.from_user or not message.document:
+        return
+
+    async with session_manager.lock(message.from_user.id) as session:
+        mode = session.jo_ai_mode if session.active_feature == Feature.JO_AI else JoAIMode.MENU
+
+    if mode != JoAIMode.CODE:
+        await message.answer(
+            "📎 File upload analysis is available only in <b>Code Generator</b> mode.",
+            reply_markup=jo_chat_keyboard(),
+        )
+        return
+
+    document = message.document
+    file_name = document.file_name or "uploaded_code.txt"
+    file_size = int(document.file_size or 0)
+    if file_size > MAX_CODE_UPLOAD_BYTES:
+        await message.answer(
+            "⚠️ File is too large for code analysis here.\nPlease upload a file smaller than 1.5MB.",
+            reply_markup=jo_chat_keyboard(),
+        )
+        return
+    if not _file_is_code_like(file_name):
+        await message.answer(
+            "⚠️ Please upload a source-code or text file for debugging.",
+            reply_markup=jo_chat_keyboard(),
+        )
+        return
+
+    progress_message = await _send_progress_message(message, "📥 Reading uploaded code file...")
+    try:
+        file = await message.bot.get_file(document.file_id)
+        downloaded = await message.bot.download_file(file.file_path)
+        raw_bytes = downloaded.read()
+    except Exception:
+        await _clear_progress_message(progress_message)
+        logger.exception("Failed to download uploaded code file.")
+        await message.answer("⚠️ I could not read that file. Please upload it again.")
+        return
+
+    decoded = _decode_uploaded_code_file(raw_bytes)
+    if not decoded:
+        await _clear_progress_message(progress_message)
+        await message.answer(
+            "⚠️ I couldn't decode that file as text code.\nUpload a plain text source file.",
+            reply_markup=jo_chat_keyboard(),
+        )
+        return
+
+    async with session_manager.lock(message.from_user.id) as session:
+        if session.active_feature != Feature.JO_AI or session.jo_ai_mode != JoAIMode.CODE:
+            await _clear_progress_message(progress_message)
+            await message.answer("⏳ Code session expired. Send /code and try again.")
+            return
+        session.jo_ai_code_file_name = file_name
+        session.jo_ai_code_file_content = decoded
+        session.jo_ai_code_waiting_file = False
+
+    await _clear_progress_message(progress_message)
+    caption_text = (message.caption or "").strip()
+    if caption_text:
+        mode_options = _default_mode_options()
+        if _is_code_debug_request(caption_text):
+            user_text = _build_code_debug_request(caption_text, file_name, decoded)
+        else:
+            user_text = (
+                f"Use this uploaded file as the main context.\n"
+                f"File: {file_name}\n"
+                f"User request: {caption_text}\n\n"
+                f"```text\n{decoded}\n```"
+            )
+        await _process_chat_message(message, user_text, session_manager, chat_service, [], "code", mode_options)
+        return
+
+    await message.answer(
+        f"✅ File received: <b>{html.escape(file_name)}</b>\n"
+        "Now send what you want me to debug or fix.",
+        reply_markup=jo_chat_keyboard(),
     )
 
 
@@ -952,7 +1251,7 @@ async def _process_chat_message(
     chat_service: ChatService,
     history: list[dict[str, str]],
     mode: Literal["chat", "code", "research", "prompt", "image_prompt"],
-    profile_options: dict[str, object],
+    mode_options: dict[str, object],
 ) -> None:
     show_progress_message = mode not in {"chat", "code"}
     if show_progress_message:
@@ -967,9 +1266,9 @@ async def _process_chat_message(
                 user_text,
                 history=history,
                 mode=mode,
-                model_override=profile_options.get("model_override"),  # type: ignore[arg-type]
-                api_key_override=profile_options.get("api_key_override"),  # type: ignore[arg-type]
-                thinking=bool(profile_options.get("thinking", False)),
+                model_override=mode_options.get("model_override"),  # type: ignore[arg-type]
+                api_key_override=mode_options.get("api_key_override"),  # type: ignore[arg-type]
+                thinking=bool(mode_options.get("thinking", False)),
             )
     except AIServiceError as exc:
         await _clear_progress_message(progress_message)
@@ -996,7 +1295,7 @@ async def _process_prompt_message(
     session_manager: SessionManager,
     chat_service: ChatService,
     current_prompt_type: str | None,
-    profile_options: dict[str, object],
+    mode_options: dict[str, object],
 ) -> None:
     if not message.from_user:
         return
@@ -1022,9 +1321,9 @@ async def _process_prompt_message(
             prompt_request,
             history=[],
             mode="prompt",
-            model_override=profile_options.get("model_override"),  # type: ignore[arg-type]
-            api_key_override=profile_options.get("api_key_override"),  # type: ignore[arg-type]
-            thinking=bool(profile_options.get("thinking", False)),
+            model_override=mode_options.get("model_override"),  # type: ignore[arg-type]
+            api_key_override=mode_options.get("api_key_override"),  # type: ignore[arg-type]
+            thinking=bool(mode_options.get("thinking", False)),
         )
     except AIServiceError as exc:
         await _clear_progress_message(progress_message)
@@ -1046,20 +1345,32 @@ async def _process_image_message(
     chat_service: ChatService,
     image_generation_service: ImageGenerationService,
     current_image_type: str | None,
-    profile_options: dict[str, object],
+    current_image_ratio: str | None,
+    mode_options: dict[str, object],
 ) -> None:
     if not current_image_type:
         await message.answer(
-            "🎨 Step 1/2: Choose an image style first.",
+            "🎨 Step 1/3: Choose an image style first.",
             reply_markup=image_type_keyboard(),
+        )
+        return
+    if current_image_ratio not in IMAGE_RATIO_TO_SIZE:
+        await message.answer(
+            "📐 Step 2/3: Choose an aspect ratio first.",
+            reply_markup=image_ratio_keyboard(),
         )
         return
     await _maybe_send_engagement(message)
 
     style_label = IMAGE_TYPE_LABELS.get(current_image_type, current_image_type)
+    ratio_label = IMAGE_RATIO_LABELS.get(current_image_ratio, "1:1")
+    image_size = IMAGE_RATIO_TO_SIZE.get(current_image_ratio, IMAGE_RATIO_TO_SIZE["1:1"])
     style_hint = IMAGE_TYPE_STYLE_HINTS.get(current_image_type, "high quality image")
     prompt_request = (
-        f"Image type: {style_label}\nStyle hints: {style_hint}\nUser description: {user_text}\n"
+        f"Image type: {style_label}\n"
+        f"Aspect ratio: {ratio_label}\n"
+        f"Style hints: {style_hint}\n"
+        f"User description: {user_text}\n"
         "Generate one optimized image prompt with subject detail, lighting, environment, style and quality tags."
     )
     progress_message = await _send_progress_message(message, "🧠 Optimizing your image prompt...")
@@ -1069,9 +1380,9 @@ async def _process_image_message(
                 prompt_request,
                 history=[],
                 mode="image_prompt",
-                model_override=profile_options.get("model_override"),  # type: ignore[arg-type]
-                api_key_override=profile_options.get("api_key_override"),  # type: ignore[arg-type]
-                thinking=bool(profile_options.get("thinking", False)),
+                model_override=mode_options.get("model_override"),  # type: ignore[arg-type]
+                api_key_override=mode_options.get("api_key_override"),  # type: ignore[arg-type]
+                thinking=bool(mode_options.get("thinking", False)),
             )
     except AIServiceError as exc:
         await _clear_progress_message(progress_message)
@@ -1089,7 +1400,11 @@ async def _process_image_message(
             await progress_message.edit_text("🎨 Creating your image...")
     try:
         async with ChatActionSender.upload_photo(bot=message.bot, chat_id=message.chat.id):
-            image_bytes = await image_generation_service.generate_image(cleaned_prompt)
+            generated = await image_generation_service.generate_image(
+                cleaned_prompt,
+                size=image_size,
+                ratio=ratio_label,
+            )
     except AIServiceError as exc:
         await _clear_progress_message(progress_message)
         await message.answer(
@@ -1110,15 +1425,37 @@ async def _process_image_message(
         return
 
     await _clear_progress_message(progress_message)
-    image_file = BufferedInputFile(image_bytes, filename="jo_ai_generated.png")
-    await message.answer_photo(
-        photo=image_file,
-        caption=(
-            "🎉 <b>Your image is ready</b>\n\n"
-            f"🎨 Style: <b>{html.escape(style_label)}</b>\n"
-            "📌 Prompt used:\n"
-            f"<code>{html.escape(cleaned_prompt[:900])}</code>"
-        ),
+    if generated.image_bytes:
+        image_file = BufferedInputFile(generated.image_bytes, filename="jo_ai_generated.png")
+        await message.answer_photo(
+            photo=image_file,
+            caption=(
+                "🎉 <b>Your image is ready</b>\n\n"
+                f"🎨 Style: <b>{html.escape(style_label)}</b>\n"
+                f"📐 Ratio: <b>{html.escape(ratio_label)}</b>\n"
+                "📌 Prompt used:\n"
+                f"<code>{html.escape(cleaned_prompt[:900])}</code>"
+            ),
+            reply_markup=jo_chat_keyboard(),
+        )
+        return
+
+    if generated.image_url:
+        await message.answer_photo(
+            photo=generated.image_url,
+            caption=(
+                "🎉 <b>Your image is ready</b>\n\n"
+                f"🎨 Style: <b>{html.escape(style_label)}</b>\n"
+                f"📐 Ratio: <b>{html.escape(ratio_label)}</b>\n"
+                "📌 Prompt used:\n"
+                f"<code>{html.escape(cleaned_prompt[:900])}</code>"
+            ),
+            reply_markup=jo_chat_keyboard(),
+        )
+        return
+
+    await message.answer(
+        _friendly_error_text("Image generation is temporarily unavailable"),
         reply_markup=jo_chat_keyboard(),
     )
 
@@ -1127,6 +1464,7 @@ async def _process_image_message(
 async def jo_ai_unexpected_input(message: Message) -> None:
     await message.answer(
         "📩 Send text in the current JO AI mode.\n"
+        "📎 In Code Generator mode, you can upload a code file for debug/fix.\n"
         "🖼️ In Vision mode, send an image.\n"
         "💡 You can switch mode anytime.",
         reply_markup=jo_ai_menu_keyboard(),

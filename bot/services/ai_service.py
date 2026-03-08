@@ -169,43 +169,85 @@ class ImageGenerationService:
     model: str = DEFAULT_IMAGE_MODEL
     base_url: str = NVIDIA_BASE_URL
 
-    async def generate_image(self, prompt: str, size: str = "1024x1024") -> bytes:
+    async def generate_image(
+        self,
+        prompt: str,
+        size: str = "1024x1024",
+        ratio: Literal["1:1", "16:9", "9:16"] = "1:1",
+    ) -> "GeneratedImageResult":
         if contains_internal_detail_request(prompt):
             raise AIServiceError(SAFE_INTERNAL_DETAILS_REFUSAL)
         if not self.api_key:
             raise AIServiceError(SAFE_SERVICE_UNAVAILABLE_MESSAGE)
 
-        payload = {
-            "model": self.model,
-            "prompt": prompt,
-            "size": size,
-            "response_format": "b64_json",
-        }
-        data = await _post_nvidia_json(
-            self.api_key,
-            "/images/generations",
-            payload,
-            timeout_seconds=45,
-            max_retries=DEFAULT_RETRY_COUNT,
-            base_url=self.base_url,
-        )
-        image_data = data.get("data")
-        if not isinstance(image_data, list) or not image_data:
-            raise AIServiceError(SAFE_SERVICE_UNAVAILABLE_MESSAGE)
+        payload_candidates = [
+            {
+                "model": self.model,
+                "prompt": prompt,
+                "size": size,
+                "aspect_ratio": ratio,
+                "response_format": "b64_json",
+            },
+            {
+                "model": self.model,
+                "prompt": prompt,
+                "size": size,
+                "aspect_ratio": ratio,
+            },
+            {
+                "model": self.model,
+                "prompt": prompt,
+                "size": size,
+                "response_format": "b64_json",
+            },
+            {
+                "model": self.model,
+                "prompt": prompt,
+                "size": size,
+            },
+        ]
 
-        first_item = image_data[0] if isinstance(image_data[0], dict) else {}
-        b64_payload = first_item.get("b64_json")
-        if isinstance(b64_payload, str) and b64_payload:
+        last_error: AIServiceError | None = None
+        for payload in payload_candidates:
             try:
-                return base64.b64decode(b64_payload)
-            except ValueError as exc:
-                raise AIServiceError(SAFE_SERVICE_UNAVAILABLE_MESSAGE) from exc
+                data = await _post_nvidia_json(
+                    self.api_key,
+                    "/images/generations",
+                    payload,
+                    timeout_seconds=45,
+                    max_retries=DEFAULT_RETRY_COUNT,
+                    base_url=self.base_url,
+                )
+            except AIServiceError as exc:
+                last_error = exc
+                continue
 
-        image_url = first_item.get("url")
-        if isinstance(image_url, str) and image_url.strip():
-            return await _download_image_bytes(image_url.strip())
+            image_b64, image_url = _extract_image_data(data)
+            if image_b64:
+                try:
+                    compact_b64 = "".join(image_b64.split())
+                    return GeneratedImageResult(image_bytes=base64.b64decode(compact_b64), image_url=image_url)
+                except ValueError:
+                    pass
+            if image_url:
+                try:
+                    return GeneratedImageResult(
+                        image_bytes=await _download_image_bytes(image_url),
+                        image_url=image_url,
+                    )
+                except AIServiceError:
+                    # Keep the URL as a fallback for clients that can render remote images directly.
+                    return GeneratedImageResult(image_bytes=None, image_url=image_url)
 
+        if last_error is not None:
+            raise last_error
         raise AIServiceError(SAFE_SERVICE_UNAVAILABLE_MESSAGE)
+
+
+@dataclass
+class GeneratedImageResult:
+    image_bytes: bytes | None
+    image_url: str | None = None
 
 
 @dataclass
@@ -329,6 +371,49 @@ def _extract_api_error(raw_text: str) -> str:
         if isinstance(detail, str) and detail.strip():
             return detail.strip()
     return raw_text[:300] or "Unknown error."
+
+
+def _extract_image_data(data: dict[str, object]) -> tuple[str | None, str | None]:
+    if not isinstance(data, dict):
+        return None, None
+
+    candidates: list[dict[str, object]] = [data]
+    raw_data = data.get("data")
+    if isinstance(raw_data, list):
+        candidates.extend(item for item in raw_data if isinstance(item, dict))
+    elif isinstance(raw_data, dict):
+        candidates.append(raw_data)
+
+    output = data.get("output")
+    if isinstance(output, list):
+        candidates.extend(item for item in output if isinstance(item, dict))
+    elif isinstance(output, dict):
+        candidates.append(output)
+
+    for candidate in candidates:
+        b64_payload = (
+            candidate.get("b64_json")
+            or candidate.get("image_base64")
+            or candidate.get("base64")
+            or candidate.get("b64")
+        )
+        if isinstance(b64_payload, str) and b64_payload.strip():
+            return b64_payload.strip(), _normalize_image_url(candidate.get("url") or candidate.get("image_url"))
+
+        image_url = _normalize_image_url(candidate.get("url") or candidate.get("image_url") or candidate.get("output_url"))
+        if image_url:
+            return None, image_url
+
+    return None, None
+
+
+def _normalize_image_url(value: object) -> str | None:
+    if not isinstance(value, str):
+        return None
+    normalized = value.strip()
+    if normalized.startswith("http://") or normalized.startswith("https://"):
+        return normalized
+    return None
 
 
 def _extract_message_content(message: object) -> str | None:
@@ -512,7 +597,8 @@ def _system_instruction_for_mode(mode: ChatMode) -> str:
             "You are JO AI Code Generator.\n"
             "Role: produce complete, correct, runnable code.\n"
             "Task: return the full implementation needed to satisfy the request.\n"
-            "If multiple files are needed, provide every required file with clear file headings and full code blocks.\n"
+            "Default output must be one single complete file.\n"
+            "Only produce multiple files when the user explicitly asks for separate files.\n"
             "Never stop mid-file. Do not use placeholders like TODO or 'omitted for brevity'.\n"
             "Include concise setup/run instructions after the code."
         )
@@ -572,8 +658,8 @@ def _enhance_user_prompt(
     if mode == "code":
         return (
             f"Code request:\n{text}\n\n"
-            "Return a complete implementation.\n"
-            "If multiple files are needed, provide each file in a separate fenced code block with file path heading.\n"
+            "Return one complete file by default.\n"
+            "Only return multiple files if the user explicitly asked for separate files.\n"
             "Do not omit code for brevity."
         )
     if mode == "research":

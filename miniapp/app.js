@@ -11,6 +11,7 @@
   const SITE_BASE_URL = "https://ygirma315-cell.github.io/jo-ai/";
   const MAX_HISTORY_ITEMS = 18;
   const MAX_UPLOAD_BYTES = 8 * 1024 * 1024;
+  const MAX_CODE_UPLOAD_BYTES = 1_500_000;
   const SAFE_INTERNAL_DETAILS_REFUSAL =
     "I can't share internal backend or API details. For JO API access, contact the developer @grpbuyer3.";
 
@@ -94,14 +95,16 @@
     },
     code: {
       title: "Code Generator",
-      description: "Code help with cleaner answers, fixes, and snippets in one stream.",
-      lead: "Send specs, bugs, or code requests and keep the reply readable in chat.",
+      description: "Generate full code or upload a file for debug/fix in one flow.",
+      lead: "By default, JO AI returns one full-file solution unless you ask for multi-file output.",
       example: "Create a Python function that validates emails and returns clear error messages.",
       label: "Ask Joe AI chatbot for code",
       placeholder: "Ask Joe AI chatbot for code, debugging, or implementation help",
       rows: 1,
       maxComposerHeight: 176,
       historyTitle: "Code chat",
+      needsCodeUpload: true,
+      supportsCodeSave: true,
       emptyTitle: "Start a code conversation",
       emptyCopy: "Share a bug, spec, or feature request and JO AI will reply in-chat.",
     },
@@ -115,10 +118,6 @@
       rows: 1,
       maxComposerHeight: 152,
       historyTitle: "Analysis thread",
-      needsPromptType: true,
-      promptTypeLabel: "Analysis profile",
-      promptTypePlaceholder: "structured (or focused)",
-      defaultPromptType: "structured",
       emptyTitle: "Ask for deeper analysis",
       emptyCopy: "Comparisons, reasoning, and structured tradeoffs show up here.",
     },
@@ -152,8 +151,8 @@
     },
     image: {
       title: "Image Generator",
-      description: "Describe a visual, choose a style, and keep the result in the chat.",
-      lead: "Write the scene, pick a style, and save the image once it lands.",
+      description: "Describe a visual, choose a style and ratio, and keep the result in the chat.",
+      lead: "Write the scene, pick a style and ratio, and save the image once it lands.",
       example: "A cinematic night city street with rain reflections and soft neon lighting.",
       label: "Describe the image you want",
       placeholder: "Describe the image you want Joe AI to create",
@@ -161,8 +160,11 @@
       maxComposerHeight: 160,
       historyTitle: "Image results",
       needsImageType: true,
+      needsImageRatio: true,
       supportsImageSave: true,
       exampleImageType: "cyberpunk",
+      exampleImageRatio: "16:9",
+      defaultImageRatio: "1:1",
       emptyTitle: "Create an image with Joe AI",
       emptyCopy: "Describe a scene, choose a style, and your image result will appear here.",
     },
@@ -194,6 +196,8 @@
     history: [],
     lastOutputText: "",
     lastImageDataUrl: "",
+    lastCodeFileDataUrl: "",
+    lastCodeFileName: "",
     toastTimer: null,
     emptyTemplate: "",
     kimiPreviewUrl: "",
@@ -363,6 +367,11 @@
       promptType: byId("promptType"),
       imageTypeWrap: byId("imageTypeWrap"),
       imageType: byId("imageType"),
+      imageRatioWrap: byId("imageRatioWrap"),
+      imageRatio: byId("imageRatio"),
+      codeFileWrap: byId("codeFileWrap"),
+      codeFile: byId("codeFile"),
+      codeFileInfo: byId("codeFileInfo"),
       kimiImageWrap: byId("kimiImageWrap"),
       kimiImage: byId("kimiImage"),
       kimiPreviewWrap: byId("kimiPreviewWrap"),
@@ -1239,9 +1248,12 @@
     }
     if (elements.downloadImageBtn) {
       const config = currentTool();
-      if (config && config.supportsImageSave) {
+      if (config && (config.supportsImageSave || config.supportsCodeSave)) {
         elements.downloadImageBtn.hidden = false;
-        elements.downloadImageBtn.disabled = state.isBusy || !state.lastImageDataUrl;
+        const canSaveImage = Boolean(config.supportsImageSave && state.lastImageDataUrl);
+        const canSaveCode = Boolean(config.supportsCodeSave && state.lastCodeFileDataUrl);
+        elements.downloadImageBtn.disabled = state.isBusy || (!canSaveImage && !canSaveCode);
+        elements.downloadImageBtn.textContent = canSaveCode ? "Save Code" : "Save";
       } else {
         elements.downloadImageBtn.hidden = true;
       }
@@ -1477,10 +1489,21 @@
     if (!value) {
       return "";
     }
+    if (/^https?:\/\//i.test(value)) {
+      return value;
+    }
     if (value.startsWith("data:image")) {
       return value;
     }
     return `data:image/png;base64,${value.replace(/\s+/g, "")}`;
+  }
+
+  function normalizeCodeFileUrl(rawBase64) {
+    const value = String(rawBase64 || "").trim();
+    if (!value) {
+      return "";
+    }
+    return `data:text/plain;base64,${value.replace(/\s+/g, "")}`;
   }
 
   function formatTime(timestamp) {
@@ -1568,6 +1591,15 @@
       renderRichText(body, entry.text);
     }
 
+    if (entry.codeFileDataUrl) {
+      const download = document.createElement("a");
+      download.className = "btn small";
+      download.href = entry.codeFileDataUrl;
+      download.download = entry.codeFileName || "output.txt";
+      download.textContent = `Download ${entry.codeFileName || "code file"}`;
+      body.appendChild(download);
+    }
+
     if (entry.imageDataUrl) {
       const image = document.createElement("img");
       image.className = "message-image";
@@ -1591,7 +1623,21 @@
     if (!getToolId()) {
       return;
     }
-    const serializable = state.history.filter((entry) => !entry.pending).slice(-MAX_HISTORY_ITEMS);
+    const serializable = state.history
+      .filter((entry) => !entry.pending)
+      .slice(-MAX_HISTORY_ITEMS)
+      .map((entry) => {
+        if (!entry || typeof entry !== "object") {
+          return entry;
+        }
+        if (!entry.codeFileDataUrl) {
+          return entry;
+        }
+        return {
+          ...entry,
+          codeFileDataUrl: "",
+        };
+      });
     safeStorageSet(getSessionStorage(), getHistoryKey(), JSON.stringify(serializable));
   }
 
@@ -1614,6 +1660,8 @@
     const latestAssistant = [...state.history].reverse().find((entry) => entry.role === "assistant" && !entry.pending);
     state.lastOutputText = latestAssistant && latestAssistant.text ? latestAssistant.text : "";
     state.lastImageDataUrl = latestAssistant && latestAssistant.imageDataUrl ? latestAssistant.imageDataUrl : "";
+    state.lastCodeFileDataUrl = latestAssistant && latestAssistant.codeFileDataUrl ? latestAssistant.codeFileDataUrl : "";
+    state.lastCodeFileName = latestAssistant && latestAssistant.codeFileName ? latestAssistant.codeFileName : "";
   }
 
   function renderHistory() {
@@ -1626,6 +1674,8 @@
       elements.historyList.innerHTML = state.emptyTemplate;
       state.lastOutputText = "";
       state.lastImageDataUrl = "";
+      state.lastCodeFileDataUrl = "";
+      state.lastCodeFileName = "";
       syncOutputButtons();
       return;
     }
@@ -1717,6 +1767,8 @@
     state.pendingId = "";
     state.lastOutputText = "";
     state.lastImageDataUrl = "";
+    state.lastCodeFileDataUrl = "";
+    state.lastCodeFileName = "";
     persistHistory();
     renderHistory();
 
@@ -1728,8 +1780,17 @@
       const config = currentTool();
       elements.promptType.value = config && config.defaultPromptType ? config.defaultPromptType : "";
     }
+    if (elements.codeFile) {
+      elements.codeFile.value = "";
+    }
+    if (elements.codeFileInfo) {
+      elements.codeFileInfo.textContent = "No code file selected.";
+    }
     if (elements.imageType) {
       elements.imageType.selectedIndex = 0;
+    }
+    if (elements.imageRatio) {
+      elements.imageRatio.value = "1:1";
     }
     if (elements.kimiImage) {
       elements.kimiImage.value = "";
@@ -1853,20 +1914,6 @@
     return state.apiBase;
   }
 
-  function normalizeDeepseekProfile(rawProfile) {
-    const value = String(rawProfile || "").trim().toLowerCase();
-    if (!value) {
-      return "deepseek_reasoning";
-    }
-    if (value.includes("focus") || value.includes("think")) {
-      return "deepseek_thinking";
-    }
-    if (value.includes("struct") || value.includes("reason")) {
-      return "deepseek_reasoning";
-    }
-    return "deepseek_reasoning";
-  }
-
   function endpointAttempts(mode, payload) {
     const basePayload = { ...payload };
 
@@ -1877,19 +1924,22 @@
       ];
     }
     if (mode === "code") {
+      const codePayload = { mode: "code", message: basePayload.message };
+      if (basePayload.code_file_name && basePayload.code_file_base64) {
+        codePayload.code_file_name = basePayload.code_file_name;
+        codePayload.code_file_base64 = basePayload.code_file_base64;
+      }
       return [
-        { path: "/api/ai", payload: { mode: "code", message: basePayload.message } },
+        { path: "/api/ai", payload: codePayload },
+        { path: "/ai", payload: codePayload },
         { path: "/api/code", payload: basePayload },
+        { path: "/code", payload: basePayload },
       ];
     }
     if (mode === "deepseek") {
-      const selectedProfile = normalizeDeepseekProfile(basePayload.analysis_profile);
-      const fallbackProfile = selectedProfile === "deepseek_thinking" ? "deepseek_reasoning" : "deepseek_thinking";
       return [
-        { path: "/api/ai", payload: { mode: selectedProfile, message: basePayload.message } },
-        { path: "/ai", payload: { mode: selectedProfile, message: basePayload.message } },
-        { path: "/api/ai", payload: { mode: fallbackProfile, message: basePayload.message } },
-        { path: "/ai", payload: { mode: fallbackProfile, message: basePayload.message } },
+        { path: "/api/ai", payload: { mode: "deep_analysis", message: basePayload.message } },
+        { path: "/ai", payload: { mode: "deep_analysis", message: basePayload.message } },
         { path: "/api/ai", payload: { mode: "research", message: basePayload.message } },
         { path: "/api/research", payload: basePayload },
         { path: "/research", payload: basePayload },
@@ -2042,6 +2092,18 @@
     if (elements.imageTypeWrap) {
       elements.imageTypeWrap.hidden = !config.needsImageType;
     }
+    if (elements.imageRatioWrap) {
+      elements.imageRatioWrap.hidden = !config.needsImageRatio;
+    }
+    if (elements.imageRatio && config.defaultImageRatio && !elements.imageRatio.value) {
+      elements.imageRatio.value = config.defaultImageRatio;
+    }
+    if (elements.codeFileWrap) {
+      elements.codeFileWrap.hidden = !config.needsCodeUpload;
+    }
+    if (elements.codeFileInfo && config.needsCodeUpload && !(elements.codeFile && elements.codeFile.files && elements.codeFile.files[0])) {
+      elements.codeFileInfo.textContent = "No code file selected.";
+    }
     if (elements.kimiImageWrap) {
       elements.kimiImageWrap.hidden = !config.needsUpload;
     }
@@ -2062,6 +2124,11 @@
     }
     if (config.exampleImageType && elements.imageType) {
       elements.imageType.value = config.exampleImageType;
+    }
+    if (config.exampleImageRatio && elements.imageRatio) {
+      elements.imageRatio.value = config.exampleImageRatio;
+    } else if (config.defaultImageRatio && elements.imageRatio) {
+      elements.imageRatio.value = config.defaultImageRatio;
     }
     resizeComposerInput();
     updateSendButtonState();
@@ -2096,6 +2163,25 @@
     }
   }
 
+  function isDebugIntent(text) {
+    return /\b(debug|fix|error|exception|traceback|bug|issue|crash|failing|failure|broken|not working)\b/i.test(
+      String(text || "")
+    );
+  }
+
+  function updateCodeFileSelection() {
+    const file = elements.codeFile && elements.codeFile.files ? elements.codeFile.files[0] : null;
+    if (!elements.codeFileInfo) {
+      return;
+    }
+    if (!file) {
+      elements.codeFileInfo.textContent = "No code file selected.";
+      return;
+    }
+    const sizeKb = Math.max(1, Math.round(file.size / 1024));
+    elements.codeFileInfo.textContent = `${file.name} (${sizeKb} KB)`;
+  }
+
   function fileToBase64(file) {
     return new Promise((resolve, reject) => {
       const reader = new FileReader();
@@ -2125,13 +2211,23 @@
       }
     }
 
-    if (mode === "deepseek") {
-      const profileText = elements.promptType ? elements.promptType.value.trim() : "";
-      payload.analysis_profile = normalizeDeepseekProfile(profileText);
-    }
-
     if (mode === "image") {
       payload.image_type = elements.imageType ? elements.imageType.value : "realistic";
+      payload.ratio = elements.imageRatio ? elements.imageRatio.value : "1:1";
+    }
+
+    if (mode === "code") {
+      const file = elements.codeFile && elements.codeFile.files ? elements.codeFile.files[0] : null;
+      if (file) {
+        if (file.size > MAX_CODE_UPLOAD_BYTES) {
+          throw new Error("Please use a code file smaller than 1.5MB.");
+        }
+        payload.code_file_name = file.name || "uploaded_code.txt";
+        payload.code_file_base64 = await fileToBase64(file);
+      }
+      if (isDebugIntent(message) && !payload.code_file_base64) {
+        throw new Error("For debug/fix requests, upload the code file first.");
+      }
     }
 
     if (mode === "kimi") {
@@ -2158,11 +2254,14 @@
     if (mode === "prompt" && payload.prompt_type) {
       note = `Prompt type: ${payload.prompt_type}`;
     }
-    if (mode === "deepseek" && payload.analysis_profile) {
-      note = payload.analysis_profile === "deepseek_thinking" ? "Profile: focused analysis" : "Profile: structured analysis";
-    }
     if (mode === "image" && payload.image_type) {
       note = `Style: ${payload.image_type}`;
+      if (payload.ratio) {
+        note = `${note} | Ratio: ${payload.ratio}`;
+      }
+    }
+    if (mode === "code" && payload.code_file_name) {
+      note = `File: ${payload.code_file_name}`;
     }
     if (mode === "kimi" && elements.kimiImage && elements.kimiImage.files && elements.kimiImage.files[0]) {
       note = `File: ${elements.kimiImage.files[0].name}`;
@@ -2214,6 +2313,14 @@
       payload = await buildRequestPayload();
     } catch (error) {
       const message = error instanceof Error ? error.message : "Please complete the required fields.";
+      if (/upload the code file first/i.test(message)) {
+        pushHistory({
+          id: createId(),
+          role: "assistant",
+          text: "For debug/fix requests, upload the code file first in Code Generator, then send your request.",
+          timestamp: Date.now(),
+        });
+      }
       setApiState("needs input", "error");
       showToast(message, "error");
       return;
@@ -2240,6 +2347,8 @@
       };
       state.lastOutputText = refusal.text;
       state.lastImageDataUrl = "";
+      state.lastCodeFileDataUrl = "";
+      state.lastCodeFileName = "";
       pushHistory(refusal);
       setApiState("ready", "success");
       showToast("Internal details are not shared.");
@@ -2255,7 +2364,14 @@
         throw new Error(data.error.trim());
       }
 
-      const imageDataUrl = data && data.image_base64 ? normalizeImageUrl(data.image_base64) : "";
+      const imageDataUrl = data && data.image_base64
+        ? normalizeImageUrl(data.image_base64)
+        : data && typeof data.image_url === "string" && data.image_url.trim()
+          ? normalizeImageUrl(data.image_url)
+          : "";
+      const codeFileDataUrl = data && data.code_file_base64 ? normalizeCodeFileUrl(data.code_file_base64) : "";
+      const codeFileName =
+        data && typeof data.code_file_name === "string" && data.code_file_name.trim() ? data.code_file_name.trim() : "";
       let text =
         (data && typeof data.output === "string" && data.output.trim()) ||
         (data && typeof data.warning === "string" && !imageDataUrl && data.warning.trim()) ||
@@ -2270,6 +2386,8 @@
 
       state.lastOutputText = text;
       state.lastImageDataUrl = imageDataUrl;
+      state.lastCodeFileDataUrl = codeFileDataUrl;
+      state.lastCodeFileName = codeFileName;
 
       replacePendingMessage({
         id: createId(),
@@ -2283,6 +2401,8 @@
             ? data.warning.trim()
             : "",
         imageDataUrl,
+        codeFileDataUrl,
+        codeFileName,
         timestamp: Date.now(),
       });
 
@@ -2303,14 +2423,22 @@
     }
   }
 
-  function saveLatestImage() {
-    if (!state.lastImageDataUrl) {
-      showToast("No image available to save.", "error");
+  function saveLatestAsset() {
+    const config = currentTool();
+    const saveCode = Boolean(config && config.supportsCodeSave && state.lastCodeFileDataUrl);
+    const saveImage = Boolean(config && config.supportsImageSave && state.lastImageDataUrl);
+    if (!saveCode && !saveImage) {
+      showToast("No file available to save.", "error");
       return;
     }
     const link = document.createElement("a");
-    link.href = state.lastImageDataUrl;
-    link.download = `jo-ai-image-${Date.now()}.png`;
+    if (saveCode) {
+      link.href = state.lastCodeFileDataUrl;
+      link.download = state.lastCodeFileName || `jo-ai-code-${Date.now()}.txt`;
+    } else {
+      link.href = state.lastImageDataUrl;
+      link.download = `jo-ai-image-${Date.now()}.png`;
+    }
     document.body.appendChild(link);
     link.click();
     document.body.removeChild(link);
@@ -2374,7 +2502,7 @@
       });
     }
     if (elements.downloadImageBtn) {
-      elements.downloadImageBtn.addEventListener("click", saveLatestImage);
+      elements.downloadImageBtn.addEventListener("click", saveLatestAsset);
     }
     if (elements.aiInput) {
       elements.aiInput.addEventListener("input", () => {
@@ -2393,6 +2521,15 @@
     }
     if (elements.imageType) {
       elements.imageType.addEventListener("change", updateSendButtonState);
+    }
+    if (elements.imageRatio) {
+      elements.imageRatio.addEventListener("change", updateSendButtonState);
+    }
+    if (elements.codeFile) {
+      elements.codeFile.addEventListener("change", () => {
+        updateCodeFileSelection();
+        updateSendButtonState();
+      });
     }
     if (elements.kimiImage) {
       elements.kimiImage.addEventListener("change", () => {

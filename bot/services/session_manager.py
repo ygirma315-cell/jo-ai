@@ -85,8 +85,12 @@ class SessionManager:
         session.jo_ai_mode = JoAIMode.MENU
         session.jo_ai_prompt_type = None
         session.jo_ai_image_type = None
+        session.jo_ai_image_ratio = None
         session.jo_ai_kimi_waiting_image = False
         session.jo_ai_last_image_file_id = None
+        session.jo_ai_code_waiting_file = False
+        session.jo_ai_code_file_name = None
+        session.jo_ai_code_file_content = None
         session.jo_ai_chat_history.clear()
 
     def _transition_notice(self, previous: Feature, new_feature: Feature) -> str:
