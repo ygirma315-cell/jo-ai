@@ -10,7 +10,7 @@ MENU_AI_KIMI = "\U0001F5BC\ufe0f Vision"
 MENU_AI_TTS = "\U0001F50A Text-to-Speech"
 MENU_HELP = "\U0001F4A1 Help"
 MENU_VERSION_MODELS = "\u2139\ufe0f Version"
-MENU_CANCEL = "\u21a9\ufe0f Cancel / Back to Menu"
+MENU_CANCEL = "\U0001F3E0 Main Menu"
 
 _PRIMARY_MENU_BUTTON_TEXTS = {
     MENU_JO_AI,
@@ -41,6 +41,8 @@ _LEGACY_MENU_BUTTON_TEXTS = {
     "Text-to-Speech",
     "Version",
     "Help",
+    "Main Menu",
+    "Menu",
     "Cancel / Back to Menu",
     "Utilities",
     "Calculator",

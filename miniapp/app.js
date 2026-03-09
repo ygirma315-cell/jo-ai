@@ -27,9 +27,9 @@
       version: "v1.5.0",
       title: "Major mini app and bot organization update",
       items: [
-        "The mini app now opens directly on AI tool selection, while tool pages use a firmer fixed chat layout that keeps the conversation area stable.",
-        "Code Generator now pushes larger requests toward fuller system outputs, and the code upload control is reduced to a compact inline plus button.",
-        "Telegram bot flow was reorganized with Back/Main Menu pairs, richer TTS voice-style choices, direct uploaded-image handoff into Vision, and utilities removal.",
+        "The mini app now opens directly on AI tool selection, and tool headers use the top white space better with cleaner update access and safer Back-button spacing.",
+        "Code Generator now pushes larger requests toward fuller system outputs, with more user-facing examples and a compact inline plus button for uploads.",
+        "Telegram bot flow now uses clearer one-step Back behavior inside multi-step tools, a cleaner main-menu order, and richer feature labels across menus.",
       ],
     },
     {
@@ -97,7 +97,7 @@
       title: "Code Generator",
       description: "Generate stronger implementation plans, fuller systems, or debug uploaded code in one flow.",
       lead: "Complex code requests are internally refined so JO AI can return more complete architecture and implementation detail.",
-      example: "Build a FastAPI + Postgres backend with auth, roles, CRUD endpoints, tests, and Docker setup.",
+      example: "Build a food delivery app with customer accounts, live order tracking, payments, admin dashboard, tests, and deploy steps.",
       label: "Ask Joe AI chatbot for code",
       placeholder: "Ask Joe AI chatbot for code, debugging, or implementation help",
       rows: 1,
@@ -964,14 +964,77 @@
     return FRONTEND_VERSION;
   }
 
+  function ensureToolHeaderUtilitySlot() {
+    if (!document.body || document.body.dataset.page !== "tool") {
+      return null;
+    }
+    const main = document.querySelector(".chat-topbar-main");
+    if (!main) {
+      return null;
+    }
+
+    let navRow = main.querySelector(".topbar-nav-row");
+    if (!navRow) {
+      navRow = document.createElement("div");
+      navRow.className = "topbar-nav-row";
+      const backLink = main.querySelector(".back-link");
+      if (backLink) {
+        navRow.appendChild(backLink);
+      }
+      main.prepend(navRow);
+    }
+
+    let slot = navRow.querySelector(".topbar-utility-slot");
+    if (!slot) {
+      slot = document.createElement("div");
+      slot.className = "topbar-utility-slot";
+      navRow.appendChild(slot);
+    }
+
+    return slot;
+  }
+
+  function ensureToolDescriptionElement() {
+    const copy = document.querySelector(".chat-brand-copy");
+    if (!copy) {
+      return null;
+    }
+    let subtitle = byId("toolDescription");
+    if (!subtitle) {
+      subtitle = document.createElement("p");
+      subtitle.id = "toolDescription";
+      subtitle.className = "chat-subtitle";
+      copy.appendChild(subtitle);
+    }
+    return subtitle;
+  }
+
+  function getUpdatesReturnLabel() {
+    if (document.body && document.body.dataset.page === "tool") {
+      const config = currentTool();
+      return config && config.title ? config.title : "this tool";
+    }
+    return "home";
+  }
+
+  function syncUpdatesBackButton() {
+    if (!elements.updatesClose) {
+      return;
+    }
+    const returnLabel = getUpdatesReturnLabel();
+    elements.updatesClose.textContent = "Back";
+    elements.updatesClose.setAttribute("aria-label", `Go back to ${returnLabel}`);
+    elements.updatesClose.title = `Back to ${returnLabel}`;
+  }
+
   function mountVersionBadge() {
     if (!elements.versionBadge) {
       return;
     }
 
-    const host = document.querySelector(".chat-topbar-actions, .status-cluster");
+    const host = ensureToolHeaderUtilitySlot() || document.querySelector(".status-cluster, .chat-topbar-actions");
     if (host && elements.versionBadge.parentElement !== host) {
-      host.prepend(elements.versionBadge);
+      host.appendChild(elements.versionBadge);
       return;
     }
 
@@ -1063,7 +1126,7 @@
       close.id = "updatesClose";
       close.type = "button";
       close.className = "btn small";
-      close.textContent = "Close";
+      close.textContent = "Back";
 
       head.appendChild(copy);
       head.appendChild(close);
@@ -1134,6 +1197,7 @@
     prepareManagedModals();
     mountVersionBadge();
     renderUpdatesPanel();
+    syncUpdatesBackButton();
   }
 
   function bindGlobalUi() {
@@ -1168,6 +1232,7 @@
 
   function openUpdatesModal(trigger = null) {
     if (elements.updatesModal) {
+      syncUpdatesBackButton();
       openManagedModal(elements.updatesModal, trigger);
     }
   }
@@ -1198,6 +1263,7 @@
     }
     mountVersionBadge();
     renderUpdatesPanel();
+    syncUpdatesBackButton();
   }
 
   function showToast(text, variant = "success", durationMs = 2600) {
@@ -2124,12 +2190,15 @@
       return;
     }
 
+    const toolDescription = ensureToolDescriptionElement();
+    elements.toolDescription = toolDescription;
+
     document.title = `${config.title} | JO AI Chat Bot`;
     if (elements.toolTitle) {
       elements.toolTitle.textContent = config.title;
     }
-    if (elements.toolDescription) {
-      elements.toolDescription.textContent = config.description;
+    if (toolDescription) {
+      toolDescription.textContent = config.description;
     }
     if (elements.toolLead) {
       elements.toolLead.textContent = config.lead;

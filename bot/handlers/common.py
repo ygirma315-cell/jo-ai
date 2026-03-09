@@ -14,16 +14,15 @@ from bot.services.session_manager import SessionManager
 router = Router(name="common")
 
 WELCOME_TEXT = (
-    "<b>Welcome to JO AI Assistant</b>\n\n"
-    "I can help you with:\n"
-    "- AI chat and smart answers\n"
-    "- Code generation\n"
-    "- Research and analysis\n"
-    "- Image generation\n"
-    "- Vision mode for image description\n"
-    "- Text-to-Speech generation\n"
-    "- Mini App access from Telegram\n\n"
-    "Ask me anything, or tap a menu button below to start."
+    "🤖 <b>Welcome to JO AI Assistant</b>\n\n"
+    "Pick a lane and let's move:\n"
+    "• 💬 AI chat and smart answers\n"
+    "• ⚡ Code generation and debugging\n"
+    "• 🔍 Research and deeper analysis\n"
+    "• 🎨 Image generation and vision help\n"
+    "• 🔊 Text-to-Speech output\n"
+    "• 🚀 Mini App access from Telegram\n\n"
+    "Tap a menu button below or send a message when you're ready."
 )
 
 HELP_TEXT = (
@@ -45,24 +44,25 @@ HELP_TEXT = (
 )
 
 MENU_HINT_TEXT = (
-    "<b>Main Menu</b>\n\n"
+    "🏠 <b>Main Menu</b>\n\n"
     "Choose a section below:\n"
-    "- AI Tools\n"
-    "- Open App\n"
-    "- Version\n\n"
-    "Need guidance? Use /help"
+    "• 🤖 AI Tools\n"
+    "• 🚀 Open App\n"
+    "• 💡 Help\n"
+    "• ℹ️ Version\n\n"
+    "Need guidance? Use /help."
 )
 
 AI_TOOLS_TEXT = (
-    "<b>AI Tools Menu</b>\n\n"
-    "Choose what you want to do:\n"
-    "- Chat AI\n"
-    "- Generate code\n"
-    "- Research\n"
-    "- Build prompts\n"
-    "- Generate images\n"
-    "- Vision mode\n"
-    "- Text-to-Speech"
+    "🤖 <b>AI Tools Menu</b>\n\n"
+    "Choose your workspace:\n"
+    "• 💬 Chat AI\n"
+    "• ⚡ Generate code\n"
+    "• 🔍 Research\n"
+    "• ✨ Build prompts\n"
+    "• 🎨 Generate images\n"
+    "• 🖼️ Vision mode\n"
+    "• 🔊 Text-to-Speech"
 )
 
 
@@ -87,7 +87,7 @@ async def handle_start(
     await message.answer(format_release_summary_html(runtime_info), reply_markup=main_menu_keyboard(miniapp_url))
     await message.answer(
         "<b>Quick Start</b>\n\n"
-        "- Tap <b>AI Tools</b> to chat, code, research, build prompts, create images, use vision, or generate speech.\n"
+        "- Tap <b>AI Tools</b> first to open chat, code, research, prompts, images, vision, or speech.\n"
         "- Tap <b>Open App</b> to launch the Mini App directly from Telegram.\n"
         "- Tap <b>Version</b> for public build info.\n\n"
         "Ask me anything when you're ready.",
@@ -157,6 +157,8 @@ async def handle_ai_tools_menu(
 @router.message(Command("menu"))
 @router.message(Command("cancel"))
 @router.message(F.text == MENU_CANCEL)
+@router.message(F.text == "Main Menu")
+@router.message(F.text == "Menu")
 @router.message(F.text == "Cancel / Back to Menu")
 async def handle_menu(message: Message, session_manager: SessionManager, miniapp_url: str | None) -> None:
     if not message.from_user:

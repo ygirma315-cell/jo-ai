@@ -10,9 +10,9 @@ RELEASES: tuple[dict[str, Any], ...] = (
         "version": WEB_VERSION,
         "title": "Major mini app and Telegram bot organization update",
         "items": (
-            "The mini app now opens directly on AI tool selection, uses a more stable fixed chat layout, and keeps code upload compact beside the composer.",
-            "Telegram bot flow now uses paired Back and Main Menu buttons, removes utilities/games/calculator, and jumps uploaded images straight into Vision.",
-            "Code generation now pushes complex requests toward fuller system outputs, while TTS adds richer voice-style choices and clearer clone-status messaging.",
+            "The mini app now opens directly on AI tool selection, uses the top header space more cleanly, keeps version access in the top bar, and protects the Back button from crowded header pills.",
+            "Telegram bot menus now feel more intentional, with AI Tools moved ahead of Open App, richer feature labels, and one-step Back behavior inside prompt, image, and TTS flows.",
+            "Code generation now pushes complex requests toward fuller system outputs, uses more realistic product-style examples, and keeps TTS voice styles plus uploaded-image-to-Vision handoff intact.",
         ),
     },
     {

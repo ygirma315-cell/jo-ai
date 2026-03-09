@@ -12,7 +12,7 @@ from typing import Literal
 from aiogram import F, Router
 from aiogram.filters import Command
 from aiogram.exceptions import TelegramBadRequest
-from aiogram.types import BufferedInputFile, CallbackQuery, Message
+from aiogram.types import BufferedInputFile, CallbackQuery, InlineKeyboardMarkup, Message
 from aiogram.utils.chat_action import ChatActionSender
 
 from bot.constants import (
@@ -58,7 +58,7 @@ logger = logging.getLogger(__name__)
 
 JO_AI_MENU_TEXT = (
     "🤖 <b>JO AI Tools</b>\n\n"
-    "Choose a mode:\n"
+    "Pick a mode and let's build something useful:\n"
     "• 💬 JO AI Chat\n"
     "• ⚡ Code Generator\n"
     "• 🔍 Research\n"
@@ -238,6 +238,196 @@ async def _show_jo_ai_menu(message: Message) -> None:
     await message.answer(JO_AI_MENU_TEXT, reply_markup=jo_ai_menu_keyboard())
 
 
+def _feature_reply_keyboard(back_callback: str) -> InlineKeyboardMarkup:
+    return jo_chat_keyboard(back_callback)
+
+
+def _chat_reply_keyboard() -> InlineKeyboardMarkup:
+    return _feature_reply_keyboard("joai:chat")
+
+
+def _code_reply_keyboard() -> InlineKeyboardMarkup:
+    return _feature_reply_keyboard("joai:code")
+
+
+def _research_reply_keyboard() -> InlineKeyboardMarkup:
+    return _feature_reply_keyboard("joai:research")
+
+
+def _deep_analysis_reply_keyboard() -> InlineKeyboardMarkup:
+    return _feature_reply_keyboard("joai:deep_analysis")
+
+
+def _prompt_type_reply_keyboard() -> InlineKeyboardMarkup:
+    return _feature_reply_keyboard("joai:menu")
+
+
+def _prompt_details_reply_keyboard() -> InlineKeyboardMarkup:
+    return _feature_reply_keyboard("joaiprompt:type_menu")
+
+
+def _image_prompt_reply_keyboard() -> InlineKeyboardMarkup:
+    return _feature_reply_keyboard("joaiimg:ratio_menu")
+
+
+def _vision_reply_keyboard() -> InlineKeyboardMarkup:
+    return _feature_reply_keyboard("joai:kimi")
+
+
+def _tts_text_reply_keyboard() -> InlineKeyboardMarkup:
+    return _feature_reply_keyboard("joaitts:style_menu")
+
+
+async def _send_chat_intro(message: Message) -> None:
+    await message.answer(
+        "💬 <b>JO AI Chat is active</b>\n\n"
+        "Ask naturally and I'll answer cleanly.\n"
+        "Need a reset? Use Back for the JO AI tools hub or Main Menu to leave the flow.",
+        reply_markup=jo_chat_keyboard("joai:menu"),
+    )
+
+
+async def _send_code_intro(message: Message) -> None:
+    await message.answer(
+        "⚡ <b>Code Generator is active</b>\n\n"
+        "Send a feature, product idea, bug, or full build request.\n"
+        "📌 Example: \"Build a food delivery app with customer accounts, live order tracking, admin dashboard, tests, and deploy setup.\"\n\n"
+        "🛠 For debug or fix work, upload the file first.",
+        reply_markup=jo_chat_keyboard("joai:menu"),
+    )
+
+
+async def _send_research_intro(message: Message) -> None:
+    await message.answer(
+        "🔍 <b>Research mode is active</b>\n\n"
+        "Send a topic or question and I'll return a clean breakdown with practical next steps.",
+        reply_markup=jo_chat_keyboard("joai:menu"),
+    )
+
+
+async def _send_deep_analysis_intro(message: Message) -> None:
+    await message.answer(
+        "🧠 <b>Deep Analysis is active</b>\n\n"
+        "Send your question and I'll slow down, compare tradeoffs, and reason through it carefully.",
+        reply_markup=jo_chat_keyboard("joai:menu"),
+    )
+
+
+async def _send_prompt_type_step(message: Message) -> None:
+    await message.answer(
+        "✨ <b>Prompt Generator is active</b>\n\n"
+        "Step 1/2: Tell me the prompt type.\n"
+        "📌 Examples: ad copy, YouTube script, study guide, image prompt.",
+        reply_markup=_prompt_type_reply_keyboard(),
+    )
+
+
+async def _send_prompt_details_step(message: Message) -> None:
+    await message.answer(
+        "✅ Prompt type saved.\n\n"
+        "Step 2/2: Describe what you want for that prompt type.\n"
+        "🎯 Include audience, tone, goal, and constraints if possible.",
+        reply_markup=_prompt_details_reply_keyboard(),
+    )
+
+
+async def _send_image_style_step(message: Message) -> None:
+    await message.answer(
+        "🎨 <b>Image Generator is active</b>\n\n"
+        "Step 1/3: Choose an image style below.",
+        reply_markup=image_type_keyboard(),
+    )
+
+
+async def _send_image_ratio_step(message: Message, style_label: str | None = None) -> None:
+    intro = f"✅ <b>{html.escape(style_label)}</b> selected.\n\n" if style_label else ""
+    await message.answer(
+        f"{intro}Step 2/3: Choose an aspect ratio.\n"
+        "Available ratios: 1:1, 16:9, 9:16.",
+        reply_markup=image_ratio_keyboard(),
+    )
+
+
+async def _send_image_prompt_step(message: Message, style_label: str, ratio_label: str) -> None:
+    await message.answer(
+        f"✅ Style <b>{html.escape(style_label)}</b> | Ratio <b>{html.escape(ratio_label)}</b>\n\n"
+        "Step 3/3: Describe the image you want me to create.\n"
+        "🎯 Be specific about subject, mood, lighting, and setting.",
+        reply_markup=_image_prompt_reply_keyboard(),
+    )
+
+
+async def _send_tts_language_step(message: Message) -> None:
+    await message.answer(
+        "🔊 <b>Text-to-Speech is active</b>\n\n"
+        "Step 1/4: Choose a language.\n"
+        "After male or female, you'll get several voice-style choices.\n"
+        "Voice cloning is not supported in this release yet.",
+        reply_markup=tts_language_keyboard(),
+    )
+
+
+async def _send_tts_voice_step(message: Message, language_label: str | None = None) -> None:
+    intro = f"✅ <b>{html.escape(language_label)}</b> selected.\n\n" if language_label else ""
+    await message.answer(
+        f"{intro}Step 2/4: Choose male or female.",
+        reply_markup=tts_voice_keyboard(),
+    )
+
+
+async def _send_tts_style_step(message: Message, voice: str, voice_label: str | None = None) -> None:
+    intro = f"🎙️ Voice <b>{html.escape(voice_label)}</b> selected.\n\n" if voice_label else ""
+    await message.answer(
+        f"{intro}Step 3/4: Choose a voice style.",
+        reply_markup=tts_style_keyboard(_tts_style_choices(voice)),
+    )
+
+
+async def _send_tts_text_step(message: Message, style_label: str) -> None:
+    await message.answer(
+        f"✨ Style <b>{html.escape(style_label)}</b> selected.\n\n"
+        "Step 4/4: Send the text you want me to convert to speech.",
+        reply_markup=_tts_text_reply_keyboard(),
+    )
+
+
+async def _send_vision_intro(message: Message) -> None:
+    await message.answer(
+        "🖼️ <b>JO AI Vision is active</b>\n\n"
+        "Send an image and I'll describe what I see.\n"
+        "You can also include a short instruction with the photo.",
+        reply_markup=jo_chat_keyboard("joai:menu"),
+    )
+
+
+def _uploaded_image_back_callback(session) -> str:
+    if session.active_feature != Feature.JO_AI:
+        return "menu:ai_tools"
+    if session.jo_ai_mode == JoAIMode.CHAT:
+        return "joai:chat"
+    if session.jo_ai_mode == JoAIMode.CODE:
+        return "joai:code"
+    if session.jo_ai_mode == JoAIMode.RESEARCH:
+        return "joai:research"
+    if session.jo_ai_mode == JoAIMode.DEEP_ANALYSIS:
+        return "joai:deep_analysis"
+    if session.jo_ai_mode == JoAIMode.PROMPT:
+        return "joaiprompt:type_menu" if session.jo_ai_prompt_type else "joai:prompt"
+    if session.jo_ai_mode == JoAIMode.IMAGE:
+        return "joaiimg:ratio_menu" if session.jo_ai_image_ratio else "joai:image"
+    if session.jo_ai_mode == JoAIMode.TEXT_TO_SPEECH:
+        if session.jo_ai_tts_style:
+            return "joaitts:style_menu"
+        if session.jo_ai_tts_voice:
+            return "joaitts:voice_menu"
+        if session.jo_ai_tts_language:
+            return "joaitts:lang_menu"
+        return "joai:tts"
+    if session.jo_ai_mode == JoAIMode.KIMI_IMAGE_DESCRIBER:
+        return "joai:kimi"
+    return "joai:menu"
+
+
 async def _switch_to_jo_ai_mode(user_id: int, mode: JoAIMode, session_manager: SessionManager) -> None:
     async with session_manager.lock(user_id) as session:
         if session.active_feature == Feature.JO_AI:
@@ -276,69 +466,28 @@ async def _activate_mode(
         await message.answer(transition.notice, reply_markup=main_menu_keyboard(miniapp_url))
 
     if mode == JoAIMode.CHAT:
-        await message.answer(
-            "💬 <b>JO AI Chat is active</b>\n\n"
-            "🧠 Ask me anything and I will respond clearly.\n"
-            "💡 Need options? Use /help.",
-            reply_markup=jo_chat_keyboard(),
-        )
+        await _send_chat_intro(message)
         return
     if mode == JoAIMode.CODE:
-        await message.answer(
-            "⚡ <b>Code Generator is active</b>\n\n"
-            "Describe what you want to build, including language/framework.\n"
-            "📌 Example: \"Create a Python FastAPI health endpoint.\"\n\n"
-            "🛠 For debug/fix requests, upload the code file first.",
-            reply_markup=jo_chat_keyboard(),
-        )
+        await _send_code_intro(message)
         return
     if mode == JoAIMode.RESEARCH:
-        await message.answer(
-            "🔍 <b>Research mode is active</b>\n\n"
-            "Send a topic/question and I will provide structured insights.\n"
-            "🎯 Include context for better results.",
-            reply_markup=jo_chat_keyboard(),
-        )
+        await _send_research_intro(message)
         return
     if mode == JoAIMode.DEEP_ANALYSIS:
-        await message.answer(
-            "🧠 <b>Deep Analysis is active</b>\n\n"
-            "Send your question and I will analyze it deeply with careful reasoning.\n"
-            "No extra mode selection is needed.",
-            reply_markup=jo_chat_keyboard(),
-        )
+        await _send_deep_analysis_intro(message)
         return
     if mode == JoAIMode.PROMPT:
-        await message.answer(
-            "✨ <b>Prompt Generator is active</b>\n\n"
-            "Step 1/2: Tell me the prompt type\n"
-            "📌 Examples: image, coding, video, research.",
-            reply_markup=jo_chat_keyboard(),
-        )
+        await _send_prompt_type_step(message)
         return
     if mode == JoAIMode.IMAGE:
-        await message.answer(
-            "🎨 <b>Image Generator is active</b>\n\n"
-            "Step 1/3: Choose an image style below.",
-            reply_markup=image_type_keyboard(),
-        )
+        await _send_image_style_step(message)
         return
     if mode == JoAIMode.TEXT_TO_SPEECH:
-        await message.answer(
-            "<b>Text-to-Speech is active</b>\n\n"
-            "Step 1/4: Choose a language.\n"
-            "After male or female, you will get several voice-style options.\n"
-            "Voice cloning is not supported in this release yet.",
-            reply_markup=tts_language_keyboard(),
-        )
+        await _send_tts_language_step(message)
         return
     if mode == JoAIMode.KIMI_IMAGE_DESCRIBER:
-        await message.answer(
-            "<b>JO AI Vision is active</b>\n\n"
-            "Send an image and I will describe what I see.\n"
-            "You can also include a short instruction with the photo.",
-            reply_markup=jo_chat_keyboard(),
-        )
+        await _send_vision_intro(message)
         return
 
     await message.answer("🤖 Select a JO AI mode to continue.", reply_markup=jo_ai_menu_keyboard())
@@ -990,10 +1139,7 @@ async def tts_show_language_menu(query: CallbackQuery, session_manager: SessionM
 
     await query.answer()
     if isinstance(query.message, Message):
-        await query.message.answer(
-            "Step 1/4: Choose a language.",
-            reply_markup=tts_language_keyboard(),
-        )
+        await _send_tts_language_step(query.message)
 
 
 @router.callback_query(F.data == "joaitts:voice_menu")
@@ -1001,6 +1147,7 @@ async def tts_show_voice_menu(query: CallbackQuery, session_manager: SessionMana
     if not query.from_user:
         await query.answer()
         return
+    language_label: str | None = None
     async with session_manager.lock(query.from_user.id) as session:
         if session.active_feature != Feature.JO_AI or session.jo_ai_mode != JoAIMode.TEXT_TO_SPEECH:
             await query.answer("TTS session expired. Send /tts again.", show_alert=True)
@@ -1008,16 +1155,14 @@ async def tts_show_voice_menu(query: CallbackQuery, session_manager: SessionMana
         if not session.jo_ai_tts_language:
             await query.answer("Pick a language first.", show_alert=True)
             return
+        language_label = TTS_LANGUAGE_LABELS.get(session.jo_ai_tts_language, session.jo_ai_tts_language)
         session.jo_ai_tts_voice = None
         session.jo_ai_tts_style = None
         session.jo_ai_tts_emotion = None
 
     await query.answer()
     if isinstance(query.message, Message):
-        await query.message.answer(
-            "Step 2/4: Choose male or female.",
-            reply_markup=tts_voice_keyboard(),
-        )
+        await _send_tts_voice_step(query.message, language_label)
 
 
 @router.callback_query(F.data.startswith("joaitts:lang:"))
@@ -1047,16 +1192,36 @@ async def choose_tts_language(query: CallbackQuery, session_manager: SessionMana
 
     await query.answer(f"{label} selected.")
     if isinstance(query.message, Message):
-        await query.message.answer(
-            f"<b>{html.escape(label)}</b> selected.\n\n"
-            "Step 2/4: Choose male or female.",
-            reply_markup=tts_voice_keyboard(),
-        )
+        await _send_tts_voice_step(query.message, label)
 
 
 @router.callback_query(F.data == "joaitts:clone")
 async def tts_clone_unavailable(query: CallbackQuery) -> None:
     await query.answer("Voice cloning is not supported in this release yet.", show_alert=True)
+
+
+@router.callback_query(F.data == "joaitts:style_menu")
+async def tts_show_style_menu(query: CallbackQuery, session_manager: SessionManager) -> None:
+    if not query.from_user:
+        await query.answer()
+        return
+    voice: str | None = None
+    voice_label: str | None = None
+    async with session_manager.lock(query.from_user.id) as session:
+        if session.active_feature != Feature.JO_AI or session.jo_ai_mode != JoAIMode.TEXT_TO_SPEECH:
+            await query.answer("TTS session expired. Send /tts again.", show_alert=True)
+            return
+        if not session.jo_ai_tts_language or not session.jo_ai_tts_voice:
+            await query.answer("Select language and voice first.", show_alert=True)
+            return
+        session.jo_ai_tts_style = None
+        session.jo_ai_tts_emotion = None
+        voice = session.jo_ai_tts_voice
+        voice_label = TTS_VOICE_LABELS.get(voice, voice)
+
+    await query.answer()
+    if isinstance(query.message, Message) and voice:
+        await _send_tts_style_step(query.message, voice, voice_label)
 
 
 @router.callback_query(F.data.startswith("joaitts:voice:"))
@@ -1088,11 +1253,7 @@ async def choose_tts_voice(query: CallbackQuery, session_manager: SessionManager
 
     await query.answer(f"{label} selected.")
     if isinstance(query.message, Message):
-        await query.message.answer(
-            f"Voice <b>{html.escape(label)}</b> selected.\n\n"
-            "Step 3/4: Choose a voice style.",
-            reply_markup=tts_style_keyboard(_tts_style_choices(voice)),
-        )
+        await _send_tts_style_step(query.message, voice, label)
 
 
 @router.callback_query(F.data.startswith("joaitts:style:"))
@@ -1124,11 +1285,23 @@ async def choose_tts_style(query: CallbackQuery, session_manager: SessionManager
 
     await query.answer(f"{label} style selected.")
     if isinstance(query.message, Message):
-        await query.message.answer(
-            f"Style <b>{html.escape(label)}</b> selected.\n\n"
-            "Step 4/4: Send the text you want me to convert to speech.",
-            reply_markup=jo_chat_keyboard(),
-        )
+        await _send_tts_text_step(query.message, label)
+
+
+@router.callback_query(F.data == "joaiprompt:type_menu")
+async def prompt_show_type_menu(query: CallbackQuery, session_manager: SessionManager) -> None:
+    if not query.from_user:
+        await query.answer()
+        return
+    async with session_manager.lock(query.from_user.id) as session:
+        if session.active_feature != Feature.JO_AI or session.jo_ai_mode != JoAIMode.PROMPT:
+            await query.answer("Prompt session expired. Send /prompt again.", show_alert=True)
+            return
+        session.jo_ai_prompt_type = None
+
+    await query.answer()
+    if isinstance(query.message, Message):
+        await _send_prompt_type_step(query.message)
 
 
 @router.callback_query(F.data.startswith("joaiimg:type:"))
@@ -1156,12 +1329,28 @@ async def choose_image_type(query: CallbackQuery, session_manager: SessionManage
 
     await query.answer(f"✅ {label} selected.")
     if isinstance(query.message, Message):
-        await query.message.answer(
-            f"✅ <b>{label}</b> selected.\n\n"
-            "Step 2/3: Choose an aspect ratio.\n"
-            "Available ratios: 1:1, 16:9, 9:16.",
-            reply_markup=image_ratio_keyboard(),
-        )
+        await _send_image_ratio_step(query.message, label)
+
+
+@router.callback_query(F.data == "joaiimg:ratio_menu")
+async def image_show_ratio_menu(query: CallbackQuery, session_manager: SessionManager) -> None:
+    if not query.from_user:
+        await query.answer()
+        return
+    style_label: str | None = None
+    async with session_manager.lock(query.from_user.id) as session:
+        if session.active_feature != Feature.JO_AI or session.jo_ai_mode != JoAIMode.IMAGE:
+            await query.answer("Image session expired. Send /image again.", show_alert=True)
+            return
+        if not session.jo_ai_image_type:
+            await query.answer("Pick an image style first.", show_alert=True)
+            return
+        session.jo_ai_image_ratio = None
+        style_label = IMAGE_TYPE_LABELS.get(session.jo_ai_image_type, session.jo_ai_image_type)
+
+    await query.answer()
+    if isinstance(query.message, Message):
+        await _send_image_ratio_step(query.message, style_label)
 
 
 @router.callback_query(F.data.startswith("joaiimg:ratio:"))
@@ -1179,6 +1368,7 @@ async def choose_image_ratio(query: CallbackQuery, session_manager: SessionManag
         await query.answer("⚠️ Unsupported ratio.", show_alert=True)
         return
 
+    style_label: str | None = None
     async with session_manager.lock(query.from_user.id) as session:
         if session.active_feature != Feature.JO_AI or session.jo_ai_mode != JoAIMode.IMAGE:
             await query.answer("⏳ Image session expired. Send /image again.", show_alert=True)
@@ -1187,15 +1377,11 @@ async def choose_image_ratio(query: CallbackQuery, session_manager: SessionManag
             await query.answer("Pick an image style first.", show_alert=True)
             return
         session.jo_ai_image_ratio = ratio
+        style_label = IMAGE_TYPE_LABELS.get(session.jo_ai_image_type, session.jo_ai_image_type)
 
     await query.answer(f"✅ Ratio {ratio} selected.")
     if isinstance(query.message, Message):
-        await query.message.answer(
-            f"✅ Ratio <b>{ratio}</b> selected.\n\n"
-            "Step 3/3: Describe the image you want me to create.\n"
-            "🎯 Be specific for better results.",
-            reply_markup=jo_chat_keyboard(),
-        )
+        await _send_image_prompt_step(query.message, style_label or "Selected style", ratio)
 
 
 @router.callback_query(F.data.startswith("joai:"))
@@ -1250,7 +1436,16 @@ async def handle_jo_ai_text(
     user_text = text
 
     if mode == JoAIMode.CHAT:
-        await _process_chat_message(message, user_text, session_manager, chat_service, history_snapshot, "chat", mode_options)
+        await _process_chat_message(
+            message,
+            user_text,
+            session_manager,
+            chat_service,
+            history_snapshot,
+            "chat",
+            mode_options,
+            reply_markup=_chat_reply_keyboard(),
+        )
         return
 
     if mode == JoAIMode.CODE:
@@ -1261,7 +1456,7 @@ async def handle_jo_ai_text(
             await message.answer(
                 "🛠 To debug or fix code, upload the file first in Code Generator mode.\n"
                 "Then send your debug request.",
-                reply_markup=jo_chat_keyboard(),
+                reply_markup=_code_reply_keyboard(),
             )
             return
 
@@ -1274,17 +1469,44 @@ async def handle_jo_ai_text(
                 f"```text\n{code_file_content}\n```"
             )
 
-        await _process_chat_message(message, user_text, session_manager, chat_service, [], "code", mode_options)
+        await _process_chat_message(
+            message,
+            user_text,
+            session_manager,
+            chat_service,
+            [],
+            "code",
+            mode_options,
+            reply_markup=_code_reply_keyboard(),
+        )
         return
 
     if mode == JoAIMode.RESEARCH:
-        await _process_chat_message(message, user_text, session_manager, chat_service, [], "research", mode_options)
+        await _process_chat_message(
+            message,
+            user_text,
+            session_manager,
+            chat_service,
+            [],
+            "research",
+            mode_options,
+            reply_markup=_research_reply_keyboard(),
+        )
         return
     if mode == JoAIMode.DEEP_ANALYSIS:
         mode_options = _deep_analysis_mode_options(deepseek_api_key, deepseek_model)
         mode_prefix = str(mode_options.get("mode_prefix", "")).strip()
         deep_text = f"{mode_prefix}\n\n{text}" if mode_prefix else text
-        await _process_chat_message(message, deep_text, session_manager, chat_service, [], "research", mode_options)
+        await _process_chat_message(
+            message,
+            deep_text,
+            session_manager,
+            chat_service,
+            [],
+            "research",
+            mode_options,
+            reply_markup=_deep_analysis_reply_keyboard(),
+        )
         return
 
     if mode == JoAIMode.PROMPT:
@@ -1317,7 +1539,7 @@ async def handle_jo_ai_text(
         await message.answer(
             "🖼️ Send an image and I will describe it.\n"
             "💡 You can also include a short instruction.",
-            reply_markup=jo_chat_keyboard(),
+            reply_markup=_vision_reply_keyboard(),
         )
         return
 
@@ -1353,7 +1575,7 @@ async def handle_code_document_upload(
     if mode != JoAIMode.CODE:
         await message.answer(
             "📎 File upload analysis is available only in <b>Code Generator</b> mode.",
-            reply_markup=jo_chat_keyboard(),
+            reply_markup=jo_chat_keyboard("joai:menu"),
         )
         return
 
@@ -1362,13 +1584,13 @@ async def handle_code_document_upload(
     if file_size > MAX_CODE_UPLOAD_BYTES:
         await message.answer(
             "⚠️ File is too large for code analysis here.\nPlease upload a file smaller than 1.5MB.",
-            reply_markup=jo_chat_keyboard(),
+            reply_markup=_code_reply_keyboard(),
         )
         return
     if not _file_is_code_like(file_name):
         await message.answer(
             "⚠️ Please upload a source-code or text file for debugging.",
-            reply_markup=jo_chat_keyboard(),
+            reply_markup=_code_reply_keyboard(),
         )
         return
 
@@ -1388,7 +1610,7 @@ async def handle_code_document_upload(
         await _clear_progress_message(progress_message)
         await message.answer(
             "⚠️ I couldn't decode that file as text code.\nUpload a plain text source file.",
-            reply_markup=jo_chat_keyboard(),
+            reply_markup=_code_reply_keyboard(),
         )
         return
 
@@ -1420,7 +1642,7 @@ async def handle_code_document_upload(
     await message.answer(
         f"✅ File received: <b>{html.escape(file_name)}</b>\n"
         "Now send what you want me to debug or fix.",
-        reply_markup=jo_chat_keyboard(),
+        reply_markup=_code_reply_keyboard(),
     )
 
 
@@ -1431,13 +1653,15 @@ async def _prompt_uploaded_image_action(
     prompt_text: str | None = None,
 ) -> None:
     cleaned_prompt = (prompt_text or "").strip() or None
+    back_callback = "menu:ai_tools"
     async with session_manager.lock(message.from_user.id) as session:
         session.jo_ai_last_image_file_id = file_id
         session.jo_ai_last_image_prompt = cleaned_prompt
+        back_callback = _uploaded_image_back_callback(session)
 
     await message.answer(
         "You uploaded an image. Do you want me to describe it?",
-        reply_markup=uploaded_image_keyboard(),
+        reply_markup=uploaded_image_keyboard(back_callback),
     )
 
 
@@ -1725,7 +1949,9 @@ async def _process_chat_message(
     history: list[dict[str, str]],
     mode: Literal["chat", "code", "research", "prompt", "image_prompt"],
     mode_options: dict[str, object],
+    reply_markup: InlineKeyboardMarkup | None = None,
 ) -> None:
+    keyboard = reply_markup or jo_chat_keyboard()
     show_progress_message = mode not in {"chat", "code"}
     if show_progress_message:
         await _maybe_send_engagement(message)
@@ -1745,12 +1971,12 @@ async def _process_chat_message(
             )
     except AIServiceError as exc:
         await _clear_progress_message(progress_message)
-        await message.answer(_friendly_error_text("AI is unavailable right now", exc), reply_markup=jo_chat_keyboard())
+        await message.answer(_friendly_error_text("AI is unavailable right now", exc), reply_markup=keyboard)
         return
     except Exception:
         await _clear_progress_message(progress_message)
         logger.exception("Unexpected JO AI error.")
-        await message.answer(_friendly_error_text("Unexpected AI failure"), reply_markup=jo_chat_keyboard())
+        await message.answer(_friendly_error_text("Unexpected AI failure"), reply_markup=keyboard)
         return
 
     await _clear_progress_message(progress_message)
@@ -1759,7 +1985,7 @@ async def _process_chat_message(
             if session.active_feature == Feature.JO_AI and session.jo_ai_mode == JoAIMode.CHAT:
                 session.jo_ai_chat_history.append(("user", _compact_history_entry(user_text)))
                 session.jo_ai_chat_history.append(("assistant", _compact_history_entry(reply)))
-    await _send_formatted_ai_reply(message, mode, reply, jo_chat_keyboard())
+    await _send_formatted_ai_reply(message, mode, reply, keyboard)
 
 
 def _tts_extension_for_mime_type(mime_type: str) -> str:
@@ -1822,7 +2048,7 @@ async def _process_tts_message(
         await _clear_progress_message(progress_message)
         await message.answer(
             _friendly_error_text("Text-to-Speech is temporarily unavailable", exc),
-            reply_markup=jo_chat_keyboard(),
+            reply_markup=_tts_text_reply_keyboard(),
         )
         return
     except Exception:
@@ -1830,7 +2056,7 @@ async def _process_tts_message(
         logger.exception("Unexpected TTS generation error.")
         await message.answer(
             _friendly_error_text("Unexpected Text-to-Speech error"),
-            reply_markup=jo_chat_keyboard(),
+            reply_markup=_tts_text_reply_keyboard(),
         )
         return
 
@@ -1848,7 +2074,7 @@ async def _process_tts_message(
             f"Voice: <b>{html.escape(voice_label)}</b>\n"
             f"Style: <b>{html.escape(style_label)}</b>"
         ),
-        reply_markup=jo_chat_keyboard(),
+        reply_markup=_tts_text_reply_keyboard(),
     )
 
 
@@ -1868,12 +2094,7 @@ async def _process_prompt_message(
                 await message.answer("⏳ Prompt session expired. Send /prompt to start again.")
                 return
             session.jo_ai_prompt_type = user_text
-        await message.answer(
-            "✅ Prompt type saved.\n\n"
-            "Step 2/2: Describe what you want for that prompt type.\n"
-            "🎯 Include audience, tone, and constraints if possible.",
-            reply_markup=jo_chat_keyboard(),
-        )
+        await _send_prompt_details_step(message)
         return
 
     await _maybe_send_engagement(message)
@@ -1890,15 +2111,18 @@ async def _process_prompt_message(
         )
     except AIServiceError as exc:
         await _clear_progress_message(progress_message)
-        await message.answer(_friendly_error_text("Prompt generation failed", exc), reply_markup=jo_chat_keyboard())
+        await message.answer(_friendly_error_text("Prompt generation failed", exc), reply_markup=_prompt_details_reply_keyboard())
         return
     except Exception:
         await _clear_progress_message(progress_message)
         logger.exception("Unexpected prompt generation error.")
-        await message.answer(_friendly_error_text("Unexpected prompt generation error"), reply_markup=jo_chat_keyboard())
+        await message.answer(
+            _friendly_error_text("Unexpected prompt generation error"),
+            reply_markup=_prompt_details_reply_keyboard(),
+        )
         return
     await _clear_progress_message(progress_message)
-    await _send_formatted_ai_reply(message, "prompt", prompt_output, jo_chat_keyboard())
+    await _send_formatted_ai_reply(message, "prompt", prompt_output, _prompt_details_reply_keyboard())
 
 
 def _image_request_blocked_text() -> str:
@@ -1925,128 +2149,6 @@ def _image_generation_failed_text(
         f"{detail}\n\n"
         "Optimized prompt:\n"
         f"<code>{html.escape(prompt[:900])}</code>"
-    )
-
-
-async def _process_image_message_old(
-    message: Message,
-    user_text: str,
-    session_manager: SessionManager,
-    chat_service: ChatService,
-    image_generation_service: ImageGenerationService,
-    current_image_type: str | None,
-    current_image_ratio: str | None,
-    mode_options: dict[str, object],
-) -> None:
-    if not current_image_type:
-        await message.answer(
-            "🎨 Step 1/3: Choose an image style first.",
-            reply_markup=image_type_keyboard(),
-        )
-        return
-    if current_image_ratio not in IMAGE_RATIO_TO_SIZE:
-        await message.answer(
-            "📐 Step 2/3: Choose an aspect ratio first.",
-            reply_markup=image_ratio_keyboard(),
-        )
-        return
-    await _maybe_send_engagement(message)
-
-    style_label = IMAGE_TYPE_LABELS.get(current_image_type, current_image_type)
-    ratio_label = IMAGE_RATIO_LABELS.get(current_image_ratio, "1:1")
-    image_size = IMAGE_RATIO_TO_SIZE.get(current_image_ratio, IMAGE_RATIO_TO_SIZE["1:1"])
-    style_hint = IMAGE_TYPE_STYLE_HINTS.get(current_image_type, "high quality image")
-    prompt_request = (
-        f"Image type: {style_label}\n"
-        f"Aspect ratio: {ratio_label}\n"
-        f"Style hints: {style_hint}\n"
-        f"User description: {user_text}\n"
-        "Generate one optimized image prompt with subject detail, lighting, environment, style and quality tags."
-    )
-    progress_message = await _send_progress_message(message, "🧠 Optimizing your image prompt...")
-    try:
-        async with ChatActionSender.typing(bot=message.bot, chat_id=message.chat.id):
-            optimized_prompt = await chat_service.generate_reply(
-                prompt_request,
-                history=[],
-                mode="image_prompt",
-                model_override=mode_options.get("model_override"),  # type: ignore[arg-type]
-                api_key_override=mode_options.get("api_key_override"),  # type: ignore[arg-type]
-                thinking=bool(mode_options.get("thinking", False)),
-            )
-    except AIServiceError as exc:
-        await _clear_progress_message(progress_message)
-        await message.answer(_friendly_error_text("Image prompt optimization failed", exc), reply_markup=jo_chat_keyboard())
-        return
-    except Exception:
-        await _clear_progress_message(progress_message)
-        logger.exception("Unexpected image prompt optimization error.")
-        await message.answer(_friendly_error_text("Unexpected image optimization error"), reply_markup=jo_chat_keyboard())
-        return
-
-    cleaned_prompt = optimized_prompt.replace("Optimized Prompt:", "").strip() or optimized_prompt.strip()
-    if progress_message is not None:
-        with suppress(TelegramBadRequest):
-            await progress_message.edit_text("🎨 Creating your image...")
-    try:
-        async with ChatActionSender.upload_photo(bot=message.bot, chat_id=message.chat.id):
-            generated = await image_generation_service.generate_image(
-                cleaned_prompt,
-                size=image_size,
-                ratio=ratio_label,
-            )
-    except AIServiceError as exc:
-        await _clear_progress_message(progress_message)
-        await message.answer(
-            (
-                "⚠️ <b>Image generation is temporarily unavailable.</b>\n"
-                f"{BRANDING_LINE}\n"
-                "You can still use this optimized prompt manually:\n\n"
-                f"<code>{html.escape(cleaned_prompt)}</code>\n\n"
-                f"For JO API access, contact {DEVELOPER_HANDLE}."
-            ),
-            reply_markup=jo_chat_keyboard(),
-        )
-        return
-    except Exception:
-        await _clear_progress_message(progress_message)
-        logger.exception("Unexpected image generation error.")
-        await message.answer(_friendly_error_text("Unexpected image generation error"), reply_markup=jo_chat_keyboard())
-        return
-
-    await _clear_progress_message(progress_message)
-    if generated.image_bytes:
-        image_file = BufferedInputFile(generated.image_bytes, filename="jo_ai_generated.png")
-        await message.answer_photo(
-            photo=image_file,
-            caption=(
-                "🎉 <b>Your image is ready</b>\n\n"
-                f"🎨 Style: <b>{html.escape(style_label)}</b>\n"
-                f"📐 Ratio: <b>{html.escape(ratio_label)}</b>\n"
-                "📌 Prompt used:\n"
-                f"<code>{html.escape(cleaned_prompt[:900])}</code>"
-            ),
-            reply_markup=jo_chat_keyboard(),
-        )
-        return
-
-    if generated.image_url:
-        await message.answer_photo(
-            photo=generated.image_url,
-            caption=(
-                "🎉 <b>Your image is ready</b>\n\n"
-                f"🎨 Style: <b>{html.escape(style_label)}</b>\n"
-                f"📐 Ratio: <b>{html.escape(ratio_label)}</b>\n"
-                "📌 Prompt used:\n"
-                f"<code>{html.escape(cleaned_prompt[:900])}</code>"
-            ),
-            reply_markup=jo_chat_keyboard(),
-        )
-        return
-
-    await message.answer(
-        _friendly_error_text("Image generation is temporarily unavailable"),
-        reply_markup=jo_chat_keyboard(),
     )
 
 
@@ -2081,7 +2183,7 @@ async def _process_image_message(
     style_hint = IMAGE_TYPE_STYLE_HINTS.get(current_image_type, "high quality image")
 
     if contains_internal_detail_request(user_text, style_label, ratio_label):
-        await message.answer(_image_request_blocked_text(), reply_markup=jo_chat_keyboard())
+        await message.answer(_image_request_blocked_text(), reply_markup=_image_prompt_reply_keyboard())
         return
 
     await _maybe_send_engagement(message)
@@ -2137,14 +2239,14 @@ async def _process_image_message(
     except AIServiceError as exc:
         await _clear_progress_message(progress_message)
         if _is_internal_rule_block(str(exc)):
-            await message.answer(_image_request_blocked_text(), reply_markup=jo_chat_keyboard())
+            await message.answer(_image_request_blocked_text(), reply_markup=_image_prompt_reply_keyboard())
             return
         await message.answer(
             _image_generation_failed_text(
                 prompt=cleaned_prompt,
                 confirmed_unavailable=_is_service_unavailable_error(exc) or not bool(image_generation_service.api_key),
             ),
-            reply_markup=jo_chat_keyboard(),
+            reply_markup=_image_prompt_reply_keyboard(),
         )
         return
     except Exception:
@@ -2152,7 +2254,7 @@ async def _process_image_message(
         logger.exception("Unexpected image generation error.")
         await message.answer(
             _image_generation_failed_text(prompt=cleaned_prompt, confirmed_unavailable=False),
-            reply_markup=jo_chat_keyboard(),
+            reply_markup=_image_prompt_reply_keyboard(),
         )
         return
 
@@ -2168,7 +2270,7 @@ async def _process_image_message(
                 "Prompt used:\n"
                 f"<code>{html.escape(cleaned_prompt[:900])}</code>"
             ),
-            reply_markup=jo_chat_keyboard(),
+            reply_markup=_image_prompt_reply_keyboard(),
         )
         return
 
@@ -2182,13 +2284,13 @@ async def _process_image_message(
                 "Prompt used:\n"
                 f"<code>{html.escape(cleaned_prompt[:900])}</code>"
             ),
-            reply_markup=jo_chat_keyboard(),
+            reply_markup=_image_prompt_reply_keyboard(),
         )
         return
 
     await message.answer(
         _image_generation_failed_text(prompt=cleaned_prompt, confirmed_unavailable=True),
-        reply_markup=jo_chat_keyboard(),
+        reply_markup=_image_prompt_reply_keyboard(),
     )
 
 
