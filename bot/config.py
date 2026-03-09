@@ -36,6 +36,11 @@ class Settings:
     kimi_model: str
     tts_api_key: str | None
     tts_function_id: str
+    supabase_url: str | None
+    supabase_anon_key: str | None
+    supabase_db_url: str | None
+    supabase_users_table: str
+    supabase_history_table: str
     miniapp_url: str | None
     miniapp_api_base: str | None
     public_base_url: str | None
@@ -198,6 +203,11 @@ def load_settings() -> Settings:
     tts_api_key = _read_env("TTS_API_KEY") or _read_env("NVIDIA_TTS_API_KEY") or nvidia_api_key or ai_api_key
     tts_api_key = tts_api_key or None
     tts_function_id = _read_env("TTS_FUNCTION_ID") or DEFAULT_TTS_FUNCTION_ID
+    supabase_url = _normalize_public_url(_read_env("SUPABASE_URL") or _read_env("SUPABASE_PROJECT_URL")) or None
+    supabase_anon_key = _read_env("SUPABASE_ANON_KEY") or _read_env("SUPABASE_PUBLISHABLE_KEY") or None
+    supabase_db_url = _read_env("SUPABASE_DB_URL") or _read_env("SUPABASE_DIRECT_CONNECTION_STRING") or None
+    supabase_users_table = _read_env("SUPABASE_USERS_TABLE") or "users"
+    supabase_history_table = _read_env("SUPABASE_HISTORY_TABLE") or "history"
 
     public_base_url = (
         _normalize_public_url(_read_env("PUBLIC_BASE_URL"))
@@ -234,6 +244,12 @@ def load_settings() -> Settings:
         validation_warnings.append("Vision mode credentials are missing. Vision requests will fail until configured.")
     if not tts_api_key:
         validation_warnings.append("Text-to-Speech credentials are missing. TTS will use fallback synthesis.")
+    if supabase_url and not supabase_anon_key:
+        validation_warnings.append("SUPABASE_URL is set but SUPABASE_ANON_KEY is missing. Supabase HTTP client is disabled.")
+    if supabase_anon_key and not supabase_url:
+        validation_warnings.append("SUPABASE_ANON_KEY is set but SUPABASE_URL is missing. Supabase HTTP client is disabled.")
+    if (supabase_url or supabase_anon_key) and not supabase_db_url:
+        validation_warnings.append("SUPABASE_DB_URL is missing. Database tracking writes are disabled.")
 
     return Settings(
         bot_token=bot_token,
@@ -253,6 +269,11 @@ def load_settings() -> Settings:
         kimi_model=kimi_model,
         tts_api_key=tts_api_key,
         tts_function_id=tts_function_id,
+        supabase_url=supabase_url,
+        supabase_anon_key=supabase_anon_key,
+        supabase_db_url=supabase_db_url,
+        supabase_users_table=supabase_users_table,
+        supabase_history_table=supabase_history_table,
         miniapp_url=miniapp_url,
         miniapp_api_base=miniapp_api_base,
         public_base_url=public_base_url,
