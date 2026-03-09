@@ -14,7 +14,8 @@ logger = logging.getLogger(__name__)
 @dataclass(frozen=True)
 class SupabaseConfig:
     url: str
-    anon_key: str
+    api_key: str
+    using_service_role: bool
     users_table: str
     history_table: str
 
@@ -27,13 +28,16 @@ def _normalize_table_name(value: str | None, default: str) -> str:
 def build_supabase_config(settings: Settings | None = None) -> SupabaseConfig | None:
     active = settings or load_settings()
     url = str(active.supabase_url or "").strip()
+    service_role_key = str(active.supabase_service_role_key or "").strip()
     anon_key = str(active.supabase_anon_key or "").strip()
-    if not url or not anon_key:
+    api_key = service_role_key or anon_key
+    if not url or not api_key:
         return None
 
     return SupabaseConfig(
         url=url,
-        anon_key=anon_key,
+        api_key=api_key,
+        using_service_role=bool(service_role_key),
         users_table=_normalize_table_name(active.supabase_users_table, "users"),
         history_table=_normalize_table_name(active.supabase_history_table, "history"),
     )
@@ -51,7 +55,7 @@ def get_supabase_client() -> Client | None:
         return None
 
     try:
-        return create_client(config.url, config.anon_key)
+        return create_client(config.url, config.api_key)
     except Exception:
         logger.exception("Failed to initialize Supabase client.")
         return None

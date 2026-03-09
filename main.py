@@ -754,6 +754,7 @@ async def _track_api_action(
             identity.telegram_id,
             message_type,
         )
+        logger.info("Supabase tracking success for user %s", identity.telegram_id)
     except asyncio.TimeoutError:
         logger.warning(
             "Supabase tracking timed out | telegram_id=%s message_type=%s",
@@ -813,12 +814,34 @@ async def _startup() -> None:
     logger.info("API STARTED | version=%s", VERSION)
     logger.info("PROCESS=%s ENTRYPOINT=main.py VERSION=%s", role, VERSION)
     logger.info(
-        "Tracking env loaded | supabase_url_set=%s supabase_db_url_set=%s users_table=%s history_table=%s",
+        "Tracking env loaded | supabase_url_set=%s supabase_key_set=%s supabase_db_url_set=%s users_table=%s history_table=%s",
         bool(settings.supabase_url),
+        bool(settings.supabase_service_role_key or settings.supabase_anon_key),
         bool(settings.supabase_db_url),
         settings.supabase_users_table,
         settings.supabase_history_table,
     )
+    tracking_service = _tracking_service()
+    logger.info(
+        "Tracking backend selected | enabled=%s backend=%s",
+        tracking_service.enabled,
+        tracking_service.backend,
+    )
+    if tracking_service.enabled:
+        try:
+            startup_check_ok = await asyncio.wait_for(tracking_service.verify_connection(), timeout=5.0)
+            logger.info(
+                "Supabase startup connection status | ok=%s backend=%s",
+                startup_check_ok,
+                tracking_service.backend,
+            )
+        except asyncio.TimeoutError:
+            logger.warning(
+                "Supabase startup connection test timed out | backend=%s",
+                tracking_service.backend,
+            )
+    else:
+        logger.warning("Supabase startup connection test skipped: no active tracking backend.")
 
     runtime = await create_bot_runtime()
     app.state.bot_runtime = runtime
