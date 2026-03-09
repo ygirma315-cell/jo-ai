@@ -672,6 +672,11 @@ def _resolve_tracking_identity(request: Request, payload: TrackingRequestBase | 
         last_name = _normalize_tracking_text(init_user.get("last_name"))
 
     if telegram_id is None:
+        logger.warning(
+            "Tracking identity missing | path=%s has_init_data=%s",
+            request.url.path,
+            bool(init_data),
+        )
         return None
 
     return TrackingIdentity(
@@ -684,7 +689,9 @@ def _resolve_tracking_identity(request: Request, payload: TrackingRequestBase | 
 
 @lru_cache(maxsize=1)
 def _tracking_service() -> SupabaseTrackingService:
-    return SupabaseTrackingService(get_settings())
+    service = SupabaseTrackingService(get_settings())
+    logger.info("Tracking service ready | enabled=%s", service.enabled)
+    return service
 
 
 def _text_model_used(mode: TextMode) -> str:
@@ -708,10 +715,29 @@ async def _track_api_action(
     image_increment: int = 0,
 ) -> None:
     if identity is None:
+        logger.warning(
+            "Tracking skipped before dispatch: missing telegram identity | message_type=%s",
+            message_type,
+        )
         return
+
+    service = _tracking_service()
+    if not service.enabled:
+        logger.warning(
+            "Tracking skipped before dispatch: service disabled | telegram_id=%s message_type=%s",
+            identity.telegram_id,
+            message_type,
+        )
+        return
+
+    logger.info(
+        "Tracking dispatch | telegram_id=%s message_type=%s",
+        identity.telegram_id,
+        message_type,
+    )
     try:
         await asyncio.wait_for(
-            _tracking_service().track_action(
+            service.track_action(
                 identity=identity,
                 message_type=message_type,
                 user_message=user_message,
@@ -722,6 +748,11 @@ async def _track_api_action(
                 image_increment=image_increment,
             ),
             timeout=2.0,
+        )
+        logger.info(
+            "Tracking complete | telegram_id=%s message_type=%s",
+            identity.telegram_id,
+            message_type,
         )
     except asyncio.TimeoutError:
         logger.warning(
@@ -781,6 +812,13 @@ async def _startup() -> None:
     app.state.started_at = time.time()
     logger.info("API STARTED | version=%s", VERSION)
     logger.info("PROCESS=%s ENTRYPOINT=main.py VERSION=%s", role, VERSION)
+    logger.info(
+        "Tracking env loaded | supabase_url_set=%s supabase_db_url_set=%s users_table=%s history_table=%s",
+        bool(settings.supabase_url),
+        bool(settings.supabase_db_url),
+        settings.supabase_users_table,
+        settings.supabase_history_table,
+    )
 
     runtime = await create_bot_runtime()
     app.state.bot_runtime = runtime

@@ -39,6 +39,16 @@ class SupabaseTrackingService:
     def __init__(self, settings: Settings | None = None) -> None:
         self._settings = settings or load_settings()
         self._postgres_config: PostgresConfig | None = build_postgres_config(self._settings)
+        if self._postgres_config is None:
+            logger.warning(
+                "Tracking disabled: SUPABASE_DB_URL is missing or invalid."
+            )
+        else:
+            logger.info(
+                "Tracking initialized | users_table=%s history_table=%s",
+                self._postgres_config.users_table,
+                self._postgres_config.history_table,
+            )
 
     @property
     def enabled(self) -> bool:
@@ -57,11 +67,22 @@ class SupabaseTrackingService:
         image_increment: int = 0,
     ) -> None:
         if not self.enabled:
+            logger.warning("Tracking skipped: service is disabled.")
             return
         if identity is None or identity.telegram_id <= 0:
+            logger.warning("Tracking skipped: missing telegram identity.")
             return
 
-        await asyncio.to_thread(
+        logger.info(
+            "Tracking start | telegram_id=%s message_type=%s success=%s message_inc=%s image_inc=%s",
+            identity.telegram_id,
+            message_type,
+            bool(success),
+            max(0, int(message_increment)),
+            max(0, int(image_increment)),
+        )
+
+        users_upserted, history_inserted = await asyncio.to_thread(
             self._track_action_sync,
             identity,
             message_type,
@@ -71,6 +92,13 @@ class SupabaseTrackingService:
             success,
             max(0, int(message_increment)),
             max(0, int(image_increment)),
+        )
+        logger.info(
+            "Tracking success | telegram_id=%s message_type=%s users_upserted=%s history_inserted=%s",
+            identity.telegram_id,
+            message_type,
+            users_upserted,
+            history_inserted,
         )
 
     def _track_action_sync(
@@ -83,14 +111,22 @@ class SupabaseTrackingService:
         success: bool,
         message_increment: int,
         image_increment: int,
-    ) -> None:
+    ) -> tuple[int, int]:
         if not self.enabled:
-            return
+            raise RuntimeError("Tracking is disabled.")
         assert self._postgres_config is not None
 
         connection = open_postgres_connection()
         if connection is None:
-            return
+            logger.error(
+                "Tracking failed: Postgres connection unavailable | telegram_id=%s message_type=%s",
+                identity.telegram_id,
+                message_type,
+            )
+            raise RuntimeError("Postgres connection is unavailable.")
+
+        users_upserted = 0
+        history_inserted = 0
         try:
             users_identifier = sql.Identifier(self._postgres_config.users_table)
             history_identifier = sql.Identifier(self._postgres_config.history_table)
@@ -129,6 +165,7 @@ class SupabaseTrackingService:
                             image_increment,
                         ),
                     )
+                    users_upserted = max(0, int(cursor.rowcount or 0))
                     cursor.execute(
                         sql.SQL(
                             """
@@ -154,12 +191,15 @@ class SupabaseTrackingService:
                             bool(success),
                         ),
                     )
+                    history_inserted = max(0, int(cursor.rowcount or 0))
+            return users_upserted, history_inserted
         except Exception:
             logger.exception(
                 "Postgres tracking failed | telegram_id=%s message_type=%s",
                 identity.telegram_id,
                 message_type,
             )
+            raise
         finally:
             with suppress(Exception):
                 connection.close()
