@@ -2,17 +2,17 @@ from __future__ import annotations
 
 from typing import Any
 
-VERSION = "v1.0.3"
-WEB_VERSION = "v1.4.2"
+VERSION = "v1.5.0"
+WEB_VERSION = "v1.5.0"
 
 RELEASES: tuple[dict[str, Any], ...] = (
     {
         "version": WEB_VERSION,
-        "title": "Shared Chat/Code backend stability pass",
+        "title": "Major mini app and Telegram bot organization update",
         "items": (
-            "JO AI Chat and Code now run through one shared text request flow with mode-specific prompting.",
-            "Telegram Chat/Code no longer force analysis-profile overrides, improving speed and reducing unavailable failures.",
-            "Upstream timeout/retry logging now records the real failure point (path, attempt, status) without exposing internals.",
+            "The mini app now opens directly on AI tool selection, uses a more stable fixed chat layout, and keeps code upload compact beside the composer.",
+            "Telegram bot flow now uses paired Back and Main Menu buttons, removes utilities/games/calculator, and jumps uploaded images straight into Vision.",
+            "Code generation now pushes complex requests toward fuller system outputs, while TTS adds richer voice-style choices and clearer clone-status messaging.",
         ),
     },
     {

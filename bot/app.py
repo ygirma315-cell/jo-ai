@@ -15,19 +15,14 @@ from aiohttp import ClientConnectorError
 
 from bot.config import DEFAULT_MINIAPP_URL, load_settings
 from bot.error_handler import register_error_handler
-from bot.handlers.calculator import router as calculator_router
 from bot.handlers.common import router as common_router
 from bot.handlers.fallback import router as fallback_router
-from bot.handlers.games import router as games_router
 from bot.handlers.jo_ai import router as jo_ai_router
 from bot.middlewares.logging import UserActionLoggingMiddleware
 from bot.runtime_info import build_runtime_info
 from version import WEB_VERSION, latest_release, latest_release_lines
 from bot.services.ai_service import ChatService, ImageGenerationService, TextToSpeechService, VideoGenerationService
-from bot.services.calculator_service import CalculatorService
-from bot.services.guess_number_service import GuessNumberService
 from bot.services.session_manager import SessionManager
-from bot.services.tictactoe_service import TicTacToeService
 from bot.telegram_formatting import run_markdown_sanity_checks
 from version import VERSION
 
@@ -243,9 +238,6 @@ async def create_bot_runtime() -> BotRuntime:
 
     session_manager = SessionManager(known_users_path=settings.known_users_path)
     dispatcher["session_manager"] = session_manager
-    dispatcher["calculator_service"] = CalculatorService()
-    dispatcher["tictactoe_service"] = TicTacToeService()
-    dispatcher["guess_number_service"] = GuessNumberService()
     dispatcher["chat_service"] = ChatService(
         api_key=settings.nvidia_api_key or settings.ai_api_key,
         model=settings.nvidia_chat_model,
@@ -274,8 +266,6 @@ async def create_bot_runtime() -> BotRuntime:
     dispatcher.callback_query.middleware(UserActionLoggingMiddleware())
 
     dispatcher.include_router(common_router)
-    dispatcher.include_router(calculator_router)
-    dispatcher.include_router(games_router)
     dispatcher.include_router(jo_ai_router)
     dispatcher.include_router(fallback_router)
     register_error_handler(dispatcher)

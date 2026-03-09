@@ -5,6 +5,7 @@ import base64
 from dataclasses import dataclass
 import json
 import logging
+import re
 import time
 from typing import Any, Literal
 
@@ -29,6 +30,14 @@ DEFAULT_RETRY_COUNT = 1
 DEFAULT_RETRY_BACKOFF_SECONDS = 0.6
 RETRYABLE_HTTP_STATUSES = {408, 409, 425, 429}
 MAX_AUTO_CONTINUATIONS = 6
+COMPLEX_CODE_REQUEST_PATTERN = re.compile(
+    r"\b("
+    r"full[\s-]?stack|full[\s-]?system|dashboard|admin|backend|frontend|api|database|schema|auth|oauth|"
+    r"jwt|payment|subscription|queue|worker|websocket|socket|microservice|docker|kubernetes|deploy|"
+    r"production|role|permission|multi[\s-]?tenant|redis|postgres|tests?|ci/?cd|architecture"
+    r")\b",
+    flags=re.IGNORECASE,
+)
 
 TTS_SUPPORTED_LANGUAGES = {"en", "es", "fr"}
 TTS_SUPPORTED_VOICES = {"female", "male"}
@@ -885,7 +894,7 @@ def _continuation_instruction(mode: ChatMode) -> str:
     if mode == "code":
         return (
             "Continue exactly from where you stopped. "
-            "Do not repeat previous code. Finish all remaining files and code blocks completely."
+            "Do not repeat previous code. Finish every remaining file, migration, config block, and run step completely."
         )
     if mode == "research":
         return (
@@ -916,7 +925,7 @@ def _build_chat_payload(
 ) -> dict[str, object]:
     max_tokens_map = {
         "chat": 1200,
-        "code": 2600,
+        "code": 3600,
         "research": 2600,
         "prompt": 900,
         "image_prompt": 900,
@@ -939,7 +948,7 @@ def _build_chat_payload(
 def _request_timeout_seconds_for_mode(mode: ChatMode) -> int:
     timeout_map = {
         "chat": 50,
-        "code": 90,
+        "code": 120,
         "research": 90,
         "prompt": 55,
         "image_prompt": 55,
@@ -977,12 +986,13 @@ def _system_instruction_for_mode(mode: ChatMode) -> str:
         return (
             f"{security_prefix}"
             "You are JO AI Code Generator.\n"
-            "Role: produce complete, correct, runnable code.\n"
-            "Task: return the full implementation needed to satisfy the request.\n"
-            "Default output must be one single complete file.\n"
-            "Only produce multiple files when the user explicitly asks for separate files.\n"
-            "Never stop mid-file. Do not use placeholders like TODO or 'omitted for brevity'.\n"
-            "Include concise setup/run instructions after the code."
+            "Role: act like a senior software engineer producing complete, correct, runnable code.\n"
+            "Task: return the strongest implementation that satisfies the request with production-minded defaults.\n"
+            "Default output must be one single complete file unless the request clearly needs a multi-file system.\n"
+            "For complex builds, provide a short architecture summary, a file tree, complete key files, data model details, API contracts, validation, security notes, tests, and run/deploy steps.\n"
+            "Never stop mid-file. Do not use placeholders like TODO, stub, or 'omitted for brevity'.\n"
+            "If the response is long, continue until the implementation is complete.\n"
+            "Include concise setup and run instructions after the code."
         )
     if mode == "research":
         return (
@@ -1038,10 +1048,19 @@ def _enhance_user_prompt(
     if mode == "chat":
         return f"User request:\n{text}\n\nRespond clearly and directly."
     if mode == "code":
+        complex_request = _is_complex_code_request(text)
+        completion_contract = (
+            "Complex system requested. Infer standard engineering details from the user's context when they are not specified.\n"
+            "Return a complete implementation plan and full code for the critical files.\n"
+            "Include architecture, file structure, core code, schema/storage choices, auth/security, error handling, and tests."
+            if complex_request
+            else "Return a complete implementation with clear defaults and no omitted code."
+        )
         return (
             f"Code request:\n{text}\n\n"
-            "Return one complete file by default.\n"
-            "Only return multiple files if the user explicitly asked for separate files.\n"
+            f"{completion_contract}\n"
+            "Return one complete file by default unless the request clearly needs multiple files.\n"
+            "When multiple files are necessary, label each file clearly and finish each one.\n"
             "Do not omit code for brevity."
         )
     if mode == "research":
@@ -1060,6 +1079,13 @@ def _enhance_user_prompt(
         f"Image prompt request:\n{text}\n\n"
         "Return one high-quality image prompt with lighting, environment, style and quality tags."
     )
+
+
+def _is_complex_code_request(text: str) -> bool:
+    normalized = " ".join((text or "").split())
+    if len(normalized) >= 220:
+        return True
+    return len(COMPLEX_CODE_REQUEST_PATTERN.findall(normalized)) >= 2
 
 
 def _is_retryable_status(status_code: int) -> bool:

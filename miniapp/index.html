@@ -1,4 +1,4 @@
-<!DOCTYPE html>
+﻿<!DOCTYPE html>
 <html lang="en">
 <head>
   <meta charset="UTF-8">
@@ -25,85 +25,38 @@
     href="https://fonts.googleapis.com/css2?family=DM+Sans:wght@400;500;700&family=Space+Grotesk:wght@500;700&display=swap"
     rel="stylesheet"
   >
-  <link rel="stylesheet" href="style.css?v=1.4.2">
+  <link rel="stylesheet" href="style.css?v=1.5.0">
   <script src="https://telegram.org/js/telegram-web-app.js"></script>
-  <script src="bootstrap.js?v=1.4.2" defer></script>
-  <script src="config.js?v=1.4.2"></script>
-  <script src="app.js?v=1.4.2" defer></script>
+  <script src="bootstrap.js?v=1.5.0" defer></script>
+  <script src="config.js?v=1.5.0"></script>
+  <script src="app.js?v=1.5.0" defer></script>
 </head>
 <body data-page="home">
   <section id="appFallback" class="app-fallback" hidden>
     <h1>Mini App failed to load</h1>
     <p id="appFallbackMessage">Unknown startup error.</p>
   </section>
-  <div id="welcomeOverlay" class="welcome-overlay" hidden aria-hidden="true">
-    <section
-      class="welcome-card"
-      role="dialog"
-      aria-modal="true"
-      aria-labelledby="welcomeTitle"
-      aria-describedby="welcomeMessage"
-      tabindex="-1"
-    >
-      <div class="welcome-icon" aria-hidden="true">
-        <svg viewBox="0 0 72 72" role="presentation" focusable="false">
-          <defs>
-            <linearGradient id="joWelcomeGlow" x1="12" x2="60" y1="12" y2="60" gradientUnits="userSpaceOnUse">
-              <stop offset="0" stop-color="#0f766e" />
-              <stop offset="1" stop-color="#d97706" />
-            </linearGradient>
-          </defs>
-          <rect x="11" y="11" width="50" height="50" rx="16" fill="url(#joWelcomeGlow)" opacity="0.16" />
-          <path d="M26 28.5C26 24.9 28.9 22 32.5 22H41C44.6 22 47.5 24.9 47.5 28.5V36.5C47.5 44.5 42.2 50 34.5 50H28.8" fill="none" stroke="url(#joWelcomeGlow)" stroke-linecap="round" stroke-linejoin="round" stroke-width="5" />
-          <path d="M24 47.5L30.8 47.5C33.6 47.5 35.9 45.2 35.9 42.4V31.8" fill="none" stroke="#17313d" stroke-linecap="round" stroke-linejoin="round" stroke-width="4.4" />
-          <circle cx="48.5" cy="24.5" r="4.5" fill="#17313d" />
-          <path d="M50.3 16.4V12.8" stroke="#17313d" stroke-linecap="round" stroke-width="3" />
-          <path d="M57.1 19.5L59.8 16.8" stroke="#17313d" stroke-linecap="round" stroke-width="3" />
-          <path d="M59.8 26.3H63.4" stroke="#17313d" stroke-linecap="round" stroke-width="3" />
-        </svg>
-      </div>
-      <p class="welcome-tag">JO AI CHAT BOT</p>
-      <h1 id="welcomeTitle">Free, fast, flexible AI tools.</h1>
-      <p id="welcomeMessage">
-        A smooth mini app for quick answers, sharp prompts, clean code help, and easy image workflows.
-      </p>
-      <div class="welcome-points">
-        <span>&#10024; Free</span>
-        <span>&#9889; Fast</span>
-        <span>&#129504; Flexible</span>
-      </div>
-      <button id="openAppBtn" class="btn primary wide" type="button">&#128640; Open App</button>
-    </section>
-  </div>
 
   <main id="appRoot" class="page-shell" tabindex="-1">
     <section class="shell home-shell">
       <header class="site-header home-header">
-        <p class="eyebrow">JO AI CHAT BOT</p>
+        <div>
+          <p class="eyebrow">JO AI CHAT BOT</p>
+          <h1 class="home-title">Pick your AI workspace</h1>
+          <p class="hint">v1.5.0 major update: direct tool access, cleaner chat layout, stronger code generation.</p>
+        </div>
         <div class="status-cluster">
           <span id="status" class="chip">Checking studio...</span>
           <span id="userInfo" class="chip muted">Guest mode</span>
         </div>
       </header>
 
-      <section class="hero-card card compact-hero">
-        <div class="hero-copy">
-          <p class="section-kicker">WELCOME</p>
-          <h2>Vibey AI tools, ready in one tap.</h2>
-          <p>Start with chat, or jump straight into the model you want below.</p>
-          <div class="hero-actions">
-            <a class="btn primary" href="chat.html">&#129302; Start with Chat</a>
-            <a class="btn" href="help.html">&#10067; Help</a>
-          </div>
-        </div>
-      </section>
-
       <section class="menu-section">
         <div class="section-head">
           <div>
             <p class="section-kicker">AI TOOLS</p>
-            <h2>Pick your JO AI workspace</h2>
-            <p class="hint">Top tools first, then the rest below.</p>
+            <h2>Open the mode you need</h2>
+            <p class="hint">Everything starts here now. No welcome screen, no extra step.</p>
           </div>
         </div>
 
@@ -117,19 +70,19 @@
           <a class="tool-card" href="code.html">
             <span class="tool-emoji">&#128187;</span>
             <h3>Code Generator</h3>
-            <p>Build snippets, explain logic, and work through longer technical prompts.</p>
+            <p>Build fuller systems, debug uploaded files, and get stronger implementation details.</p>
             <span class="tool-link">Open page</span>
           </a>
           <a class="tool-card" href="deepseek.html">
             <span class="tool-emoji">&#129504;</span>
             <h3>Deep Analysis</h3>
-            <p>Use a sharper reasoning flow for more structured and thoughtful answers.</p>
+            <p>Use a more structured reasoning flow for heavier questions and tradeoffs.</p>
             <span class="tool-link">Open page</span>
           </a>
           <a class="tool-card" href="research.html">
             <span class="tool-emoji">&#128218;</span>
             <h3>Research</h3>
-            <p>Ask for detailed breakdowns, tradeoffs, summaries, and next steps.</p>
+            <p>Ask for detailed breakdowns, summaries, risks, and practical next steps.</p>
             <span class="tool-link">Open page</span>
           </a>
         </div>
@@ -156,7 +109,7 @@
           <a class="tool-card" href="tts.html">
             <span class="tool-emoji">&#128266;</span>
             <h3>Text-to-Speech</h3>
-            <p>Turn text into speech with language, voice, and emotion controls.</p>
+            <p>Turn text into speech with language, voice, and richer style controls.</p>
             <span class="tool-link">Open page</span>
           </a>
         </div>
@@ -165,4 +118,3 @@
   </main>
 </body>
 </html>
-

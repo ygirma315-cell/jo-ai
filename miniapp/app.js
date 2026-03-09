@@ -7,7 +7,7 @@
   const STORAGE_VERSION_KEY = "jo_frontend_version";
   const HOME_ENTRY_STORAGE_KEY = "jo_home_entered";
   const HISTORY_PREFIX = "jo_history_";
-  const FRONTEND_VERSION = "v1.4.2";
+  const FRONTEND_VERSION = "v1.5.0";
   const SITE_BASE_URL = "https://ygirma315-cell.github.io/jo-ai/";
   const MAX_HISTORY_ITEMS = 18;
   const MAX_UPLOAD_BYTES = 8 * 1024 * 1024;
@@ -24,12 +24,12 @@
 
   const STATIC_RELEASES = [
     {
-      version: "v1.4.2",
-      title: "Shared Chat + Code backend stability",
+      version: "v1.5.0",
+      title: "Major mini app and bot organization update",
       items: [
-        "JO AI Chat and Code now call one shared text API path first, reducing duplicate fallback chains",
-        "Connection checks and request timeouts are faster, so unavailable states fail cleaner instead of hanging",
-        "Backend and bot now share the same upstream service flow with clearer retry and failure-point logging",
+        "The mini app now opens directly on AI tool selection, while tool pages use a firmer fixed chat layout that keeps the conversation area stable.",
+        "Code Generator now pushes larger requests toward fuller system outputs, and the code upload control is reduced to a compact inline plus button.",
+        "Telegram bot flow was reorganized with Back/Main Menu pairs, richer TTS voice-style choices, direct uploaded-image handoff into Vision, and utilities removal.",
       ],
     },
     {
@@ -95,9 +95,9 @@
     },
     code: {
       title: "Code Generator",
-      description: "Generate full code or upload a file for debug/fix in one flow.",
-      lead: "By default, JO AI returns one full-file solution unless you ask for multi-file output.",
-      example: "Create a Python function that validates emails and returns clear error messages.",
+      description: "Generate stronger implementation plans, fuller systems, or debug uploaded code in one flow.",
+      lead: "Complex code requests are internally refined so JO AI can return more complete architecture and implementation detail.",
+      example: "Build a FastAPI + Postgres backend with auth, roles, CRUD endpoints, tests, and Docker setup.",
       label: "Ask Joe AI chatbot for code",
       placeholder: "Ask Joe AI chatbot for code, debugging, or implementation help",
       rows: 1,
@@ -170,7 +170,7 @@
     },
     tts: {
       title: "Text-to-Speech",
-      description: "Convert text into speech with language, voice, and emotion controls.",
+      description: "Convert text into speech with language, voice, and richer style controls.",
       lead: "Pick your speech settings, submit text, and play or save the generated audio.",
       example: "Welcome to JO AI. Your personalized audio summary is ready.",
       label: "Enter text for speech",
@@ -184,9 +184,9 @@
       supportsAudioSave: true,
       defaultTtsLanguage: "en",
       defaultTtsVoice: "female",
-      defaultTtsEmotion: "neutral",
+      defaultTtsEmotion: "natural",
       emptyTitle: "Create speech from text",
-      emptyCopy: "Choose language, voice, and emotion, then generate speech in one step.",
+      emptyCopy: "Choose language, voice, and style, then generate speech in one step.",
     },
     kimi: {
       title: "JO AI Vision",
@@ -1859,7 +1859,7 @@
       elements.ttsVoice.value = "female";
     }
     if (elements.ttsEmotion) {
-      elements.ttsEmotion.value = "neutral";
+      elements.ttsEmotion.value = "natural";
     }
     if (elements.kimiImage) {
       elements.kimiImage.value = "";
@@ -2325,7 +2325,7 @@
       payload.text = message;
       payload.language = elements.ttsLanguage ? elements.ttsLanguage.value : "en";
       payload.voice = elements.ttsVoice ? elements.ttsVoice.value : "female";
-      payload.emotion = elements.ttsEmotion ? elements.ttsEmotion.value : "neutral";
+      payload.emotion = elements.ttsEmotion ? elements.ttsEmotion.value : "natural";
     }
 
     if (mode === "code") {
@@ -2378,8 +2378,8 @@
     if (mode === "tts") {
       const lang = payload.language || "en";
       const voice = payload.voice || "female";
-      const emotion = payload.emotion || "neutral";
-      note = `Language: ${lang} | Voice: ${voice} | Emotion: ${emotion}`;
+      const emotion = payload.emotion || "natural";
+      note = `Language: ${lang} | Voice: ${voice} | Style: ${emotion}`;
     }
     if (mode === "kimi" && elements.kimiImage && elements.kimiImage.files && elements.kimiImage.files[0]) {
       note = `File: ${elements.kimiImage.files[0].name}`;
@@ -2693,25 +2693,7 @@
     updateSendButtonState();
   }
   function initHomePage() {
-    if (!elements.welcomeOverlay) {
-      return;
-    }
-
-    const seen = safeStorageGet(getSessionStorage(), HOME_ENTRY_STORAGE_KEY) === "yes";
-    if (isTelegramMiniApp() || seen) {
-      if (isTelegramMiniApp()) {
-        safeStorageSet(getSessionStorage(), HOME_ENTRY_STORAGE_KEY, "yes");
-      }
-      hideWelcomeOverlay({ focusTarget: false });
-    } else {
-      showWelcomeOverlay();
-    }
-
-    if (elements.openAppBtn) {
-      elements.openAppBtn.addEventListener("click", () => {
-        hideWelcomeOverlay({ rememberEntry: true });
-      });
-    }
+    setStatus("Choose a tool");
   }
 
   function initToolPage() {

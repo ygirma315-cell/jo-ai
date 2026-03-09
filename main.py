@@ -211,12 +211,19 @@ class TTSRequest(BaseModel):
         if value in allowed:
             return value
         aliases = {
+            "natural": "neutral",
+            "friendly": "neutral",
             "happy": "cheerful",
             "excited": "cheerful",
+            "bright": "cheerful",
+            "energetic": "cheerful",
             "relaxed": "calm",
             "soft": "calm",
+            "warm": "calm",
             "formal": "serious",
             "focused": "serious",
+            "deep": "serious",
+            "narrator": "serious",
         }
         return aliases.get(value, "neutral")
 
