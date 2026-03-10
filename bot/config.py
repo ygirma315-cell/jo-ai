@@ -15,6 +15,17 @@ DEFAULT_KIMI_MODEL = "moonshotai/kimi-k2.5"
 DEFAULT_TTS_FUNCTION_ID = "bc45d9e9-7c78-4d56-9737-e27011962ba8"
 DEFAULT_AI_BASE_URL = "https://integrate.api.nvidia.com/v1"
 DEFAULT_MINIAPP_URL = "https://ygirma315-cell.github.io/jo-ai/"
+_PLACEHOLDER_VALUE_SNIPPETS = (
+    "[your-password]",
+    "<your-password>",
+    "your-password",
+    "your_password",
+    "yourpassword",
+    "replace-me",
+    "replace_me",
+    "changeme",
+    "example",
+)
 
 
 @dataclass(frozen=True)
@@ -69,6 +80,38 @@ def _load_required_bot_token() -> tuple[str, str]:
 
 def _read_env(name: str) -> str:
     return os.getenv(name, "").strip()
+
+
+def _read_alias_env(*names: str) -> tuple[str | None, str | None]:
+    for name in names:
+        value = _read_env(name)
+        if value:
+            return value, name
+    return None, None
+
+
+def _alias_conflict_warning(*names: str) -> str | None:
+    seen: dict[str, str] = {}
+    for name in names:
+        value = _read_env(name)
+        if value:
+            seen[name] = value
+    if len(seen) <= 1:
+        return None
+
+    unique_values = {value for value in seen.values()}
+    if len(unique_values) <= 1:
+        return None
+
+    ordered_names = ", ".join(seen.keys())
+    return f"Conflicting Supabase env aliases set with different values: {ordered_names}."
+
+
+def _looks_like_placeholder(value: str | None) -> bool:
+    lowered = str(value or "").strip().lower()
+    if not lowered:
+        return False
+    return any(token in lowered for token in _PLACEHOLDER_VALUE_SNIPPETS)
 
 
 def _normalize_public_url(value: str | None) -> str | None:
@@ -204,10 +247,20 @@ def load_settings() -> Settings:
     tts_api_key = _read_env("TTS_API_KEY") or _read_env("NVIDIA_TTS_API_KEY") or nvidia_api_key or ai_api_key
     tts_api_key = tts_api_key or None
     tts_function_id = _read_env("TTS_FUNCTION_ID") or DEFAULT_TTS_FUNCTION_ID
-    supabase_url = _normalize_public_url(_read_env("SUPABASE_URL") or _read_env("SUPABASE_PROJECT_URL")) or None
-    supabase_anon_key = _read_env("SUPABASE_ANON_KEY") or _read_env("SUPABASE_PUBLISHABLE_KEY") or None
-    supabase_service_role_key = _read_env("SUPABASE_SERVICE_ROLE_KEY") or _read_env("SUPABASE_SECRET_KEY") or None
-    supabase_db_url = _read_env("SUPABASE_DB_URL") or _read_env("SUPABASE_DIRECT_CONNECTION_STRING") or None
+    supabase_url_raw, _supabase_url_source = _read_alias_env("SUPABASE_URL", "SUPABASE_PROJECT_URL")
+    supabase_anon_key_raw, _supabase_anon_source = _read_alias_env("SUPABASE_ANON_KEY", "SUPABASE_PUBLISHABLE_KEY")
+    supabase_service_role_key_raw, _supabase_service_role_source = _read_alias_env(
+        "SUPABASE_SERVICE_ROLE_KEY",
+        "SUPABASE_SECRET_KEY",
+    )
+    supabase_db_url_raw, _supabase_db_url_source = _read_alias_env(
+        "SUPABASE_DB_URL",
+        "SUPABASE_DIRECT_CONNECTION_STRING",
+    )
+    supabase_url = _normalize_public_url(supabase_url_raw) or None
+    supabase_anon_key = supabase_anon_key_raw or None
+    supabase_service_role_key = supabase_service_role_key_raw or None
+    supabase_db_url = supabase_db_url_raw or None
     supabase_users_table = _read_env("SUPABASE_USERS_TABLE") or "users"
     supabase_history_table = _read_env("SUPABASE_HISTORY_TABLE") or "history"
 
@@ -246,6 +299,26 @@ def load_settings() -> Settings:
         validation_warnings.append("Vision mode credentials are missing. Vision requests will fail until configured.")
     if not tts_api_key:
         validation_warnings.append("Text-to-Speech credentials are missing. TTS will use fallback synthesis.")
+    for alias_warning in (
+        _alias_conflict_warning("SUPABASE_URL", "SUPABASE_PROJECT_URL"),
+        _alias_conflict_warning("SUPABASE_ANON_KEY", "SUPABASE_PUBLISHABLE_KEY"),
+        _alias_conflict_warning("SUPABASE_SERVICE_ROLE_KEY", "SUPABASE_SECRET_KEY"),
+        _alias_conflict_warning("SUPABASE_DB_URL", "SUPABASE_DIRECT_CONNECTION_STRING"),
+    ):
+        if alias_warning:
+            validation_warnings.append(alias_warning)
+    if supabase_url_raw and not supabase_url:
+        validation_warnings.append(
+            "SUPABASE_URL is set but is not a valid URL. Supabase HTTP tracking is disabled until this is fixed."
+        )
+    if _looks_like_placeholder(supabase_db_url):
+        validation_warnings.append(
+            "SUPABASE_DB_URL looks like a placeholder value. Direct Postgres tracking will be disabled."
+        )
+    if str(supabase_service_role_key or "").strip().lower().startswith("sb_publishable_"):
+        validation_warnings.append(
+            "SUPABASE_SERVICE_ROLE_KEY appears to be a publishable/anon key. Use the secret service role key."
+        )
     if supabase_url and not (supabase_service_role_key or supabase_anon_key):
         validation_warnings.append(
             "SUPABASE_URL is set but no key is configured. Set SUPABASE_SERVICE_ROLE_KEY or SUPABASE_ANON_KEY."
@@ -257,6 +330,10 @@ def load_settings() -> Settings:
     if supabase_url and supabase_anon_key and not supabase_service_role_key:
         validation_warnings.append(
             "Tracking uses SUPABASE_ANON_KEY. If RLS blocks inserts, set SUPABASE_SERVICE_ROLE_KEY."
+        )
+    if supabase_url and supabase_anon_key and not supabase_service_role_key and not supabase_db_url:
+        validation_warnings.append(
+            "Only SUPABASE_ANON_KEY is available. In production this is commonly blocked by RLS; set SUPABASE_SERVICE_ROLE_KEY."
         )
     if (supabase_url or supabase_anon_key or supabase_service_role_key) and not supabase_db_url:
         validation_warnings.append(

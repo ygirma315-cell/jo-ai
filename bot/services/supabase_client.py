@@ -3,12 +3,14 @@ from __future__ import annotations
 from dataclasses import dataclass
 from functools import lru_cache
 import logging
+import re
 
 from supabase import Client, create_client
 
 from bot.config import Settings, load_settings
 
 logger = logging.getLogger(__name__)
+_IDENTIFIER_PATTERN = re.compile(r"^[A-Za-z_][A-Za-z0-9_]*$")
 
 
 @dataclass(frozen=True)
@@ -22,7 +24,23 @@ class SupabaseConfig:
 
 def _normalize_table_name(value: str | None, default: str) -> str:
     raw = str(value or "").strip()
-    return raw or default
+    if not raw:
+        return default
+
+    candidate = raw.strip().strip('"')
+    if "." in candidate:
+        schema, table = candidate.split(".", maxsplit=1)
+        candidate = table.strip().strip('"')
+        logger.warning(
+            "Supabase table value '%s' includes schema '%s'; using table name '%s'.",
+            raw,
+            schema.strip().strip('"'),
+            candidate,
+        )
+    if not _IDENTIFIER_PATTERN.match(candidate):
+        logger.warning("Invalid Supabase table name '%s'; falling back to '%s'.", raw, default)
+        return default
+    return candidate
 
 
 def build_supabase_config(settings: Settings | None = None) -> SupabaseConfig | None:

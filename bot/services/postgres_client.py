@@ -13,6 +13,18 @@ from bot.config import Settings, load_settings
 
 logger = logging.getLogger(__name__)
 _IDENTIFIER_PATTERN = re.compile(r"^[A-Za-z_][A-Za-z0-9_]*$")
+_PLACEHOLDER_SNIPPETS = (
+    "[your-password]",
+    "<your-password>",
+    "your-password",
+    "your_password",
+    "yourpassword",
+    "your-supabase-password",
+    "replace-me",
+    "replace_me",
+    "changeme",
+    "example-password",
+)
 
 
 @dataclass(frozen=True)
@@ -33,7 +45,23 @@ def _safe_table_name(value: str | None, default: str) -> str:
 
 
 def _normalize_dsn(value: str | None) -> str:
-    return str(value or "").strip()
+    raw = str(value or "").strip()
+    if not raw:
+        return ""
+    lowered = raw.lower()
+    if (
+        lowered.startswith(("postgresql://", "postgres://"))
+        and "supabase.co" in lowered
+        and "sslmode=" not in lowered
+    ):
+        separator = "&" if "?" in raw else "?"
+        return f"{raw}{separator}sslmode=require"
+    return raw
+
+
+def _contains_placeholder_dsn(dsn: str) -> bool:
+    lowered = dsn.lower()
+    return any(snippet in lowered for snippet in _PLACEHOLDER_SNIPPETS)
 
 
 def _is_valid_dsn(dsn: str) -> bool:
@@ -52,6 +80,11 @@ def build_postgres_config(settings: Settings | None = None) -> PostgresConfig | 
     if not dsn:
         logger.warning("SUPABASE_DB_URL is empty. Tracking writes are disabled.")
         return None
+    if _contains_placeholder_dsn(dsn):
+        logger.error(
+            "SUPABASE_DB_URL appears to use a placeholder password/value. Tracking writes are disabled until a real DSN is set."
+        )
+        return None
     if not _is_valid_dsn(dsn):
         logger.error("SUPABASE_DB_URL is not a valid PostgreSQL DSN. Tracking writes are disabled.")
         return None
@@ -67,12 +100,12 @@ def get_postgres_config() -> PostgresConfig | None:
     return build_postgres_config(load_settings())
 
 
-def open_postgres_connection() -> Connection | None:
-    config = get_postgres_config()
-    if config is None:
+def open_postgres_connection(config: PostgresConfig | None = None) -> Connection | None:
+    resolved_config = config or get_postgres_config()
+    if resolved_config is None:
         return None
     try:
-        return psycopg.connect(config.dsn, autocommit=False, connect_timeout=5)
+        return psycopg.connect(resolved_config.dsn, autocommit=False, connect_timeout=5)
     except Exception:
         logger.exception("Failed to connect to Supabase Postgres.")
         return None

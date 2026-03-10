@@ -690,7 +690,15 @@ def _resolve_tracking_identity(request: Request, payload: TrackingRequestBase | 
 @lru_cache(maxsize=1)
 def _tracking_service() -> SupabaseTrackingService:
     service = SupabaseTrackingService(get_settings())
-    logger.info("Tracking service ready | enabled=%s", service.enabled)
+    if service.enabled:
+        logger.info("SUPABASE CONFIG LOADED | enabled=%s backend=%s", service.enabled, service.backend)
+    else:
+        logger.warning(
+            "SUPABASE CONFIG INVALID | enabled=%s backend=%s reason=%s",
+            service.enabled,
+            service.backend,
+            service.disabled_reason or "unknown",
+        )
     return service
 
 
@@ -715,26 +723,20 @@ async def _track_api_action(
     image_increment: int = 0,
 ) -> None:
     if identity is None:
-        logger.warning(
-            "Tracking skipped before dispatch: missing telegram identity | message_type=%s",
-            message_type,
-        )
+        logger.warning("TRACKING FAILED user=unknown message_type=%s error=missing telegram identity", message_type)
         return
 
     service = _tracking_service()
     if not service.enabled:
         logger.warning(
-            "Tracking skipped before dispatch: service disabled | telegram_id=%s message_type=%s",
+            "TRACKING FAILED user=%s message_type=%s error=tracking disabled reason=%s",
             identity.telegram_id,
             message_type,
+            service.disabled_reason or "unknown",
         )
         return
 
-    logger.info(
-        "Tracking dispatch | telegram_id=%s message_type=%s",
-        identity.telegram_id,
-        message_type,
-    )
+    tracking_timeout_seconds = 4.0
     try:
         await asyncio.wait_for(
             service.track_action(
@@ -747,25 +749,22 @@ async def _track_api_action(
                 message_increment=message_increment,
                 image_increment=image_increment,
             ),
-            timeout=2.0,
+            timeout=tracking_timeout_seconds,
         )
-        logger.info(
-            "Tracking complete | telegram_id=%s message_type=%s",
-            identity.telegram_id,
-            message_type,
-        )
-        logger.info("Supabase tracking success for user %s", identity.telegram_id)
+        logger.info("TRACKING COMPLETE user=%s message_type=%s", identity.telegram_id, message_type)
     except asyncio.TimeoutError:
         logger.warning(
-            "Supabase tracking timed out | telegram_id=%s message_type=%s",
+            "TRACKING FAILED user=%s message_type=%s error=timeout_after_%ss",
             identity.telegram_id,
             message_type,
+            tracking_timeout_seconds,
         )
-    except Exception:
+    except Exception as exc:
         logger.exception(
-            "Unexpected Supabase tracking failure | telegram_id=%s message_type=%s",
+            "TRACKING FAILED user=%s message_type=%s error=%s",
             identity.telegram_id,
             message_type,
+            exc,
         )
 
 
@@ -807,6 +806,8 @@ async def _process_webhook_update(runtime: BotRuntime, update: Update) -> None:
 async def _startup() -> None:
     settings = get_settings()
     setup_logging(settings.log_level)
+    for warning in settings.validation_warnings:
+        logger.warning("CONFIG WARNING | %s", warning)
     settings.require_valid()
 
     role = _read_env("PROCESS_ROLE") or "web"
@@ -814,16 +815,17 @@ async def _startup() -> None:
     logger.info("API STARTED | version=%s", VERSION)
     logger.info("PROCESS=%s ENTRYPOINT=main.py VERSION=%s", role, VERSION)
     logger.info(
-        "Tracking env loaded | supabase_url_set=%s supabase_key_set=%s supabase_db_url_set=%s users_table=%s history_table=%s",
+        "SUPABASE CONFIG LOADED | supabase_url_set=%s service_role_set=%s anon_key_set=%s supabase_db_url_set=%s users_table=%s history_table=%s",
         bool(settings.supabase_url),
-        bool(settings.supabase_service_role_key or settings.supabase_anon_key),
+        bool(settings.supabase_service_role_key),
+        bool(settings.supabase_anon_key),
         bool(settings.supabase_db_url),
         settings.supabase_users_table,
         settings.supabase_history_table,
     )
     tracking_service = _tracking_service()
     logger.info(
-        "Tracking backend selected | enabled=%s backend=%s",
+        "TRACKING BACKEND SELECTED | enabled=%s backend=%s",
         tracking_service.enabled,
         tracking_service.backend,
     )
@@ -831,17 +833,20 @@ async def _startup() -> None:
         try:
             startup_check_ok = await asyncio.wait_for(tracking_service.verify_connection(), timeout=5.0)
             logger.info(
-                "Supabase startup connection status | ok=%s backend=%s",
+                "SUPABASE CONNECTION VERIFY RESULT | ok=%s backend=%s",
                 startup_check_ok,
                 tracking_service.backend,
             )
         except asyncio.TimeoutError:
             logger.warning(
-                "Supabase startup connection test timed out | backend=%s",
+                "SUPABASE CONNECTION VERIFY FAILED | backend=%s error=startup_timeout",
                 tracking_service.backend,
             )
     else:
-        logger.warning("Supabase startup connection test skipped: no active tracking backend.")
+        logger.warning(
+            "SUPABASE CONFIG INVALID | reason=%s",
+            tracking_service.disabled_reason or "no active tracking backend",
+        )
 
     runtime = await create_bot_runtime()
     app.state.bot_runtime = runtime

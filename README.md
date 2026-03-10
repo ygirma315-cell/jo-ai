@@ -111,6 +111,12 @@ Optional:
 - `IMAGE_API_KEY`
 - `DEEPSEEK_API_KEY`
 - `KIMI_API_KEY`
+- `SUPABASE_URL`
+- `SUPABASE_SERVICE_ROLE_KEY` (recommended for backend tracking writes)
+- `SUPABASE_ANON_KEY` (fallback only; can be blocked by RLS)
+- `SUPABASE_DB_URL` (recommended; direct Postgres tracking backend)
+- `SUPABASE_USERS_TABLE` (default: `users`)
+- `SUPABASE_HISTORY_TABLE` (default: `history`)
 - `PUBLIC_BASE_URL`
 - `MINIAPP_URL`
 - `MINIAPP_API_BASE`
@@ -126,6 +132,9 @@ Defaults:
 Important:
 
 - Keep `MINIAPP_URL` set to `https://ygirma315-cell.github.io/jo-ai/` for a consistent Telegram mini app URL.
+- For production tracking reliability on Render, set either:
+  - `SUPABASE_DB_URL`, or
+  - `SUPABASE_URL` + `SUPABASE_SERVICE_ROLE_KEY`
 
 ## Deployments
 
