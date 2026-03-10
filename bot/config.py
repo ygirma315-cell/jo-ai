@@ -59,6 +59,7 @@ class Settings:
     public_base_url: str | None
     telegram_webhook_url: str | None
     telegram_webhook_secret: str | None
+    admin_dashboard_token: str | None
     allowed_origins: tuple[str, ...]
     request_timeout_seconds: int
     validation_errors: tuple[str, ...]
@@ -288,6 +289,7 @@ def load_settings() -> Settings:
         public_base_url, "/telegram/webhook"
     )
     telegram_webhook_secret = _read_env("TELEGRAM_WEBHOOK_SECRET") or None
+    admin_dashboard_token = _read_env("ADMIN_DASHBOARD_TOKEN") or _read_env("ADMIN_API_TOKEN") or None
     allowed_origins = _parse_allowed_origins(_read_env("ALLOWED_ORIGINS"), public_base_url, miniapp_url)
     request_timeout_seconds = _parse_timeout_seconds(_read_env("REQUEST_TIMEOUT_SECONDS"))
 
@@ -301,6 +303,10 @@ def load_settings() -> Settings:
     if not public_base_url and not telegram_webhook_url:
         validation_warnings.append(
             "No public base URL detected. Telegram webhook auto-configuration is disabled until a public URL is available."
+        )
+    if not admin_dashboard_token:
+        validation_warnings.append(
+            "ADMIN_DASHBOARD_TOKEN is missing. Admin dashboard API routes will stay protected but unusable until configured."
         )
     if miniapp_url_warning:
         validation_warnings.append(miniapp_url_warning)
@@ -398,6 +404,7 @@ def load_settings() -> Settings:
         public_base_url=public_base_url,
         telegram_webhook_url=telegram_webhook_url,
         telegram_webhook_secret=telegram_webhook_secret,
+        admin_dashboard_token=admin_dashboard_token,
         allowed_origins=allowed_origins,
         request_timeout_seconds=request_timeout_seconds,
         validation_errors=tuple(validation_errors),

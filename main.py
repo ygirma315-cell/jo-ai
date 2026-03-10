@@ -8,6 +8,7 @@ import json
 import logging
 import os
 import re
+import secrets
 import time
 import uuid
 from contextlib import suppress
@@ -19,10 +20,11 @@ from urllib.parse import parse_qs, urlparse
 import uvicorn
 from aiogram.types import Update
 from dotenv import load_dotenv
-from fastapi import FastAPI, Request
+from fastapi import FastAPI, HTTPException, Request
 from fastapi.exceptions import RequestValidationError
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import JSONResponse
+from fastapi.responses import FileResponse, HTMLResponse, JSONResponse
+from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, ConfigDict, Field, ValidationError, model_validator
 from supabase import create_client
 
@@ -36,6 +38,7 @@ from bot.app import (
 from bot.config import load_settings
 from bot.logging_config import setup_logging
 from bot.runtime_info import build_runtime_info
+from bot.services.admin_service import SupabaseAdminService
 from bot.services.ai_service import AIServiceError, ChatService, ImageGenerationService, TextToSpeechService
 from bot.services.supabase_client import build_supabase_config
 from bot.services.tracking_service import SupabaseTrackingService, TrackingIdentity
@@ -48,6 +51,7 @@ from bot.security import (
 from version import VERSION, WEB_VERSION
 
 PROJECT_ROOT = Path(__file__).resolve().parent
+ADMIN_FRONTEND_DIR = PROJECT_ROOT / "admin"
 DEFAULT_GITHUB_PAGES_URL = "https://ygirma315-cell.github.io/jo-ai/"
 DEFAULT_LOCAL_ORIGINS = (
     "http://127.0.0.1:8000",
@@ -324,6 +328,61 @@ def _is_observable_request_path(path: str) -> bool:
 
 def _request_id_from_request(request: Request) -> str:
     return str(getattr(request.state, "request_id", "") or "").strip()
+
+
+def _extract_admin_token(request: Request) -> str:
+    header_token = str(request.headers.get("x-admin-token") or "").strip()
+    if header_token:
+        return header_token
+
+    auth_header = str(request.headers.get("authorization") or "").strip()
+    if auth_header.lower().startswith("bearer "):
+        return auth_header[7:].strip()
+    return ""
+
+
+def _require_admin_access(request: Request) -> None:
+    expected = str(get_settings().admin_dashboard_token or "").strip()
+    if not expected:
+        raise HTTPException(status_code=503, detail="ADMIN_DASHBOARD_TOKEN is not configured.")
+
+    provided = _extract_admin_token(request)
+    if not provided or not secrets.compare_digest(provided, expected):
+        logger.warning(
+            "ADMIN AUTH FAILED | path=%s request_id=%s",
+            request.url.path,
+            _request_id_from_request(request) or "unknown",
+        )
+        raise HTTPException(status_code=401, detail="Unauthorized admin token.")
+
+
+def _admin_error_response(request: Request, status_code: int, message: str) -> JSONResponse:
+    payload: dict[str, Any] = {"error": message}
+    request_id = _request_id_from_request(request)
+    if request_id:
+        payload["request_id"] = request_id
+    return JSONResponse(status_code=status_code, content=payload)
+
+
+@lru_cache(maxsize=1)
+def _admin_service() -> SupabaseAdminService:
+    service = SupabaseAdminService(get_settings())
+    if service.enabled:
+        logger.info("ADMIN SERVICE READY | backend=supabase_http")
+    else:
+        logger.warning(
+            "ADMIN SERVICE DISABLED | reason=%s",
+            service.disabled_reason or "unknown",
+        )
+    return service
+
+
+def _require_admin_service(request: Request) -> SupabaseAdminService:
+    _require_admin_access(request)
+    service = _admin_service()
+    if not service.enabled:
+        raise HTTPException(status_code=503, detail=service.disabled_reason or "Admin data service is unavailable.")
+    return service
 
 
 @lru_cache(maxsize=1)
@@ -812,6 +871,11 @@ app.state.bot_runtime = None
 app.state.telegram_startup_task = None
 app.state.started_at = time.time()
 
+if ADMIN_FRONTEND_DIR.exists():
+    app.mount("/admin/static", StaticFiles(directory=str(ADMIN_FRONTEND_DIR)), name="admin-static")
+else:
+    logger.warning("ADMIN FRONTEND MISSING | expected_dir=%s", ADMIN_FRONTEND_DIR)
+
 app.add_middleware(
     CORSMiddleware,
     allow_origins=_cors_origins_from_env(),
@@ -923,6 +987,15 @@ async def _startup() -> None:
         tracking_service.enabled,
         tracking_service.backend,
     )
+    admin_service = _admin_service()
+    logger.info(
+        "ADMIN DASHBOARD CONFIG | token_set=%s frontend_present=%s service_enabled=%s",
+        bool(str(settings.admin_dashboard_token or "").strip()),
+        ADMIN_FRONTEND_DIR.exists(),
+        admin_service.enabled,
+    )
+    if not admin_service.enabled:
+        logger.warning("ADMIN DASHBOARD SERVICE DISABLED | reason=%s", admin_service.disabled_reason or "unknown")
     if tracking_service.enabled:
         try:
             startup_check_ok = await asyncio.wait_for(tracking_service.verify_connection(), timeout=5.0)
@@ -1006,6 +1079,179 @@ def uptime() -> dict[str, Any]:
 @app.get("/api/runtime-info")
 def runtime_info() -> dict[str, Any]:
     return _runtime_info_payload()
+
+
+@app.get("/admin", response_class=HTMLResponse)
+@app.get("/admin/", response_class=HTMLResponse)
+def admin_dashboard_page() -> HTMLResponse:
+    index_path = ADMIN_FRONTEND_DIR / "index.html"
+    if not index_path.exists():
+        return HTMLResponse(
+            content="Admin dashboard assets are missing. Deploy the /admin frontend files.",
+            status_code=503,
+        )
+    return FileResponse(index_path)
+
+
+@app.get("/api/admin/status")
+def admin_status() -> dict[str, Any]:
+    settings = get_settings()
+    service = _admin_service()
+    return {
+        "ok": True,
+        "auth_required": True,
+        "token_configured": bool(str(settings.admin_dashboard_token or "").strip()),
+        "service_enabled": service.enabled,
+        "service_reason": service.disabled_reason if not service.enabled else "",
+    }
+
+
+@app.get("/api/admin/auth")
+def admin_auth_check(request: Request) -> JSONResponse:
+    try:
+        _require_admin_access(request)
+        service = _admin_service()
+        if not service.enabled:
+            raise HTTPException(status_code=503, detail=service.disabled_reason or "Admin data service is unavailable.")
+        logger.info("ADMIN AUTH SUCCESS | request_id=%s", _request_id_from_request(request) or "unknown")
+        return JSONResponse(status_code=200, content={"ok": True, "version": VERSION})
+    except HTTPException as exc:
+        return _admin_error_response(request, exc.status_code, str(exc.detail))
+
+
+@app.get("/api/admin/overview")
+async def admin_overview(request: Request, days: int = 14) -> JSONResponse:
+    try:
+        service = _require_admin_service(request)
+        safe_days = max(7, min(90, int(days)))
+        payload = await asyncio.to_thread(service.get_overview, safe_days)
+        logger.info(
+            "ADMIN OVERVIEW SUCCESS | request_id=%s days=%s",
+            _request_id_from_request(request) or "unknown",
+            safe_days,
+        )
+        return JSONResponse(status_code=200, content=payload)
+    except HTTPException as exc:
+        return _admin_error_response(request, exc.status_code, str(exc.detail))
+    except Exception as exc:
+        logger.exception("ADMIN OVERVIEW FAILED | request_id=%s error=%s", _request_id_from_request(request), exc)
+        return _admin_error_response(request, 500, "Failed to load dashboard overview.")
+
+
+@app.get("/api/admin/messages")
+async def admin_messages(
+    request: Request,
+    limit: int = 25,
+    offset: int = 0,
+    search: str | None = None,
+    message_type: str | None = None,
+    scope: str | None = None,
+) -> JSONResponse:
+    try:
+        service = _require_admin_service(request)
+        payload = await asyncio.to_thread(
+            service.get_messages,
+            limit=max(1, min(100, int(limit))),
+            offset=max(0, int(offset)),
+            search=search,
+            message_type=message_type,
+            scope=scope,
+        )
+        logger.info(
+            "ADMIN MESSAGES SUCCESS | request_id=%s limit=%s offset=%s",
+            _request_id_from_request(request) or "unknown",
+            payload.get("limit"),
+            payload.get("offset"),
+        )
+        return JSONResponse(status_code=200, content=payload)
+    except HTTPException as exc:
+        return _admin_error_response(request, exc.status_code, str(exc.detail))
+    except Exception as exc:
+        logger.exception("ADMIN MESSAGES FAILED | request_id=%s error=%s", _request_id_from_request(request), exc)
+        return _admin_error_response(request, 500, "Failed to load messages.")
+
+
+@app.get("/api/admin/users")
+async def admin_users(
+    request: Request,
+    limit: int = 25,
+    offset: int = 0,
+    search: str | None = None,
+    active_days: int = 7,
+) -> JSONResponse:
+    try:
+        service = _require_admin_service(request)
+        payload = await asyncio.to_thread(
+            service.get_users,
+            limit=max(1, min(100, int(limit))),
+            offset=max(0, int(offset)),
+            search=search,
+            active_days=max(1, min(60, int(active_days))),
+        )
+        logger.info(
+            "ADMIN USERS SUCCESS | request_id=%s limit=%s offset=%s",
+            _request_id_from_request(request) or "unknown",
+            payload.get("limit"),
+            payload.get("offset"),
+        )
+        return JSONResponse(status_code=200, content=payload)
+    except HTTPException as exc:
+        return _admin_error_response(request, exc.status_code, str(exc.detail))
+    except Exception as exc:
+        logger.exception("ADMIN USERS FAILED | request_id=%s error=%s", _request_id_from_request(request), exc)
+        return _admin_error_response(request, 500, "Failed to load users.")
+
+
+@app.get("/api/admin/media")
+@app.get("/api/admin/images")
+async def admin_media(
+    request: Request,
+    limit: int = 25,
+    offset: int = 0,
+    search: str | None = None,
+) -> JSONResponse:
+    try:
+        service = _require_admin_service(request)
+        payload = await asyncio.to_thread(
+            service.get_media,
+            limit=max(1, min(100, int(limit))),
+            offset=max(0, int(offset)),
+            search=search,
+        )
+        logger.info(
+            "ADMIN MEDIA SUCCESS | request_id=%s limit=%s offset=%s",
+            _request_id_from_request(request) or "unknown",
+            payload.get("limit"),
+            payload.get("offset"),
+        )
+        return JSONResponse(status_code=200, content=payload)
+    except HTTPException as exc:
+        return _admin_error_response(request, exc.status_code, str(exc.detail))
+    except Exception as exc:
+        logger.exception("ADMIN MEDIA FAILED | request_id=%s error=%s", _request_id_from_request(request), exc)
+        return _admin_error_response(request, 500, "Failed to load media history.")
+
+
+@app.get("/api/admin/analytics")
+async def admin_analytics(request: Request, days: int = 30, top_limit: int = 10) -> JSONResponse:
+    try:
+        service = _require_admin_service(request)
+        payload = await asyncio.to_thread(
+            service.get_analytics,
+            days=max(7, min(180, int(days))),
+            top_limit=max(3, min(30, int(top_limit))),
+        )
+        logger.info(
+            "ADMIN ANALYTICS SUCCESS | request_id=%s days=%s",
+            _request_id_from_request(request) or "unknown",
+            payload.get("window_days"),
+        )
+        return JSONResponse(status_code=200, content=payload)
+    except HTTPException as exc:
+        return _admin_error_response(request, exc.status_code, str(exc.detail))
+    except Exception as exc:
+        logger.exception("ADMIN ANALYTICS FAILED | request_id=%s error=%s", _request_id_from_request(request), exc)
+        return _admin_error_response(request, 500, "Failed to load analytics.")
 
 
 @app.get("/debug/supabase-test")

@@ -72,6 +72,7 @@ Local URLs:
 - Backend/API: `http://127.0.0.1:8000`
 - Mini app: `http://127.0.0.1:5500`
 - Health: `http://127.0.0.1:8000/api/health`
+- Admin dashboard: `http://127.0.0.1:8000/admin`
 
 For local mini app testing, either:
 
@@ -124,6 +125,7 @@ Optional:
 - `ALLOWED_ORIGINS`
 - `TELEGRAM_WEBHOOK_URL`
 - `TELEGRAM_WEBHOOK_SECRET`
+- `ADMIN_DASHBOARD_TOKEN` (required to unlock `/admin` and `/api/admin/*`)
 
 Defaults:
 
