@@ -114,6 +114,7 @@ Optional:
 - `SUPABASE_URL`
 - `SUPABASE_SERVICE_ROLE_KEY` (recommended for backend tracking writes)
 - `SUPABASE_ANON_KEY` (fallback only; can be blocked by RLS)
+- `SUPABASE_ALLOW_ANON_FALLBACK` (default `false`; keep disabled in production)
 - `SUPABASE_DB_URL` (recommended; direct Postgres tracking backend)
 - `SUPABASE_USERS_TABLE` (default: `users`)
 - `SUPABASE_HISTORY_TABLE` (default: `history`)

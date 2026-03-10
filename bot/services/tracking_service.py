@@ -83,10 +83,11 @@ class SupabaseTrackingService:
             self._backend = "postgres"
             self._disabled_reason = None
             logger.info(
-                "SUPABASE CONFIG LOADED | backend=postgres users_table=%s history_table=%s has_http_fallback=%s",
+                "SUPABASE CONFIG LOADED | backend=postgres users_table=%s history_table=%s has_http_fallback=%s http_key_type=%s",
                 self._postgres_config.users_table,
                 self._postgres_config.history_table,
                 bool(self._supabase_client and self._supabase_config),
+                self._supabase_config.key_type if self._supabase_config else "none",
             )
             return
 
@@ -94,9 +95,10 @@ class SupabaseTrackingService:
             self._backend = "supabase_http"
             self._disabled_reason = None
             logger.info(
-                "SUPABASE CONFIG LOADED | backend=supabase_http users_table=%s history_table=%s using_service_role=%s",
+                "SUPABASE CONFIG LOADED | backend=supabase_http users_table=%s history_table=%s key_type=%s using_service_role=%s",
                 self._supabase_config.users_table,
                 self._supabase_config.history_table,
+                self._supabase_config.key_type,
                 self._supabase_config.using_service_role,
             )
             return
@@ -106,7 +108,14 @@ class SupabaseTrackingService:
             reasons.append("SUPABASE_DB_URL is set but invalid/unusable")
         if self._settings.supabase_url and not (self._settings.supabase_service_role_key or self._settings.supabase_anon_key):
             reasons.append("SUPABASE_URL is set without key")
-        if self._settings.supabase_url and (self._settings.supabase_service_role_key or self._settings.supabase_anon_key):
+        if (
+            self._settings.supabase_url
+            and self._settings.supabase_anon_key
+            and not self._settings.supabase_service_role_key
+            and not self._settings.supabase_allow_anon_fallback
+        ):
+            reasons.append("SUPABASE_ANON_KEY present but anon fallback disabled; set SUPABASE_SERVICE_ROLE_KEY")
+        if self._supabase_config is not None and self._supabase_client is None:
             reasons.append("Supabase HTTP client init failed")
         if not reasons:
             reasons.append("No tracking env vars configured")

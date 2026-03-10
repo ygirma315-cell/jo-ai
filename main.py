@@ -36,6 +36,7 @@ from bot.config import load_settings
 from bot.logging_config import setup_logging
 from bot.runtime_info import build_runtime_info
 from bot.services.ai_service import AIServiceError, ChatService, ImageGenerationService, TextToSpeechService
+from bot.services.supabase_client import build_supabase_config
 from bot.services.tracking_service import SupabaseTrackingService, TrackingIdentity
 from bot.security import (
     SAFE_INTERNAL_DETAILS_REFUSAL,
@@ -820,6 +821,10 @@ async def _startup() -> None:
 
     role = _read_env("PROCESS_ROLE") or "web"
     app.state.started_at = time.time()
+    supabase_http_config = build_supabase_config(settings)
+    key_type = supabase_http_config.key_type if supabase_http_config else "none"
+    raw_service_role_env_set = bool(_read_env("SUPABASE_SERVICE_ROLE_KEY") or _read_env("SUPABASE_SECRET_KEY"))
+    raw_anon_env_set = bool(_read_env("SUPABASE_ANON_KEY") or _read_env("SUPABASE_PUBLISHABLE_KEY"))
     logger.info("API STARTED | version=%s", VERSION)
     logger.info("PROCESS=%s ENTRYPOINT=main.py VERSION=%s", role, VERSION)
     logger.info(
@@ -830,6 +835,13 @@ async def _startup() -> None:
         bool(settings.supabase_db_url),
         settings.supabase_users_table,
         settings.supabase_history_table,
+    )
+    logger.info(
+        "SUPABASE KEY TYPE | key_type=%s allow_anon_fallback=%s raw_service_role_env_set=%s raw_anon_env_set=%s",
+        key_type,
+        settings.supabase_allow_anon_fallback,
+        raw_service_role_env_set,
+        raw_anon_env_set,
     )
     tracking_service = _tracking_service()
     logger.info(
@@ -914,6 +926,7 @@ def runtime_info() -> dict[str, Any]:
 @app.get("/debug/supabase-test")
 async def debug_supabase_test() -> JSONResponse:
     settings = get_settings()
+    supabase_http_config = build_supabase_config(settings)
     tracking_service = _tracking_service()
 
     raw_env_presence = {
@@ -923,6 +936,7 @@ async def debug_supabase_test() -> JSONResponse:
         "SUPABASE_SECRET_KEY": bool(_read_env("SUPABASE_SECRET_KEY")),
         "SUPABASE_ANON_KEY": bool(_read_env("SUPABASE_ANON_KEY")),
         "SUPABASE_PUBLISHABLE_KEY": bool(_read_env("SUPABASE_PUBLISHABLE_KEY")),
+        "SUPABASE_ALLOW_ANON_FALLBACK": bool(_read_env("SUPABASE_ALLOW_ANON_FALLBACK")),
         "SUPABASE_DB_URL": bool(_read_env("SUPABASE_DB_URL")),
         "SUPABASE_DIRECT_CONNECTION_STRING": bool(_read_env("SUPABASE_DIRECT_CONNECTION_STRING")),
     }
@@ -930,11 +944,14 @@ async def debug_supabase_test() -> JSONResponse:
         "SUPABASE_URL": bool(settings.supabase_url),
         "SUPABASE_SERVICE_ROLE_KEY": bool(settings.supabase_service_role_key),
         "SUPABASE_ANON_KEY": bool(settings.supabase_anon_key),
+        "SUPABASE_ALLOW_ANON_FALLBACK": bool(settings.supabase_allow_anon_fallback),
         "SUPABASE_DB_URL": bool(settings.supabase_db_url),
     }
     effective_url_present = effective_env_presence["SUPABASE_URL"]
     effective_service_role_present = effective_env_presence["SUPABASE_SERVICE_ROLE_KEY"]
     effective_anon_present = effective_env_presence["SUPABASE_ANON_KEY"]
+    raw_allow_anon_fallback_value = _read_env("SUPABASE_ALLOW_ANON_FALLBACK").lower()
+    raw_allow_anon_fallback_effective = raw_allow_anon_fallback_value in {"1", "true", "yes", "on"}
     env_loaded_correctly = {
         "SUPABASE_URL": effective_url_present
         == bool(raw_env_presence["SUPABASE_URL"] or raw_env_presence["SUPABASE_PROJECT_URL"]),
@@ -942,6 +959,7 @@ async def debug_supabase_test() -> JSONResponse:
         == bool(raw_env_presence["SUPABASE_SERVICE_ROLE_KEY"] or raw_env_presence["SUPABASE_SECRET_KEY"]),
         "SUPABASE_ANON_KEY": effective_anon_present
         == bool(raw_env_presence["SUPABASE_ANON_KEY"] or raw_env_presence["SUPABASE_PUBLISHABLE_KEY"]),
+        "SUPABASE_ALLOW_ANON_FALLBACK": settings.supabase_allow_anon_fallback == raw_allow_anon_fallback_effective,
         "SUPABASE_DB_URL": effective_env_presence["SUPABASE_DB_URL"]
         == bool(raw_env_presence["SUPABASE_DB_URL"] or raw_env_presence["SUPABASE_DIRECT_CONNECTION_STRING"]),
     }
@@ -970,18 +988,19 @@ async def debug_supabase_test() -> JSONResponse:
         tracking_service.enabled,
         tracking_service.disabled_reason,
     )
+    logger.warning(
+        "SUPABASE DEBUG TEST KEY POLICY | selected_key_type=%s allow_anon_fallback=%s",
+        supabase_http_config.key_type if supabase_http_config else "none",
+        settings.supabase_allow_anon_fallback,
+    )
 
     result: dict[str, Any] = {
         "supabase_client_initialized": False,
         "users_upsert_succeeded": False,
         "history_insert_succeeded": False,
         "error": None,
-        "effective_key_type": "service_role"
-        if effective_service_role_present
-        else "anon"
-        if effective_anon_present
-        else "none",
-        "effective_supabase_url": settings.supabase_url,
+        "effective_key_type": supabase_http_config.key_type if supabase_http_config else "none",
+        "effective_supabase_url": supabase_http_config.url if supabase_http_config else settings.supabase_url,
         "effective_tables": {
             "users": configured_users_table,
             "history": configured_history_table,
@@ -994,31 +1013,29 @@ async def debug_supabase_test() -> JSONResponse:
         "env_presence_raw": raw_env_presence,
         "env_presence_effective": effective_env_presence,
         "env_loaded_correctly": env_loaded_correctly,
+        "supabase_allow_anon_fallback": settings.supabase_allow_anon_fallback,
         "tracking_backend": tracking_service.backend,
         "tracking_enabled": tracking_service.enabled,
         "tracking_disabled_reason": tracking_service.disabled_reason,
     }
 
-    api_key = settings.supabase_service_role_key or settings.supabase_anon_key
-    if not settings.supabase_url:
-        error_message = "SUPABASE_URL is missing from effective settings."
-        logger.error("SUPABASE DEBUG TEST CLIENT INIT FAILED | %s", error_message)
-        result["error"] = _append_debug_error(result["error"], error_message)
-        return JSONResponse(status_code=200, content=result)
-    if not api_key:
-        error_message = "No effective Supabase API key found (service role or anon)."
+    if supabase_http_config is None:
+        error_message = (
+            "No effective Supabase HTTP write config selected. "
+            "Set SUPABASE_SERVICE_ROLE_KEY, or explicitly enable SUPABASE_ALLOW_ANON_FALLBACK=true."
+        )
         logger.error("SUPABASE DEBUG TEST CLIENT INIT FAILED | %s", error_message)
         result["error"] = _append_debug_error(result["error"], error_message)
         return JSONResponse(status_code=200, content=result)
 
     try:
         logger.warning(
-            "SUPABASE DEBUG TEST CLIENT INIT START | url_present=%s using_service_role=%s using_anon=%s",
-            bool(settings.supabase_url),
-            bool(settings.supabase_service_role_key),
-            bool(settings.supabase_anon_key and not settings.supabase_service_role_key),
+            "SUPABASE DEBUG TEST CLIENT INIT START | url_present=%s key_type=%s allow_anon_fallback=%s",
+            bool(supabase_http_config.url),
+            supabase_http_config.key_type,
+            settings.supabase_allow_anon_fallback,
         )
-        client = create_client(settings.supabase_url, api_key)
+        client = create_client(supabase_http_config.url, supabase_http_config.api_key)
         result["supabase_client_initialized"] = True
         logger.warning("SUPABASE DEBUG TEST CLIENT INIT SUCCESS")
     except Exception as exc:

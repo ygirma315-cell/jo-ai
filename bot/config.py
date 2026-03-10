@@ -50,6 +50,7 @@ class Settings:
     supabase_url: str | None
     supabase_anon_key: str | None
     supabase_service_role_key: str | None
+    supabase_allow_anon_fallback: bool
     supabase_db_url: str | None
     supabase_users_table: str
     supabase_history_table: str
@@ -214,6 +215,17 @@ def _parse_timeout_seconds(raw_value: str | None, default: int = 30) -> int:
         return default
 
 
+def _parse_bool_env(raw_value: str | None, default: bool = False) -> bool:
+    raw = str(raw_value or "").strip().lower()
+    if not raw:
+        return default
+    if raw in {"1", "true", "yes", "on"}:
+        return True
+    if raw in {"0", "false", "no", "off"}:
+        return False
+    return default
+
+
 def load_settings() -> Settings:
     root_dir = Path(__file__).resolve().parent.parent
     load_dotenv(dotenv_path=root_dir / ".env")
@@ -260,6 +272,7 @@ def load_settings() -> Settings:
     supabase_url = _normalize_public_url(supabase_url_raw) or None
     supabase_anon_key = supabase_anon_key_raw or None
     supabase_service_role_key = supabase_service_role_key_raw or None
+    supabase_allow_anon_fallback = _parse_bool_env(_read_env("SUPABASE_ALLOW_ANON_FALLBACK"), default=False)
     supabase_db_url = supabase_db_url_raw or None
     supabase_users_table = _read_env("SUPABASE_USERS_TABLE") or "users"
     supabase_history_table = _read_env("SUPABASE_HISTORY_TABLE") or "history"
@@ -319,6 +332,10 @@ def load_settings() -> Settings:
         validation_warnings.append(
             "SUPABASE_SERVICE_ROLE_KEY appears to be a publishable/anon key. Use the secret service role key."
         )
+    if supabase_allow_anon_fallback:
+        validation_warnings.append(
+            "SUPABASE_ALLOW_ANON_FALLBACK is enabled. Server-side writes may use SUPABASE_ANON_KEY if service role is absent."
+        )
     if supabase_url and not (supabase_service_role_key or supabase_anon_key):
         validation_warnings.append(
             "SUPABASE_URL is set but no key is configured. Set SUPABASE_SERVICE_ROLE_KEY or SUPABASE_ANON_KEY."
@@ -328,12 +345,23 @@ def load_settings() -> Settings:
             "A Supabase key is set but SUPABASE_URL is missing. Supabase HTTP client is disabled."
         )
     if supabase_url and supabase_anon_key and not supabase_service_role_key:
+        if supabase_allow_anon_fallback:
+            validation_warnings.append(
+                "Tracking may use SUPABASE_ANON_KEY fallback. If RLS blocks inserts, set SUPABASE_SERVICE_ROLE_KEY."
+            )
+        else:
+            validation_warnings.append(
+                "SUPABASE_ANON_KEY is set but anon fallback is disabled for server writes. Set SUPABASE_SERVICE_ROLE_KEY."
+            )
+    if (
+        supabase_url
+        and supabase_anon_key
+        and not supabase_service_role_key
+        and not supabase_allow_anon_fallback
+        and not supabase_db_url
+    ):
         validation_warnings.append(
-            "Tracking uses SUPABASE_ANON_KEY. If RLS blocks inserts, set SUPABASE_SERVICE_ROLE_KEY."
-        )
-    if supabase_url and supabase_anon_key and not supabase_service_role_key and not supabase_db_url:
-        validation_warnings.append(
-            "Only SUPABASE_ANON_KEY is available. In production this is commonly blocked by RLS; set SUPABASE_SERVICE_ROLE_KEY."
+            "No service-role Supabase write key is available and anon fallback is disabled. Set SUPABASE_SERVICE_ROLE_KEY."
         )
     if (supabase_url or supabase_anon_key or supabase_service_role_key) and not supabase_db_url:
         validation_warnings.append(
@@ -361,6 +389,7 @@ def load_settings() -> Settings:
         supabase_url=supabase_url,
         supabase_anon_key=supabase_anon_key,
         supabase_service_role_key=supabase_service_role_key,
+        supabase_allow_anon_fallback=supabase_allow_anon_fallback,
         supabase_db_url=supabase_db_url,
         supabase_users_table=supabase_users_table,
         supabase_history_table=supabase_history_table,
