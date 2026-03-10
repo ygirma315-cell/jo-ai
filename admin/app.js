@@ -6,6 +6,7 @@
     activeSection: "overview",
     globalDays: 14,
     pageSize: 25,
+    messagesCache: [],
     statusLoaded: false,
     loaded: {
       overview: false,
@@ -34,6 +35,7 @@
     loginOverlay: document.getElementById("loginOverlay"),
     loginForm: document.getElementById("loginForm"),
     loginToken: document.getElementById("loginToken"),
+    telegramLoginBtn: document.getElementById("telegramLoginBtn"),
     loginError: document.getElementById("loginError"),
     navLinks: Array.from(document.querySelectorAll(".nav-link")),
     pageHeading: document.getElementById("pageHeading"),
@@ -88,6 +90,16 @@
     analyticsTopUsersBody: document.getElementById("analyticsTopUsersBody"),
     analyticsTypeBreakdown: document.getElementById("analyticsTypeBreakdown"),
     analyticsTopModels: document.getElementById("analyticsTopModels"),
+    messageDetailModal: document.getElementById("messageDetailModal"),
+    messageDetailClose: document.getElementById("messageDetailClose"),
+    detailCreatedAt: document.getElementById("detailCreatedAt"),
+    detailUser: document.getElementById("detailUser"),
+    detailMessageType: document.getElementById("detailMessageType"),
+    detailScope: document.getElementById("detailScope"),
+    detailStatus: document.getElementById("detailStatus"),
+    detailModel: document.getElementById("detailModel"),
+    detailUserMessage: document.getElementById("detailUserMessage"),
+    detailBotReply: document.getElementById("detailBotReply"),
   };
 
   function htmlEscape(value) {
@@ -172,8 +184,50 @@
     setAuthStateChip(false);
   }
 
-  async function fetchJson(path, { auth = true, params = null, tokenOverride = "" } = {}) {
+  function readTelegramInitData() {
+    const tg = window.Telegram && window.Telegram.WebApp ? window.Telegram.WebApp : null;
+    if (!tg || typeof tg !== "object") {
+      return { initData: "", telegramId: "" };
+    }
+    const initData = typeof tg.initData === "string" ? tg.initData.trim() : "";
+    const unsafe = tg.initDataUnsafe && typeof tg.initDataUnsafe === "object" ? tg.initDataUnsafe : null;
+    const telegramId =
+      unsafe && unsafe.user && typeof unsafe.user.id !== "undefined" ? String(unsafe.user.id).trim() : "";
+    return { initData, telegramId };
+  }
+
+  function markAllSectionsStale() {
+    state.loaded.overview = false;
+    state.loaded.messages = false;
+    state.loaded.users = false;
+    state.loaded.media = false;
+    state.loaded.analytics = false;
+  }
+
+  function closeMessageDetail() {
+    if (elements.messageDetailModal) {
+      elements.messageDetailModal.hidden = true;
+    }
+  }
+
+  function openMessageDetail(item) {
+    if (!item || !elements.messageDetailModal) {
+      return;
+    }
+    elements.detailCreatedAt.textContent = formatDateTime(item.created_at);
+    elements.detailUser.textContent = userLabel(item);
+    elements.detailMessageType.textContent = String(item.message_type || "-");
+    elements.detailScope.textContent = String(item.scope || "-");
+    elements.detailStatus.textContent = item.success ? "success" : "failed";
+    elements.detailModel.textContent = String(item.model_used || "-");
+    elements.detailUserMessage.textContent = String(item.user_message || "-");
+    elements.detailBotReply.textContent = String(item.bot_reply || "-");
+    elements.messageDetailModal.hidden = false;
+  }
+
+  async function fetchJson(path, { auth = true, params = null, tokenOverride = "", extraHeaders = {} } = {}) {
     const target = new URL(path, window.location.origin);
+    target.searchParams.set("_ts", String(Date.now()));
     if (params) {
       for (const [key, value] of Object.entries(params)) {
         if (value === undefined || value === null || value === "") {
@@ -183,13 +237,13 @@
       }
     }
 
-    const headers = { Accept: "application/json" };
+    const headers = { Accept: "application/json", ...extraHeaders };
     const token = tokenOverride || state.token;
     if (auth && token) {
       headers["x-admin-token"] = token;
     }
 
-    const response = await fetch(target.toString(), { method: "GET", headers });
+    const response = await fetch(target.toString(), { method: "GET", headers, cache: "no-store" });
     const text = await response.text();
     let payload = {};
     if (text) {
@@ -357,26 +411,38 @@
         },
       });
       const rows = Array.isArray(payload.items) ? payload.items : [];
+      state.messagesCache = rows;
       page.total = Number(payload.total || 0);
       page.hasMore = Boolean(payload.has_more);
       if (!rows.length) {
-        renderEmptyTableBody(elements.messagesBody, "No messages found for the current filters.", 6);
+        renderEmptyTableBody(elements.messagesBody, "No messages found for the current filters.", 7);
       } else {
         elements.messagesBody.innerHTML = rows
-          .map((item) => {
+          .map((item, index) => {
             const statusClass = item.success ? "success" : "fail";
             return `
-              <tr>
+              <tr class="messages-row" data-message-index="${index}">
                 <td>${htmlEscape(formatDateTime(item.created_at))}</td>
                 <td>${htmlEscape(userLabel(item))}</td>
                 <td>${htmlEscape(item.message_type || "-")}</td>
                 <td><span class="scope-pill">${htmlEscape(item.scope || "private")}</span></td>
                 <td><span class="status-pill ${statusClass}">${item.success ? "success" : "failed"}</span></td>
-                <td>${htmlEscape(item.user_message || item.bot_reply || "-")}</td>
+                <td>${htmlEscape(item.user_message || "-")}</td>
+                <td>${htmlEscape(item.bot_reply || "-")}</td>
               </tr>
             `;
           })
           .join("");
+
+        const detailRows = elements.messagesBody.querySelectorAll("tr[data-message-index]");
+        for (const row of detailRows) {
+          row.addEventListener("click", () => {
+            const indexValue = Number(row.getAttribute("data-message-index"));
+            if (Number.isFinite(indexValue) && state.messagesCache[indexValue]) {
+              openMessageDetail(state.messagesCache[indexValue]);
+            }
+          });
+        }
       }
       const pageNumber = Math.floor(page.offset / state.pageSize) + 1;
       const totalPages = Math.max(1, Math.ceil(page.total / state.pageSize));
@@ -385,10 +451,11 @@
       elements.messagesNext.disabled = !page.hasMore;
       state.loaded.messages = true;
     } catch (error) {
+      state.messagesCache = [];
       if (handleAuthError(error)) {
         return;
       }
-      renderEmptyTableBody(elements.messagesBody, "Failed to load messages.", 6);
+      renderEmptyTableBody(elements.messagesBody, "Failed to load messages.", 7);
       showToast(error.message || "Failed to load messages.", "error");
     }
   }
@@ -585,11 +652,18 @@
     }
   }
 
+  async function refreshAllData() {
+    markAllSectionsStale();
+    await Promise.all([loadOverview(true), loadMessages(true), loadUsers(true), loadMedia(true), loadAnalytics(true)]);
+    await loadSection(state.activeSection, true);
+  }
+
   async function loadStatus() {
     try {
       const payload = await fetchJson("/api/admin/status", { auth: false });
       const pieces = [
         `Token configured: ${payload.token_configured ? "yes" : "no"}`,
+        `Telegram ID login: ${payload.telegram_id_shortcut_enabled ? "enabled" : "disabled"}`,
         `Data service: ${payload.service_enabled ? "enabled" : "disabled"}`,
       ];
       if (!payload.service_enabled && payload.service_reason) {
@@ -610,6 +684,32 @@
     await fetchJson("/api/admin/auth", { tokenOverride: tokenValue });
   }
 
+  async function loginWithTelegramId() {
+    const telegramContext = readTelegramInitData();
+    if (!telegramContext.initData) {
+      showToast("Open this admin page from Telegram mini app to use Telegram-ID login.", "error");
+      return;
+    }
+
+    try {
+      const payload = await fetchJson("/api/admin/auth/telegram", {
+        auth: false,
+        extraHeaders: {
+          "x-telegram-init-data": telegramContext.initData,
+          "x-telegram-id": telegramContext.telegramId || "",
+        },
+      });
+      const issuedToken = String(payload.token || "").trim();
+      if (!issuedToken) {
+        throw new Error("Telegram sign-in did not return an admin session token.");
+      }
+      await login(issuedToken);
+    } catch (error) {
+      showLogin(error.message || "Telegram-ID login failed.");
+      showToast(error.message || "Telegram-ID login failed.", "error");
+    }
+  }
+
   async function login(tokenValue) {
     const nextToken = String(tokenValue || "").trim();
     if (!nextToken) {
@@ -624,6 +724,7 @@
         elements.settingsTokenInput.value = nextToken;
       }
       hideLogin();
+      markAllSectionsStale();
       await Promise.all([loadOverview(true), loadMessages(true), loadUsers(true), loadMedia(true), loadAnalytics(true)]);
       showToast("Admin session authorized.", "success");
     } catch (error) {
@@ -635,13 +736,9 @@
   function logout() {
     state.token = "";
     sessionStorage.removeItem("jo_admin_token");
-    state.loaded = {
-      overview: false,
-      messages: false,
-      users: false,
-      media: false,
-      analytics: false,
-    };
+    state.messagesCache = [];
+    markAllSectionsStale();
+    closeMessageDetail();
     showLogin("Logged out.");
   }
 
@@ -666,12 +763,14 @@
         state.globalDays = Number(elements.globalDays.value || 14);
         state.loaded.overview = false;
         await loadOverview(true);
+        state.loaded.analytics = false;
+        await loadAnalytics(true);
       });
     }
 
     if (elements.refreshBtn) {
       elements.refreshBtn.addEventListener("click", async () => {
-        await loadSection(state.activeSection, true);
+        await refreshAllData();
       });
     }
 
@@ -686,6 +785,12 @@
       elements.loginForm.addEventListener("submit", async (event) => {
         event.preventDefault();
         await login(elements.loginToken.value);
+      });
+    }
+
+    if (elements.telegramLoginBtn) {
+      elements.telegramLoginBtn.addEventListener("click", async () => {
+        await loginWithTelegramId();
       });
     }
 
@@ -802,6 +907,22 @@
         }
       });
     }
+
+    if (elements.messageDetailClose) {
+      elements.messageDetailClose.addEventListener("click", closeMessageDetail);
+    }
+    if (elements.messageDetailModal) {
+      elements.messageDetailModal.addEventListener("click", (event) => {
+        if (event.target === elements.messageDetailModal) {
+          closeMessageDetail();
+        }
+      });
+    }
+    window.addEventListener("keydown", (event) => {
+      if (event.key === "Escape") {
+        closeMessageDetail();
+      }
+    });
   }
 
   async function init() {

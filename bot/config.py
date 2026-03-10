@@ -60,6 +60,8 @@ class Settings:
     telegram_webhook_url: str | None
     telegram_webhook_secret: str | None
     admin_dashboard_token: str | None
+    admin_dashboard_owner_telegram_id: int | None
+    admin_dashboard_telegram_bot_token: str | None
     allowed_origins: tuple[str, ...]
     request_timeout_seconds: int
     validation_errors: tuple[str, ...]
@@ -216,6 +218,14 @@ def _parse_timeout_seconds(raw_value: str | None, default: int = 30) -> int:
         return default
 
 
+def _parse_positive_int(raw_value: str | None) -> int | None:
+    try:
+        parsed = int(str(raw_value or "").strip())
+    except ValueError:
+        return None
+    return parsed if parsed > 0 else None
+
+
 def _parse_bool_env(raw_value: str | None, default: bool = False) -> bool:
     raw = str(raw_value or "").strip().lower()
     if not raw:
@@ -290,6 +300,8 @@ def load_settings() -> Settings:
     )
     telegram_webhook_secret = _read_env("TELEGRAM_WEBHOOK_SECRET") or None
     admin_dashboard_token = _read_env("ADMIN_DASHBOARD_TOKEN") or _read_env("ADMIN_API_TOKEN") or None
+    admin_dashboard_owner_telegram_id = _parse_positive_int(_read_env("ADMIN_DASHBOARD_OWNER_TELEGRAM_ID"))
+    admin_dashboard_telegram_bot_token = _read_env("ADMIN_DASHBOARD_TELEGRAM_BOT_TOKEN") or None
     allowed_origins = _parse_allowed_origins(_read_env("ALLOWED_ORIGINS"), public_base_url, miniapp_url)
     request_timeout_seconds = _parse_timeout_seconds(_read_env("REQUEST_TIMEOUT_SECONDS"))
 
@@ -307,6 +319,10 @@ def load_settings() -> Settings:
     if not admin_dashboard_token:
         validation_warnings.append(
             "ADMIN_DASHBOARD_TOKEN is missing. Admin dashboard API routes will stay protected but unusable until configured."
+        )
+    if not admin_dashboard_owner_telegram_id:
+        validation_warnings.append(
+            "ADMIN_DASHBOARD_OWNER_TELEGRAM_ID is missing. Telegram-ID admin login shortcut is disabled."
         )
     if miniapp_url_warning:
         validation_warnings.append(miniapp_url_warning)
@@ -405,6 +421,8 @@ def load_settings() -> Settings:
         telegram_webhook_url=telegram_webhook_url,
         telegram_webhook_secret=telegram_webhook_secret,
         admin_dashboard_token=admin_dashboard_token,
+        admin_dashboard_owner_telegram_id=admin_dashboard_owner_telegram_id,
+        admin_dashboard_telegram_bot_token=admin_dashboard_telegram_bot_token,
         allowed_origins=allowed_origins,
         request_timeout_seconds=request_timeout_seconds,
         validation_errors=tuple(validation_errors),

@@ -126,6 +126,8 @@ Optional:
 - `TELEGRAM_WEBHOOK_URL`
 - `TELEGRAM_WEBHOOK_SECRET`
 - `ADMIN_DASHBOARD_TOKEN` (required to unlock `/admin` and `/api/admin/*`)
+- `ADMIN_DASHBOARD_OWNER_TELEGRAM_ID` (optional Telegram mini app one-tap admin login)
+- `ADMIN_DASHBOARD_TELEGRAM_BOT_TOKEN` (optional; use when admin mini app login comes from a different bot token)
 
 Defaults:
 

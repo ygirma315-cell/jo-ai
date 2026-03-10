@@ -57,3 +57,7 @@ services:
         generateValue: true
       - key: ADMIN_DASHBOARD_TOKEN
         sync: false
+      - key: ADMIN_DASHBOARD_OWNER_TELEGRAM_ID
+        value: "7799059248"
+      - key: ADMIN_DASHBOARD_TELEGRAM_BOT_TOKEN
+        sync: false

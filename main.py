@@ -4,6 +4,8 @@ import asyncio
 import base64
 import binascii
 from datetime import datetime, timezone
+import hashlib
+import hmac
 import json
 import logging
 import os
@@ -15,7 +17,7 @@ from contextlib import suppress
 from functools import lru_cache
 from pathlib import Path
 from typing import Any, Literal
-from urllib.parse import parse_qs, urlparse
+from urllib.parse import parse_qs, parse_qsl, urlparse
 
 import uvicorn
 from aiogram.types import Update
@@ -96,6 +98,9 @@ OBSERVABLE_REQUEST_PATHS = frozenset(
         "/debug/supabase-test",
     }
 )
+ADMIN_SESSION_TOKEN_TTL_SECONDS = 60 * 60 * 12
+ADMIN_INIT_DATA_MAX_AGE_SECONDS = 60 * 60 * 24
+_ADMIN_SESSION_TOKENS: dict[str, dict[str, Any]] = {}
 
 
 class BackendError(RuntimeError):
@@ -341,12 +346,129 @@ def _extract_admin_token(request: Request) -> str:
     return ""
 
 
-def _require_admin_access(request: Request) -> None:
-    expected = str(get_settings().admin_dashboard_token or "").strip()
-    if not expected:
-        raise HTTPException(status_code=503, detail="ADMIN_DASHBOARD_TOKEN is not configured.")
+def _prune_expired_admin_sessions(now_ts: float | None = None) -> None:
+    now_value = now_ts if isinstance(now_ts, (int, float)) else time.time()
+    expired_tokens = [
+        token
+        for token, payload in _ADMIN_SESSION_TOKENS.items()
+        if float(payload.get("expires_at", 0.0) or 0.0) <= now_value
+    ]
+    for token in expired_tokens:
+        _ADMIN_SESSION_TOKENS.pop(token, None)
 
+
+def _issue_admin_session_token(telegram_id: int) -> dict[str, Any]:
+    now_ts = time.time()
+    _prune_expired_admin_sessions(now_ts)
+    token = secrets.token_urlsafe(32)
+    expires_at = now_ts + ADMIN_SESSION_TOKEN_TTL_SECONDS
+    _ADMIN_SESSION_TOKENS[token] = {
+        "telegram_id": telegram_id,
+        "issued_at": now_ts,
+        "expires_at": expires_at,
+    }
+    return {
+        "token": token,
+        "expires_at": datetime.fromtimestamp(expires_at, tz=timezone.utc).isoformat(),
+        "telegram_id": telegram_id,
+        "ttl_seconds": ADMIN_SESSION_TOKEN_TTL_SECONDS,
+    }
+
+
+def _validate_admin_session_token(token: str) -> bool:
+    candidate = str(token or "").strip()
+    if not candidate:
+        return False
+    _prune_expired_admin_sessions()
+    return candidate in _ADMIN_SESSION_TOKENS
+
+
+def _extract_telegram_init_data(request: Request) -> str:
+    init_data = str(request.headers.get("x-telegram-init-data") or "").strip()
+    if init_data:
+        return init_data
+
+    auth_header = str(request.headers.get("authorization") or "").strip()
+    if auth_header.lower().startswith("tma "):
+        return auth_header[4:].strip()
+
+    return str(request.query_params.get("telegram_init_data") or "").strip()
+
+
+def _validate_telegram_init_data(init_data: str, bot_token: str) -> dict[str, Any] | None:
+    raw_init_data = str(init_data or "").strip()
+    raw_bot_token = str(bot_token or "").strip()
+    if not raw_init_data or not raw_bot_token:
+        return None
+
+    pairs = dict(parse_qsl(raw_init_data, keep_blank_values=True))
+    provided_hash = str(pairs.pop("hash", "")).strip()
+    if not provided_hash:
+        return None
+
+    data_check_string = "\n".join(f"{key}={value}" for key, value in sorted(pairs.items()))
+    secret_key = hmac.new(b"WebAppData", raw_bot_token.encode("utf-8"), hashlib.sha256).digest()
+    computed_hash = hmac.new(secret_key, data_check_string.encode("utf-8"), hashlib.sha256).hexdigest()
+    if not secrets.compare_digest(computed_hash, provided_hash):
+        return None
+
+    auth_date = _parse_positive_int(pairs.get("auth_date"))
+    if auth_date is None:
+        return None
+    now_ts = int(time.time())
+    if abs(now_ts - auth_date) > ADMIN_INIT_DATA_MAX_AGE_SECONDS:
+        return None
+
+    raw_user = pairs.get("user")
+    if not isinstance(raw_user, str) or not raw_user.strip():
+        return None
+    try:
+        parsed_user = json.loads(raw_user)
+    except (TypeError, ValueError, json.JSONDecodeError):
+        return None
+    if not isinstance(parsed_user, dict):
+        return None
+    return parsed_user
+
+
+def _resolve_admin_telegram_id(request: Request) -> int | None:
+    settings = get_settings()
+    init_data = _extract_telegram_init_data(request)
+    if init_data:
+        verification_bot_token = settings.admin_dashboard_telegram_bot_token or settings.bot_token
+        validated_user = _validate_telegram_init_data(init_data, verification_bot_token)
+        if validated_user is None:
+            logger.warning(
+                "ADMIN TELEGRAM AUTH FAILED | request_id=%s reason=invalid_init_data",
+                _request_id_from_request(request) or "unknown",
+            )
+            return None
+        return _parse_positive_int(validated_user.get("id"))
+
+    client_host = str(request.client.host if request.client else "").strip().lower()
+    if client_host in {"127.0.0.1", "::1", "localhost"}:
+        fallback_id = _parse_positive_int(request.headers.get("x-telegram-id"))
+        if fallback_id is None:
+            fallback_id = _parse_positive_int(request.query_params.get("telegram_id"))
+        return fallback_id
+    return None
+
+
+def _require_admin_access(request: Request) -> None:
     provided = _extract_admin_token(request)
+    if provided and _validate_admin_session_token(provided):
+        return
+
+    expected = str(get_settings().admin_dashboard_token or "").strip()
+    if expected and provided and secrets.compare_digest(provided, expected):
+        return
+
+    if not expected and not provided:
+        raise HTTPException(status_code=503, detail="Admin authentication is not configured.")
+
+    if not expected:
+        raise HTTPException(status_code=401, detail="Unauthorized admin token.")
+
     if not provided or not secrets.compare_digest(provided, expected):
         logger.warning(
             "ADMIN AUTH FAILED | path=%s request_id=%s",
@@ -989,8 +1111,9 @@ async def _startup() -> None:
     )
     admin_service = _admin_service()
     logger.info(
-        "ADMIN DASHBOARD CONFIG | token_set=%s frontend_present=%s service_enabled=%s",
+        "ADMIN DASHBOARD CONFIG | token_set=%s owner_telegram_id_set=%s frontend_present=%s service_enabled=%s",
         bool(str(settings.admin_dashboard_token or "").strip()),
+        bool(settings.admin_dashboard_owner_telegram_id),
         ADMIN_FRONTEND_DIR.exists(),
         admin_service.enabled,
     )
@@ -1101,6 +1224,8 @@ def admin_status() -> dict[str, Any]:
         "ok": True,
         "auth_required": True,
         "token_configured": bool(str(settings.admin_dashboard_token or "").strip()),
+        "telegram_id_shortcut_enabled": bool(settings.admin_dashboard_owner_telegram_id),
+        "owner_telegram_id_configured": bool(settings.admin_dashboard_owner_telegram_id),
         "service_enabled": service.enabled,
         "service_reason": service.disabled_reason if not service.enabled else "",
     }
@@ -1117,6 +1242,52 @@ def admin_auth_check(request: Request) -> JSONResponse:
         return JSONResponse(status_code=200, content={"ok": True, "version": VERSION})
     except HTTPException as exc:
         return _admin_error_response(request, exc.status_code, str(exc.detail))
+
+
+@app.get("/api/admin/auth/telegram")
+def admin_telegram_auth(request: Request) -> JSONResponse:
+    settings = get_settings()
+    owner_telegram_id = settings.admin_dashboard_owner_telegram_id
+    if not owner_telegram_id:
+        return _admin_error_response(
+            request,
+            503,
+            "ADMIN_DASHBOARD_OWNER_TELEGRAM_ID is not configured.",
+        )
+
+    telegram_id = _resolve_admin_telegram_id(request)
+    if telegram_id is None:
+        return _admin_error_response(
+            request,
+            401,
+            "Telegram identity is missing or invalid. Open this page from Telegram mini app.",
+        )
+    if telegram_id != owner_telegram_id:
+        logger.warning(
+            "ADMIN TELEGRAM AUTH FAILED | request_id=%s telegram_id=%s expected=%s",
+            _request_id_from_request(request) or "unknown",
+            telegram_id,
+            owner_telegram_id,
+        )
+        return _admin_error_response(request, 403, "This Telegram account is not allowed for admin access.")
+
+    session_payload = _issue_admin_session_token(telegram_id)
+    logger.info(
+        "ADMIN TELEGRAM AUTH SUCCESS | request_id=%s telegram_id=%s",
+        _request_id_from_request(request) or "unknown",
+        telegram_id,
+    )
+    return JSONResponse(
+        status_code=200,
+        content={
+            "ok": True,
+            "auth_method": "telegram_id",
+            "token": session_payload["token"],
+            "expires_at": session_payload["expires_at"],
+            "ttl_seconds": session_payload["ttl_seconds"],
+            "telegram_id": session_payload["telegram_id"],
+        },
+    )
 
 
 @app.get("/api/admin/overview")

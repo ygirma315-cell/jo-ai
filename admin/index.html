@@ -7,8 +7,8 @@
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
   <link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Sans:wght@400;500;600&family=Sora:wght@500;600;700&display=swap" rel="stylesheet">
-  <link rel="stylesheet" href="/admin/static/style.css?v=1.0.0">
-  <script src="/admin/static/app.js?v=1.0.0" defer></script>
+  <link rel="stylesheet" href="/admin/static/style.css?v=1.0.1">
+  <script src="/admin/static/app.js?v=1.0.1" defer></script>
 </head>
 <body>
   <div id="loginOverlay" class="login-overlay">
@@ -21,6 +21,9 @@
         <input id="loginToken" type="password" autocomplete="current-password" placeholder="Paste ADMIN_DASHBOARD_TOKEN">
         <button id="loginBtn" type="submit" class="btn btn-primary">Unlock dashboard</button>
       </form>
+      <div class="login-divider"><span>or</span></div>
+      <button id="telegramLoginBtn" type="button" class="btn">Sign in with Telegram ID</button>
+      <p class="login-note small">Works when this page is opened from Telegram mini app context.</p>
       <p id="loginError" class="error-text" hidden></p>
     </div>
   </div>
@@ -50,7 +53,7 @@
     <div class="workspace">
       <header class="topbar">
         <div class="topbar-left">
-          <button id="menuToggle" class="icon-btn" type="button" aria-label="Toggle menu">☰</button>
+          <button id="menuToggle" class="icon-btn" type="button" aria-label="Toggle menu">&#9776;</button>
           <div>
             <p class="topbar-kicker">Operations</p>
             <h1 id="pageHeading">Dashboard overview</h1>
@@ -64,7 +67,7 @@
             <option value="30">30 days</option>
             <option value="60">60 days</option>
           </select>
-          <button id="refreshBtn" type="button" class="btn">Refresh</button>
+          <button id="refreshBtn" type="button" class="btn">Refresh all</button>
           <button id="logoutBtn" type="button" class="btn btn-danger">Logout</button>
         </div>
       </header>
@@ -147,6 +150,7 @@
             </select>
             <button id="messagesApply" type="button" class="btn">Apply</button>
           </div>
+          <p class="hint-text">Click any row to open full details, including bot reply.</p>
           <article class="table-card">
             <div class="table-wrap">
               <table>
@@ -157,7 +161,8 @@
                     <th>Type</th>
                     <th>Scope</th>
                     <th>Status</th>
-                    <th>Message</th>
+                    <th>User message</th>
+                    <th>Bot reply</th>
                   </tr>
                 </thead>
                 <tbody id="messagesBody"></tbody>
@@ -259,6 +264,10 @@
             </select>
             <button id="analyticsApply" type="button" class="btn">Refresh analytics</button>
           </div>
+          <div class="analytics-nav">
+            <a href="#analyticsTopUsersCard" class="chip-link">Jump to top users</a>
+            <a href="#analyticsBreakdownCard" class="chip-link">Jump to breakdown</a>
+          </div>
           <div class="chart-grid">
             <article class="chart-card">
               <h3>Messages over time</h3>
@@ -275,7 +284,7 @@
           </div>
 
           <div class="split-grid">
-            <article class="table-card">
+            <article id="analyticsTopUsersCard" class="table-card">
               <div class="table-head">
                 <h3>Top users</h3>
               </div>
@@ -293,7 +302,7 @@
                 </table>
               </div>
             </article>
-            <article class="table-card">
+            <article id="analyticsBreakdownCard" class="table-card">
               <div class="table-head">
                 <h3>Type breakdown</h3>
               </div>
@@ -321,5 +330,29 @@
   </div>
 
   <div id="toast" class="toast" hidden></div>
+  <div id="messageDetailModal" class="detail-modal" hidden>
+    <div class="detail-panel">
+      <div class="detail-head">
+        <h3>Message detail</h3>
+        <button id="messageDetailClose" type="button" class="btn">Close</button>
+      </div>
+      <div class="detail-grid">
+        <p><strong>Time:</strong> <span id="detailCreatedAt">-</span></p>
+        <p><strong>User:</strong> <span id="detailUser">-</span></p>
+        <p><strong>Type:</strong> <span id="detailMessageType">-</span></p>
+        <p><strong>Scope:</strong> <span id="detailScope">-</span></p>
+        <p><strong>Status:</strong> <span id="detailStatus">-</span></p>
+        <p><strong>Model:</strong> <span id="detailModel">-</span></p>
+      </div>
+      <div class="detail-block">
+        <h4>User message</h4>
+        <pre id="detailUserMessage">-</pre>
+      </div>
+      <div class="detail-block">
+        <h4>Bot reply</h4>
+        <pre id="detailBotReply">-</pre>
+      </div>
+    </div>
+  </div>
 </body>
 </html>
