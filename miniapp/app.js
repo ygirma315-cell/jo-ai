@@ -642,6 +642,67 @@
     return hasTelegramWebAppContext(tg);
   }
 
+  function getTelegramWebAppUser() {
+    if (!isTelegramMiniApp()) {
+      return null;
+    }
+    if (!tg || !tg.initDataUnsafe || typeof tg.initDataUnsafe !== "object") {
+      return null;
+    }
+    const user = tg.initDataUnsafe.user;
+    if (!user || typeof user !== "object") {
+      return null;
+    }
+    return user;
+  }
+
+  function buildTrackingPayloadFields() {
+    const user = getTelegramWebAppUser();
+    if (!user) {
+      return {};
+    }
+
+    const tracking = {};
+    const rawId = user.id;
+    const parsedId = Number.parseInt(String(rawId), 10);
+    if (Number.isFinite(parsedId) && parsedId > 0) {
+      tracking.telegram_id = parsedId;
+    }
+    if (typeof user.username === "string" && user.username.trim()) {
+      tracking.username = user.username.trim();
+    }
+    if (typeof user.first_name === "string" && user.first_name.trim()) {
+      tracking.first_name = user.first_name.trim();
+    }
+    if (typeof user.last_name === "string" && user.last_name.trim()) {
+      tracking.last_name = user.last_name.trim();
+    }
+    return tracking;
+  }
+
+  function buildTrackingHeaders() {
+    const headers = { "Content-Type": "application/json" };
+    const initData = tg && typeof tg.initData === "string" ? tg.initData.trim() : "";
+    if (initData) {
+      headers["X-Telegram-Init-Data"] = initData;
+    }
+
+    const tracking = buildTrackingPayloadFields();
+    if (tracking.telegram_id) {
+      headers["X-Telegram-ID"] = String(tracking.telegram_id);
+    }
+    if (tracking.username) {
+      headers["X-Telegram-Username"] = tracking.username;
+    }
+    if (tracking.first_name) {
+      headers["X-Telegram-First-Name"] = tracking.first_name;
+    }
+    if (tracking.last_name) {
+      headers["X-Telegram-Last-Name"] = tracking.last_name;
+    }
+    return headers;
+  }
+
   function getDialogElement(modal) {
     if (!modal || typeof modal.querySelector !== "function") {
       return null;
@@ -2051,15 +2112,24 @@
 
   function endpointAttempts(mode, payload) {
     const basePayload = { ...payload };
+    const trackingFields = {};
+    for (const key of ["telegram_id", "username", "first_name", "last_name"]) {
+      if (Object.prototype.hasOwnProperty.call(basePayload, key) && basePayload[key] !== undefined) {
+        trackingFields[key] = basePayload[key];
+      }
+    }
 
     if (mode === "chat") {
       return [
-        { path: "/api/ai", payload: { mode: "chat", message: basePayload.message } },
+        {
+          path: "/api/ai",
+          payload: { ...trackingFields, mode: "chat", message: basePayload.message },
+        },
         { path: "/api/chat", payload: basePayload },
       ];
     }
     if (mode === "code") {
-      const codePayload = { mode: "code", message: basePayload.message };
+      const codePayload = { ...trackingFields, mode: "code", message: basePayload.message };
       if (basePayload.code_file_name && basePayload.code_file_base64) {
         codePayload.code_file_name = basePayload.code_file_name;
         codePayload.code_file_base64 = basePayload.code_file_base64;
@@ -2073,17 +2143,32 @@
     }
     if (mode === "deepseek") {
       return [
-        { path: "/api/ai", payload: { mode: "deep_analysis", message: basePayload.message } },
-        { path: "/ai", payload: { mode: "deep_analysis", message: basePayload.message } },
-        { path: "/api/ai", payload: { mode: "research", message: basePayload.message } },
+        {
+          path: "/api/ai",
+          payload: { ...trackingFields, mode: "deep_analysis", message: basePayload.message },
+        },
+        {
+          path: "/ai",
+          payload: { ...trackingFields, mode: "deep_analysis", message: basePayload.message },
+        },
+        {
+          path: "/api/ai",
+          payload: { ...trackingFields, mode: "research", message: basePayload.message },
+        },
         { path: "/api/research", payload: basePayload },
         { path: "/research", payload: basePayload },
       ];
     }
     if (mode === "research") {
       return [
-        { path: "/api/ai", payload: { mode: "research", message: basePayload.message } },
-        { path: "/ai", payload: { mode: "research", message: basePayload.message } },
+        {
+          path: "/api/ai",
+          payload: { ...trackingFields, mode: "research", message: basePayload.message },
+        },
+        {
+          path: "/ai",
+          payload: { ...trackingFields, mode: "research", message: basePayload.message },
+        },
         { path: "/api/research", payload: basePayload },
         { path: "/research", payload: basePayload },
       ];
@@ -2093,6 +2178,7 @@
         {
           path: "/api/ai",
           payload: {
+            ...trackingFields,
             mode: "prompt",
             message: basePayload.message,
             prompt_type: basePayload.prompt_type || "general",
@@ -2101,6 +2187,7 @@
         {
           path: "/ai",
           payload: {
+            ...trackingFields,
             mode: "prompt",
             message: basePayload.message,
             prompt_type: basePayload.prompt_type || "general",
@@ -2152,6 +2239,7 @@
     }
 
     let timedOut = false;
+    const trackingHeaders = buildTrackingHeaders();
 
     for (const attempt of endpointAttempts(mode, payload)) {
       try {
@@ -2159,7 +2247,7 @@
           `${apiBase}${attempt.path}`,
           {
             method: "POST",
-            headers: { "Content-Type": "application/json" },
+            headers: { ...trackingHeaders },
             body: JSON.stringify(attempt.payload),
           },
           requestTimeoutMsForMode(mode)
@@ -2426,7 +2514,7 @@
       payload.image_base64 = await fileToBase64(file);
     }
 
-    return payload;
+    return { ...payload, ...buildTrackingPayloadFields() };
   }
 
   function buildUserEntry(payload) {

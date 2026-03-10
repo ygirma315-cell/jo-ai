@@ -12,7 +12,7 @@ from contextlib import suppress
 from functools import lru_cache
 from pathlib import Path
 from typing import Any, Literal
-from urllib.parse import urlparse
+from urllib.parse import parse_qs, urlparse
 
 import uvicorn
 from aiogram.types import Update
@@ -34,6 +34,7 @@ from bot.config import load_settings
 from bot.logging_config import setup_logging
 from bot.runtime_info import build_runtime_info
 from bot.services.ai_service import AIServiceError, ChatService, ImageGenerationService, TextToSpeechService
+from bot.services.tracking_service import SupabaseTrackingService, TrackingIdentity
 from bot.security import (
     SAFE_INTERNAL_DETAILS_REFUSAL,
     SAFE_SERVICE_UNAVAILABLE_MESSAGE,
@@ -82,9 +83,16 @@ class BackendError(RuntimeError):
         self.status_code = status_code
 
 
-class ChatRequest(BaseModel):
+class TrackingRequestBase(BaseModel):
     model_config = ConfigDict(str_strip_whitespace=True)
 
+    telegram_id: int | None = Field(default=None, gt=0)
+    username: str | None = Field(default=None, max_length=128)
+    first_name: str | None = Field(default=None, max_length=128)
+    last_name: str | None = Field(default=None, max_length=128)
+
+
+class ChatRequest(TrackingRequestBase):
     message: str = Field(min_length=1, max_length=32000)
 
 
@@ -93,9 +101,7 @@ class CodeRequest(ChatRequest):
     code_file_base64: str | None = Field(default=None, max_length=4_000_000)
 
 
-class ImageRequest(BaseModel):
-    model_config = ConfigDict(str_strip_whitespace=True)
-
+class ImageRequest(TrackingRequestBase):
     prompt: str | None = Field(default=None, max_length=4000)
     message: str | None = Field(default=None, max_length=4000)
     image_type: str | None = Field(default=None, max_length=60)
@@ -131,9 +137,7 @@ class ImageRequest(BaseModel):
         return IMAGE_STYLE_HINTS.get(key, "")
 
 
-class PromptRequest(BaseModel):
-    model_config = ConfigDict(str_strip_whitespace=True)
-
+class PromptRequest(TrackingRequestBase):
     message: str = Field(min_length=1, max_length=32000)
     prompt_type: str | None = Field(default=None, max_length=120)
 
@@ -142,9 +146,7 @@ class PromptRequest(BaseModel):
         return self.prompt_type or "general"
 
 
-class AITextRequest(BaseModel):
-    model_config = ConfigDict(str_strip_whitespace=True)
-
+class AITextRequest(TrackingRequestBase):
     mode: TextMode = "chat"
     message: str = Field(min_length=1, max_length=32000)
     prompt_type: str | None = Field(default=None, max_length=120)
@@ -156,9 +158,7 @@ class AITextRequest(BaseModel):
         return self.prompt_type or "general"
 
 
-class VisionDescribeRequest(BaseModel):
-    model_config = ConfigDict(str_strip_whitespace=True)
-
+class VisionDescribeRequest(TrackingRequestBase):
     message: str | None = Field(default=None, max_length=2000)
     image_base64: str = Field(min_length=1, max_length=15_000_000)
 
@@ -167,9 +167,7 @@ class VisionDescribeRequest(BaseModel):
         return self.message or "Describe this image."
 
 
-class TTSRequest(BaseModel):
-    model_config = ConfigDict(str_strip_whitespace=True)
-
+class TTSRequest(TrackingRequestBase):
     text: str | None = Field(default=None, max_length=12000)
     message: str | None = Field(default=None, max_length=12000)
     language: str | None = Field(default="en", max_length=16)
@@ -597,6 +595,179 @@ def _uptime_seconds() -> float:
 def _runtime_info_payload() -> dict[str, Any]:
     return build_runtime_info(version=VERSION, web_version=WEB_VERSION)
 
+
+def _normalize_tracking_text(value: Any, max_len: int = 128) -> str | None:
+    raw = str(value or "").strip()
+    if not raw:
+        return None
+    return raw[:max_len]
+
+
+def _parse_positive_int(value: Any) -> int | None:
+    if value is None:
+        return None
+    if isinstance(value, bool):
+        return None
+    try:
+        parsed = int(str(value).strip())
+    except (TypeError, ValueError):
+        return None
+    return parsed if parsed > 0 else None
+
+
+def _parse_telegram_user_from_init_data(raw_value: str | None) -> dict[str, Any]:
+    raw = str(raw_value or "").strip()
+    if not raw:
+        return {}
+    try:
+        parsed = parse_qs(raw, keep_blank_values=False)
+    except Exception:
+        return {}
+    user_entries = parsed.get("user")
+    if not user_entries:
+        return {}
+    try:
+        user_data = json.loads(user_entries[0])
+    except (TypeError, ValueError, json.JSONDecodeError):
+        return {}
+    return user_data if isinstance(user_data, dict) else {}
+
+
+def _resolve_tracking_identity(request: Request, payload: TrackingRequestBase | None = None) -> TrackingIdentity | None:
+    telegram_id = _parse_positive_int(getattr(payload, "telegram_id", None))
+    username = _normalize_tracking_text(getattr(payload, "username", None))
+    first_name = _normalize_tracking_text(getattr(payload, "first_name", None))
+    last_name = _normalize_tracking_text(getattr(payload, "last_name", None))
+
+    if telegram_id is None:
+        telegram_id = _parse_positive_int(request.headers.get("x-telegram-id"))
+    if telegram_id is None:
+        telegram_id = _parse_positive_int(request.headers.get("x-telegram-user-id"))
+    if telegram_id is None:
+        telegram_id = _parse_positive_int(request.query_params.get("telegram_id"))
+
+    if not username:
+        username = _normalize_tracking_text(request.headers.get("x-telegram-username"))
+    if not first_name:
+        first_name = _normalize_tracking_text(request.headers.get("x-telegram-first-name"))
+    if not last_name:
+        last_name = _normalize_tracking_text(request.headers.get("x-telegram-last-name"))
+
+    init_data = request.headers.get("x-telegram-init-data", "")
+    if not init_data:
+        auth_header = request.headers.get("authorization", "")
+        if auth_header.lower().startswith("tma "):
+            init_data = auth_header[4:].strip()
+    if not init_data:
+        init_data = request.query_params.get("telegram_init_data", "")
+
+    init_user = _parse_telegram_user_from_init_data(init_data)
+    if telegram_id is None:
+        telegram_id = _parse_positive_int(init_user.get("id"))
+    if not username:
+        username = _normalize_tracking_text(init_user.get("username"))
+    if not first_name:
+        first_name = _normalize_tracking_text(init_user.get("first_name"))
+    if not last_name:
+        last_name = _normalize_tracking_text(init_user.get("last_name"))
+
+    if telegram_id is None:
+        logger.warning(
+            "Tracking identity missing | path=%s has_init_data=%s",
+            request.url.path,
+            bool(init_data),
+        )
+        return None
+
+    return TrackingIdentity(
+        telegram_id=telegram_id,
+        username=username,
+        first_name=first_name,
+        last_name=last_name,
+    )
+
+
+@lru_cache(maxsize=1)
+def _tracking_service() -> SupabaseTrackingService:
+    service = SupabaseTrackingService(get_settings())
+    if service.enabled:
+        logger.info("SUPABASE CONFIG LOADED | enabled=%s backend=%s", service.enabled, service.backend)
+    else:
+        logger.warning(
+            "SUPABASE CONFIG INVALID | enabled=%s backend=%s reason=%s",
+            service.enabled,
+            service.backend,
+            service.disabled_reason or "unknown",
+        )
+    return service
+
+
+def _text_model_used(mode: TextMode) -> str:
+    settings = get_settings()
+    if mode == "code":
+        return settings.code_model
+    if mode == "deep_analysis" and (settings.deepseek_api_key or "").strip():
+        return settings.deepseek_model
+    return settings.nvidia_chat_model
+
+
+async def _track_api_action(
+    *,
+    identity: TrackingIdentity | None,
+    message_type: str,
+    user_message: str,
+    bot_reply: str | None,
+    model_used: str | None,
+    success: bool,
+    message_increment: int = 0,
+    image_increment: int = 0,
+) -> None:
+    if identity is None:
+        logger.warning("TRACKING FAILED user=unknown message_type=%s error=missing telegram identity", message_type)
+        return
+
+    service = _tracking_service()
+    if not service.enabled:
+        logger.warning(
+            "TRACKING FAILED user=%s message_type=%s error=tracking disabled reason=%s",
+            identity.telegram_id,
+            message_type,
+            service.disabled_reason or "unknown",
+        )
+        return
+
+    tracking_timeout_seconds = 4.0
+    try:
+        await asyncio.wait_for(
+            service.track_action(
+                identity=identity,
+                message_type=message_type,
+                user_message=user_message,
+                bot_reply=bot_reply,
+                model_used=model_used,
+                success=success,
+                message_increment=message_increment,
+                image_increment=image_increment,
+            ),
+            timeout=tracking_timeout_seconds,
+        )
+        logger.info("TRACKING COMPLETE user=%s message_type=%s", identity.telegram_id, message_type)
+    except asyncio.TimeoutError:
+        logger.warning(
+            "TRACKING FAILED user=%s message_type=%s error=timeout_after_%ss",
+            identity.telegram_id,
+            message_type,
+            tracking_timeout_seconds,
+        )
+    except Exception as exc:
+        logger.exception(
+            "TRACKING FAILED user=%s message_type=%s error=%s",
+            identity.telegram_id,
+            message_type,
+            exc,
+        )
+
+
 app = FastAPI(
     title="JO AI Service",
     version=VERSION,
@@ -635,12 +806,47 @@ async def _process_webhook_update(runtime: BotRuntime, update: Update) -> None:
 async def _startup() -> None:
     settings = get_settings()
     setup_logging(settings.log_level)
+    for warning in settings.validation_warnings:
+        logger.warning("CONFIG WARNING | %s", warning)
     settings.require_valid()
 
     role = _read_env("PROCESS_ROLE") or "web"
     app.state.started_at = time.time()
     logger.info("API STARTED | version=%s", VERSION)
     logger.info("PROCESS=%s ENTRYPOINT=main.py VERSION=%s", role, VERSION)
+    logger.info(
+        "SUPABASE CONFIG LOADED | supabase_url_set=%s service_role_set=%s anon_key_set=%s supabase_db_url_set=%s users_table=%s history_table=%s",
+        bool(settings.supabase_url),
+        bool(settings.supabase_service_role_key),
+        bool(settings.supabase_anon_key),
+        bool(settings.supabase_db_url),
+        settings.supabase_users_table,
+        settings.supabase_history_table,
+    )
+    tracking_service = _tracking_service()
+    logger.info(
+        "TRACKING BACKEND SELECTED | enabled=%s backend=%s",
+        tracking_service.enabled,
+        tracking_service.backend,
+    )
+    if tracking_service.enabled:
+        try:
+            startup_check_ok = await asyncio.wait_for(tracking_service.verify_connection(), timeout=5.0)
+            logger.info(
+                "SUPABASE CONNECTION VERIFY RESULT | ok=%s backend=%s",
+                startup_check_ok,
+                tracking_service.backend,
+            )
+        except asyncio.TimeoutError:
+            logger.warning(
+                "SUPABASE CONNECTION VERIFY FAILED | backend=%s error=startup_timeout",
+                tracking_service.backend,
+            )
+    else:
+        logger.warning(
+            "SUPABASE CONFIG INVALID | reason=%s",
+            tracking_service.disabled_reason or "no active tracking backend",
+        )
 
     runtime = await create_bot_runtime()
     app.state.bot_runtime = runtime
@@ -729,9 +935,19 @@ async def _handle_text_mode_request(
     prompt_type: str | None = None,
     code_file_name: str | None = None,
     code_file_base64: str | None = None,
+    identity: TrackingIdentity | None = None,
 ) -> JSONResponse:
     refusal = _maybe_block_sensitive_request(message, prompt_type)
     if refusal:
+        await _track_api_action(
+            identity=identity,
+            message_type=mode,
+            user_message=message,
+            bot_reply=SAFE_INTERNAL_DETAILS_REFUSAL,
+            model_used=_text_model_used(mode),
+            success=False,
+            message_increment=1,
+        )
         return refusal
     try:
         output = await _run_text_mode_completion(
@@ -752,64 +968,102 @@ async def _handle_text_mode_request(
                 if isinstance(code_content, str) and len(code_content) >= 16_000:
                     payload["output"] = _summary_for_very_long_code(code_content, attachment["code_file_name"])
                     payload["warning"] = "Full code is attached as a file."
+        await _track_api_action(
+            identity=identity,
+            message_type=mode,
+            user_message=message,
+            bot_reply=str(payload.get("output", output)),
+            model_used=_text_model_used(mode),
+            success=True,
+            message_increment=1,
+        )
         return JSONResponse(status_code=200, content=payload)
     except BackendError as exc:
+        await _track_api_action(
+            identity=identity,
+            message_type=mode,
+            user_message=message,
+            bot_reply=exc.message,
+            model_used=_text_model_used(mode),
+            success=False,
+            message_increment=1,
+        )
         return JSONResponse(status_code=exc.status_code, content={"error": exc.message})
 
 
 @app.post("/ai")
 @app.post("/api/ai")
-async def ai_endpoint(payload: AITextRequest) -> JSONResponse:
+async def ai_endpoint(request: Request, payload: AITextRequest) -> JSONResponse:
+    identity = _resolve_tracking_identity(request, payload)
     return await _handle_text_mode_request(
         mode=payload.mode,
         message=payload.message,
         prompt_type=payload.prompt_type,
         code_file_name=payload.code_file_name,
         code_file_base64=payload.code_file_base64,
+        identity=identity,
     )
 
 
 @app.post("/chat")
 @app.post("/api/chat")
-async def chat_endpoint(payload: ChatRequest) -> JSONResponse:
-    return await _handle_text_mode_request(mode="chat", message=payload.message)
+async def chat_endpoint(request: Request, payload: ChatRequest) -> JSONResponse:
+    identity = _resolve_tracking_identity(request, payload)
+    return await _handle_text_mode_request(mode="chat", message=payload.message, identity=identity)
 
 
 @app.post("/code")
 @app.post("/api/code")
-async def code_endpoint(payload: CodeRequest) -> JSONResponse:
+async def code_endpoint(request: Request, payload: CodeRequest) -> JSONResponse:
+    identity = _resolve_tracking_identity(request, payload)
     return await _handle_text_mode_request(
         mode="code",
         message=payload.message,
         code_file_name=payload.code_file_name,
         code_file_base64=payload.code_file_base64,
+        identity=identity,
     )
 
 
 @app.post("/research")
 @app.post("/api/research")
-async def research_endpoint(payload: ChatRequest) -> JSONResponse:
-    return await _handle_text_mode_request(mode="research", message=payload.message)
+async def research_endpoint(request: Request, payload: ChatRequest) -> JSONResponse:
+    identity = _resolve_tracking_identity(request, payload)
+    return await _handle_text_mode_request(mode="research", message=payload.message, identity=identity)
 
 
 @app.post("/prompt")
 @app.post("/api/prompt")
-async def prompt_endpoint(payload: PromptRequest) -> JSONResponse:
+async def prompt_endpoint(request: Request, payload: PromptRequest) -> JSONResponse:
+    identity = _resolve_tracking_identity(request, payload)
     return await _handle_text_mode_request(
         mode="prompt",
         message=payload.message,
         prompt_type=payload.effective_prompt_type,
+        identity=identity,
     )
 
 
 @app.post("/image")
 @app.post("/api/image")
-async def image_endpoint(payload: ImageRequest) -> JSONResponse:
+async def image_endpoint(request: Request, payload: ImageRequest) -> JSONResponse:
+    identity = _resolve_tracking_identity(request, payload)
+    settings = get_settings()
+    user_prompt = payload.effective_prompt
     refusal = _maybe_block_sensitive_request(payload.effective_prompt, payload.image_type, payload.ratio)
     if refusal:
+        await _track_api_action(
+            identity=identity,
+            message_type="image",
+            user_message=user_prompt,
+            bot_reply=SAFE_INTERNAL_DETAILS_REFUSAL,
+            model_used=settings.image_model,
+            success=False,
+            image_increment=1,
+        )
         return refusal
     try:
-        prompt = payload.effective_prompt
+        prompt = user_prompt
         style_hint = payload.effective_style_hint
         if style_hint:
             prompt = f"{prompt}\nStyle hints: {style_hint}"
@@ -823,27 +1077,78 @@ async def image_endpoint(payload: ImageRequest) -> JSONResponse:
             "ratio": payload.effective_ratio,
         }
         response_payload.update(result_payload)
+        await _track_api_action(
+            identity=identity,
+            message_type="image",
+            user_message=user_prompt,
+            bot_reply=str(response_payload.get("output", "Image generated successfully.")),
+            model_used=settings.image_model,
+            success=True,
+            image_increment=1,
+        )
         return JSONResponse(status_code=200, content=response_payload)
     except BackendError as exc:
+        await _track_api_action(
+            identity=identity,
+            message_type="image",
+            user_message=user_prompt,
+            bot_reply=exc.message,
+            model_used=settings.image_model,
+            success=False,
+            image_increment=1,
+        )
         return JSONResponse(status_code=exc.status_code, content={"error": exc.message})
 
 
 @app.post("/vision")
 @app.post("/api/vision")
-async def vision_endpoint(payload: VisionDescribeRequest) -> JSONResponse:
+async def vision_endpoint(request: Request, payload: VisionDescribeRequest) -> JSONResponse:
+    identity = _resolve_tracking_identity(request, payload)
+    settings = get_settings()
+    user_message = payload.effective_message
     refusal = _maybe_block_sensitive_request(payload.effective_message)
     if refusal:
+        await _track_api_action(
+            identity=identity,
+            message_type="vision",
+            user_message=user_message,
+            bot_reply=SAFE_INTERNAL_DETAILS_REFUSAL,
+            model_used=settings.kimi_model,
+            success=False,
+            message_increment=1,
+        )
         return refusal
     try:
-        output = await _describe_image_with_vision(payload.effective_message, payload.image_base64)
+        output = await _describe_image_with_vision(user_message, payload.image_base64)
+        await _track_api_action(
+            identity=identity,
+            message_type="vision",
+            user_message=user_message,
+            bot_reply=output,
+            model_used=settings.kimi_model,
+            success=True,
+            message_increment=1,
+        )
         return JSONResponse(status_code=200, content={"output": output})
     except BackendError as exc:
+        await _track_api_action(
+            identity=identity,
+            message_type="vision",
+            user_message=user_message,
+            bot_reply=exc.message,
+            model_used=settings.kimi_model,
+            success=False,
+            message_increment=1,
+        )
         return JSONResponse(status_code=exc.status_code, content={"error": exc.message})
 
 
 @app.post("/tts")
 @app.post("/api/tts")
-async def tts_endpoint(payload: TTSRequest) -> JSONResponse:
+async def tts_endpoint(request: Request, payload: TTSRequest) -> JSONResponse:
+    identity = _resolve_tracking_identity(request, payload)
+    settings = get_settings()
+    user_text = payload.effective_text
     refusal = _maybe_block_sensitive_request(
         payload.effective_text,
         payload.effective_language,
@@ -851,10 +1156,19 @@ async def tts_endpoint(payload: TTSRequest) -> JSONResponse:
         payload.effective_emotion,
     )
     if refusal:
+        await _track_api_action(
+            identity=identity,
+            message_type="tts",
+            user_message=user_text,
+            bot_reply=SAFE_INTERNAL_DETAILS_REFUSAL,
+            model_used=settings.tts_function_id,
+            success=False,
+            message_increment=1,
+        )
         return refusal
     try:
         generated = await _generate_tts(
-            text=payload.effective_text,
+            text=user_text,
             language=payload.effective_language,
             voice=payload.effective_voice,
             emotion=payload.effective_emotion,
@@ -866,8 +1180,26 @@ async def tts_endpoint(payload: TTSRequest) -> JSONResponse:
             "emotion": payload.effective_emotion,
         }
         response_payload.update(generated)
+        await _track_api_action(
+            identity=identity,
+            message_type="tts",
+            user_message=user_text,
+            bot_reply=str(response_payload.get("output", "Speech generated successfully.")),
+            model_used=settings.tts_function_id,
+            success=True,
+            message_increment=1,
+        )
         return JSONResponse(status_code=200, content=response_payload)
     except BackendError as exc:
+        await _track_api_action(
+            identity=identity,
+            message_type="tts",
+            user_message=user_text,
+            bot_reply=exc.message,
+            model_used=settings.tts_function_id,
+            success=False,
+            message_increment=1,
+        )
         return JSONResponse(status_code=exc.status_code, content={"error": exc.message})
 
 
