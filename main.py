@@ -3,6 +3,7 @@
 import asyncio
 import base64
 import binascii
+from datetime import datetime, timezone
 import json
 import logging
 import os
@@ -22,6 +23,7 @@ from fastapi.exceptions import RequestValidationError
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 from pydantic import BaseModel, ConfigDict, Field, ValidationError, model_validator
+from supabase import create_client
 
 from bot.app import (
     BotRuntime,
@@ -603,6 +605,12 @@ def _normalize_tracking_text(value: Any, max_len: int = 128) -> str | None:
     return raw[:max_len]
 
 
+def _append_debug_error(existing: str | None, message: str) -> str:
+    if existing:
+        return f"{existing} | {message}"
+    return message
+
+
 def _parse_positive_int(value: Any) -> int | None:
     if value is None:
         return None
@@ -901,6 +909,208 @@ def uptime() -> dict[str, Any]:
 @app.get("/api/runtime-info")
 def runtime_info() -> dict[str, Any]:
     return _runtime_info_payload()
+
+
+@app.get("/debug/supabase-test")
+async def debug_supabase_test() -> JSONResponse:
+    settings = get_settings()
+    tracking_service = _tracking_service()
+
+    raw_env_presence = {
+        "SUPABASE_URL": bool(_read_env("SUPABASE_URL")),
+        "SUPABASE_PROJECT_URL": bool(_read_env("SUPABASE_PROJECT_URL")),
+        "SUPABASE_SERVICE_ROLE_KEY": bool(_read_env("SUPABASE_SERVICE_ROLE_KEY")),
+        "SUPABASE_SECRET_KEY": bool(_read_env("SUPABASE_SECRET_KEY")),
+        "SUPABASE_ANON_KEY": bool(_read_env("SUPABASE_ANON_KEY")),
+        "SUPABASE_PUBLISHABLE_KEY": bool(_read_env("SUPABASE_PUBLISHABLE_KEY")),
+        "SUPABASE_DB_URL": bool(_read_env("SUPABASE_DB_URL")),
+        "SUPABASE_DIRECT_CONNECTION_STRING": bool(_read_env("SUPABASE_DIRECT_CONNECTION_STRING")),
+    }
+    effective_env_presence = {
+        "SUPABASE_URL": bool(settings.supabase_url),
+        "SUPABASE_SERVICE_ROLE_KEY": bool(settings.supabase_service_role_key),
+        "SUPABASE_ANON_KEY": bool(settings.supabase_anon_key),
+        "SUPABASE_DB_URL": bool(settings.supabase_db_url),
+    }
+    effective_url_present = effective_env_presence["SUPABASE_URL"]
+    effective_service_role_present = effective_env_presence["SUPABASE_SERVICE_ROLE_KEY"]
+    effective_anon_present = effective_env_presence["SUPABASE_ANON_KEY"]
+    env_loaded_correctly = {
+        "SUPABASE_URL": effective_url_present
+        == bool(raw_env_presence["SUPABASE_URL"] or raw_env_presence["SUPABASE_PROJECT_URL"]),
+        "SUPABASE_SERVICE_ROLE_KEY": effective_service_role_present
+        == bool(raw_env_presence["SUPABASE_SERVICE_ROLE_KEY"] or raw_env_presence["SUPABASE_SECRET_KEY"]),
+        "SUPABASE_ANON_KEY": effective_anon_present
+        == bool(raw_env_presence["SUPABASE_ANON_KEY"] or raw_env_presence["SUPABASE_PUBLISHABLE_KEY"]),
+        "SUPABASE_DB_URL": effective_env_presence["SUPABASE_DB_URL"]
+        == bool(raw_env_presence["SUPABASE_DB_URL"] or raw_env_presence["SUPABASE_DIRECT_CONNECTION_STRING"]),
+    }
+
+    configured_users_table = (settings.supabase_users_table or "").strip() or "users"
+    configured_history_table = (settings.supabase_history_table or "").strip() or "history"
+    expected_users_table = "users"
+    expected_history_table = "history"
+    table_names_match_expected = (
+        configured_users_table == expected_users_table and configured_history_table == expected_history_table
+    )
+
+    logger.warning("SUPABASE DEBUG TEST START")
+    logger.warning("SUPABASE DEBUG TEST ENV RAW PRESENCE | %s", raw_env_presence)
+    logger.warning("SUPABASE DEBUG TEST ENV EFFECTIVE PRESENCE | %s", effective_env_presence)
+    logger.warning("SUPABASE DEBUG TEST ENV LOADED CORRECTLY | %s", env_loaded_correctly)
+    logger.warning(
+        "SUPABASE DEBUG TEST TABLE CHECK | configured_users_table=%s configured_history_table=%s match_expected=%s",
+        configured_users_table,
+        configured_history_table,
+        table_names_match_expected,
+    )
+    logger.warning(
+        "SUPABASE DEBUG TEST TRACKING BACKEND | backend=%s enabled=%s disabled_reason=%s",
+        tracking_service.backend,
+        tracking_service.enabled,
+        tracking_service.disabled_reason,
+    )
+
+    result: dict[str, Any] = {
+        "supabase_client_initialized": False,
+        "users_upsert_succeeded": False,
+        "history_insert_succeeded": False,
+        "error": None,
+        "effective_key_type": "service_role"
+        if effective_service_role_present
+        else "anon"
+        if effective_anon_present
+        else "none",
+        "effective_supabase_url": settings.supabase_url,
+        "effective_tables": {
+            "users": configured_users_table,
+            "history": configured_history_table,
+        },
+        "expected_tables": {
+            "users": "public.users",
+            "history": "public.history",
+        },
+        "table_names_match_expected": table_names_match_expected,
+        "env_presence_raw": raw_env_presence,
+        "env_presence_effective": effective_env_presence,
+        "env_loaded_correctly": env_loaded_correctly,
+        "tracking_backend": tracking_service.backend,
+        "tracking_enabled": tracking_service.enabled,
+        "tracking_disabled_reason": tracking_service.disabled_reason,
+    }
+
+    api_key = settings.supabase_service_role_key or settings.supabase_anon_key
+    if not settings.supabase_url:
+        error_message = "SUPABASE_URL is missing from effective settings."
+        logger.error("SUPABASE DEBUG TEST CLIENT INIT FAILED | %s", error_message)
+        result["error"] = _append_debug_error(result["error"], error_message)
+        return JSONResponse(status_code=200, content=result)
+    if not api_key:
+        error_message = "No effective Supabase API key found (service role or anon)."
+        logger.error("SUPABASE DEBUG TEST CLIENT INIT FAILED | %s", error_message)
+        result["error"] = _append_debug_error(result["error"], error_message)
+        return JSONResponse(status_code=200, content=result)
+
+    try:
+        logger.warning(
+            "SUPABASE DEBUG TEST CLIENT INIT START | url_present=%s using_service_role=%s using_anon=%s",
+            bool(settings.supabase_url),
+            bool(settings.supabase_service_role_key),
+            bool(settings.supabase_anon_key and not settings.supabase_service_role_key),
+        )
+        client = create_client(settings.supabase_url, api_key)
+        result["supabase_client_initialized"] = True
+        logger.warning("SUPABASE DEBUG TEST CLIENT INIT SUCCESS")
+    except Exception as exc:
+        error_message = f"Supabase client init failed: {exc}"
+        logger.exception("SUPABASE DEBUG TEST CLIENT INIT FAILED | error=%s", exc)
+        result["error"] = _append_debug_error(result["error"], error_message)
+        return JSONResponse(status_code=200, content=result)
+
+    debug_telegram_id = int(time.time()) + 9_000_000_000
+    now_iso = datetime.now(timezone.utc).isoformat()
+    user_payload = {
+        "telegram_id": debug_telegram_id,
+        "username": "debug_supabase_user",
+        "first_name": "Debug",
+        "last_name": "SupabaseTest",
+        "last_seen_at": now_iso,
+        "total_messages": 1,
+        "total_images": 0,
+    }
+    history_payload = {
+        "telegram_id": debug_telegram_id,
+        "message_type": "debug_supabase_test",
+        "user_message": "debug users/history insert proof test",
+        "bot_reply": "debug endpoint wrote this row",
+        "model_used": "debug-endpoint",
+        "success": True,
+        "created_at": now_iso,
+    }
+    result["column_names_used"] = {
+        "users": sorted(user_payload.keys()),
+        "history": sorted(history_payload.keys()),
+    }
+
+    logger.warning(
+        "SUPABASE DEBUG TEST USERS UPSERT START | table=public.%s telegram_id=%s",
+        expected_users_table,
+        debug_telegram_id,
+    )
+    try:
+        users_response = client.table(expected_users_table).upsert(
+            user_payload,
+            on_conflict="telegram_id",
+            returning="representation",
+            count="exact",
+        ).execute()
+        users_data = getattr(users_response, "data", None)
+        users_ok = bool(users_data)
+        result["users_upsert_succeeded"] = users_ok
+        if users_ok:
+            logger.warning("SUPABASE DEBUG TEST USERS UPSERT SUCCESS | telegram_id=%s", debug_telegram_id)
+        else:
+            error_message = "Users upsert executed but returned no rows."
+            logger.error("SUPABASE DEBUG TEST USERS UPSERT FAILED | %s", error_message)
+            result["error"] = _append_debug_error(result["error"], error_message)
+    except Exception as exc:
+        error_message = f"Users upsert failed: {exc}"
+        logger.exception("SUPABASE DEBUG TEST USERS UPSERT FAILED | error=%s", exc)
+        result["error"] = _append_debug_error(result["error"], error_message)
+
+    logger.warning(
+        "SUPABASE DEBUG TEST HISTORY INSERT START | table=public.%s telegram_id=%s",
+        expected_history_table,
+        debug_telegram_id,
+    )
+    try:
+        history_response = client.table(expected_history_table).insert(
+            history_payload,
+            returning="representation",
+            count="exact",
+        ).execute()
+        history_data = getattr(history_response, "data", None)
+        history_ok = bool(history_data)
+        result["history_insert_succeeded"] = history_ok
+        if history_ok:
+            logger.warning("SUPABASE DEBUG TEST HISTORY INSERT SUCCESS | telegram_id=%s", debug_telegram_id)
+        else:
+            error_message = "History insert executed but returned no rows."
+            logger.error("SUPABASE DEBUG TEST HISTORY INSERT FAILED | %s", error_message)
+            result["error"] = _append_debug_error(result["error"], error_message)
+    except Exception as exc:
+        error_message = f"History insert failed: {exc}"
+        logger.exception("SUPABASE DEBUG TEST HISTORY INSERT FAILED | error=%s", exc)
+        result["error"] = _append_debug_error(result["error"], error_message)
+
+    logger.warning(
+        "SUPABASE DEBUG TEST DONE | client_initialized=%s users_ok=%s history_ok=%s error_present=%s",
+        result["supabase_client_initialized"],
+        result["users_upsert_succeeded"],
+        result["history_insert_succeeded"],
+        bool(result["error"]),
+    )
+    return JSONResponse(status_code=200, content=result)
 
 
 @app.post("/telegram/webhook")
