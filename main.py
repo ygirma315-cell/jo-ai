@@ -9,6 +9,7 @@ import logging
 import os
 import re
 import time
+import uuid
 from contextlib import suppress
 from functools import lru_cache
 from pathlib import Path
@@ -77,6 +78,20 @@ IMAGE_STYLE_HINTS = {
     "render_3d": "3D render, physically based materials, global illumination, high detail",
     "concept_art": "concept art, environment storytelling, dramatic composition, matte painting quality",
 }
+OBSERVABLE_REQUEST_PATHS = frozenset(
+    {
+        "/ai",
+        "/chat",
+        "/code",
+        "/research",
+        "/prompt",
+        "/image",
+        "/vision",
+        "/tts",
+        "/telegram/webhook",
+        "/debug/supabase-test",
+    }
+)
 
 
 class BackendError(RuntimeError):
@@ -300,6 +315,15 @@ def _compose_prompt_request(prompt_type: str, message: str) -> str:
         f"User requirements:\n{message}\n\n"
         "Return exactly one optimized prompt that is specific and reusable."
     )
+
+
+def _is_observable_request_path(path: str) -> bool:
+    raw_path = str(path or "").strip()
+    return raw_path in OBSERVABLE_REQUEST_PATHS or raw_path.startswith("/api/")
+
+
+def _request_id_from_request(request: Request) -> str:
+    return str(getattr(request.state, "request_id", "") or "").strip()
 
 
 @lru_cache(maxsize=1)
@@ -799,8 +823,58 @@ app.add_middleware(
 
 @app.middleware("http")
 async def _response_headers_middleware(request: Request, call_next):
-    response = await call_next(request)
+    path = request.url.path
+    request_id = (
+        _normalize_tracking_text(request.headers.get("x-request-id"), max_len=64)
+        or _normalize_tracking_text(request.headers.get("x-correlation-id"), max_len=64)
+        or uuid.uuid4().hex
+    )
+    request.state.request_id = request_id
+
+    start = time.perf_counter()
+    should_log = _is_observable_request_path(path)
+    if should_log:
+        logger.info(
+            "API REQUEST START | request_id=%s method=%s path=%s query=%s user_agent=%s",
+            request_id,
+            request.method,
+            path,
+            str(request.url.query or "").strip(),
+            _normalize_tracking_text(request.headers.get("user-agent"), max_len=180) or "unknown",
+        )
+
+    try:
+        response = await call_next(request)
+    except Exception as exc:
+        duration_ms = round((time.perf_counter() - start) * 1000, 2)
+        logger.exception(
+            "API REQUEST FAILED | request_id=%s method=%s path=%s duration_ms=%s error=%s",
+            request_id,
+            request.method,
+            path,
+            duration_ms,
+            exc,
+        )
+        return JSONResponse(
+            status_code=500,
+            content={
+                "error": SAFE_SERVICE_UNAVAILABLE_MESSAGE,
+                "request_id": request_id,
+            },
+        )
+
+    duration_ms = round((time.perf_counter() - start) * 1000, 2)
     response.headers.setdefault("X-Content-Type-Options", "nosniff")
+    response.headers.setdefault("X-Request-ID", request_id)
+    if should_log:
+        logger.info(
+            "API REQUEST COMPLETE | request_id=%s method=%s path=%s status=%s duration_ms=%s",
+            request_id,
+            request.method,
+            path,
+            response.status_code,
+            duration_ms,
+        )
     return response
 
 
@@ -890,10 +964,21 @@ async def _shutdown() -> None:
 
 
 @app.exception_handler(RequestValidationError)
-async def request_validation_exception_handler(_request: Request, exc: RequestValidationError) -> JSONResponse:
+async def request_validation_exception_handler(request: Request, exc: RequestValidationError) -> JSONResponse:
     first_error = exc.errors()[0] if exc.errors() else {}
     message = first_error.get("msg", "Invalid request payload.")
-    return JSONResponse(status_code=422, content={"error": message})
+    request_id = _request_id_from_request(request)
+    logger.warning(
+        "API REQUEST VALIDATION FAILED | request_id=%s method=%s path=%s error=%s",
+        request_id or "unknown",
+        request.method,
+        request.url.path,
+        message,
+    )
+    payload: dict[str, Any] = {"error": message}
+    if request_id:
+        payload["request_id"] = request_id
+    return JSONResponse(status_code=422, content=payload)
 
 
 @app.get("/")
@@ -1157,6 +1242,7 @@ async def telegram_webhook(request: Request) -> JSONResponse:
 
 async def _handle_text_mode_request(
     *,
+    request: Request,
     mode: TextMode,
     message: str,
     prompt_type: str | None = None,
@@ -1164,6 +1250,16 @@ async def _handle_text_mode_request(
     code_file_base64: str | None = None,
     identity: TrackingIdentity | None = None,
 ) -> JSONResponse:
+    request_id = _request_id_from_request(request)
+    user_id = identity.telegram_id if identity else "unknown"
+    logger.info(
+        "API MODE START | request_id=%s mode=%s user=%s message_len=%s",
+        request_id or "unknown",
+        mode,
+        user_id,
+        len(message or ""),
+    )
+
     refusal = _maybe_block_sensitive_request(message, prompt_type)
     if refusal:
         await _track_api_action(
@@ -1174,6 +1270,12 @@ async def _handle_text_mode_request(
             model_used=_text_model_used(mode),
             success=False,
             message_increment=1,
+        )
+        logger.info(
+            "API MODE REFUSED | request_id=%s mode=%s user=%s",
+            request_id or "unknown",
+            mode,
+            user_id,
         )
         return refusal
     try:
@@ -1204,6 +1306,13 @@ async def _handle_text_mode_request(
             success=True,
             message_increment=1,
         )
+        logger.info(
+            "API MODE SUCCESS | request_id=%s mode=%s user=%s output_len=%s",
+            request_id or "unknown",
+            mode,
+            user_id,
+            len(str(payload.get("output", output) or "")),
+        )
         return JSONResponse(status_code=200, content=payload)
     except BackendError as exc:
         await _track_api_action(
@@ -1215,7 +1324,27 @@ async def _handle_text_mode_request(
             success=False,
             message_increment=1,
         )
-        return JSONResponse(status_code=exc.status_code, content={"error": exc.message})
+        logger.warning(
+            "API MODE BACKEND ERROR | request_id=%s mode=%s user=%s status=%s error=%s",
+            request_id or "unknown",
+            mode,
+            user_id,
+            exc.status_code,
+            exc.message,
+        )
+        payload = {"error": exc.message}
+        if request_id:
+            payload["request_id"] = request_id
+        return JSONResponse(status_code=exc.status_code, content=payload)
+    except Exception as exc:
+        logger.exception(
+            "API MODE FAILED | request_id=%s mode=%s user=%s error=%s",
+            request_id or "unknown",
+            mode,
+            user_id,
+            exc,
+        )
+        raise
 
 
 @app.post("/ai")
@@ -1223,6 +1352,7 @@ async def _handle_text_mode_request(
 async def ai_endpoint(request: Request, payload: AITextRequest) -> JSONResponse:
     identity = _resolve_tracking_identity(request, payload)
     return await _handle_text_mode_request(
+        request=request,
         mode=payload.mode,
         message=payload.message,
         prompt_type=payload.prompt_type,
@@ -1236,7 +1366,7 @@ async def ai_endpoint(request: Request, payload: AITextRequest) -> JSONResponse:
 @app.post("/api/chat")
 async def chat_endpoint(request: Request, payload: ChatRequest) -> JSONResponse:
     identity = _resolve_tracking_identity(request, payload)
-    return await _handle_text_mode_request(mode="chat", message=payload.message, identity=identity)
+    return await _handle_text_mode_request(request=request, mode="chat", message=payload.message, identity=identity)
 
 
 @app.post("/code")
@@ -1244,6 +1374,7 @@ async def chat_endpoint(request: Request, payload: ChatRequest) -> JSONResponse:
 async def code_endpoint(request: Request, payload: CodeRequest) -> JSONResponse:
     identity = _resolve_tracking_identity(request, payload)
     return await _handle_text_mode_request(
+        request=request,
         mode="code",
         message=payload.message,
         code_file_name=payload.code_file_name,
@@ -1256,7 +1387,7 @@ async def code_endpoint(request: Request, payload: CodeRequest) -> JSONResponse:
 @app.post("/api/research")
 async def research_endpoint(request: Request, payload: ChatRequest) -> JSONResponse:
     identity = _resolve_tracking_identity(request, payload)
-    return await _handle_text_mode_request(mode="research", message=payload.message, identity=identity)
+    return await _handle_text_mode_request(request=request, mode="research", message=payload.message, identity=identity)
 
 
 @app.post("/prompt")
@@ -1264,6 +1395,7 @@ async def research_endpoint(request: Request, payload: ChatRequest) -> JSONRespo
 async def prompt_endpoint(request: Request, payload: PromptRequest) -> JSONResponse:
     identity = _resolve_tracking_identity(request, payload)
     return await _handle_text_mode_request(
+        request=request,
         mode="prompt",
         message=payload.message,
         prompt_type=payload.effective_prompt_type,
@@ -1274,9 +1406,19 @@ async def prompt_endpoint(request: Request, payload: PromptRequest) -> JSONRespo
 @app.post("/image")
 @app.post("/api/image")
 async def image_endpoint(request: Request, payload: ImageRequest) -> JSONResponse:
+    request_id = _request_id_from_request(request)
     identity = _resolve_tracking_identity(request, payload)
+    user_id = identity.telegram_id if identity else "unknown"
     settings = get_settings()
     user_prompt = payload.effective_prompt
+    logger.info(
+        "API IMAGE START | request_id=%s user=%s prompt_len=%s ratio=%s image_type=%s",
+        request_id or "unknown",
+        user_id,
+        len(user_prompt or ""),
+        payload.effective_ratio,
+        payload.image_type or "",
+    )
     refusal = _maybe_block_sensitive_request(payload.effective_prompt, payload.image_type, payload.ratio)
     if refusal:
         await _track_api_action(
@@ -1287,6 +1429,11 @@ async def image_endpoint(request: Request, payload: ImageRequest) -> JSONRespons
             model_used=settings.image_model,
             success=False,
             image_increment=1,
+        )
+        logger.info(
+            "API IMAGE REFUSED | request_id=%s user=%s",
+            request_id or "unknown",
+            user_id,
         )
         return refusal
     try:
@@ -1313,6 +1460,14 @@ async def image_endpoint(request: Request, payload: ImageRequest) -> JSONRespons
             success=True,
             image_increment=1,
         )
+        logger.info(
+            "API IMAGE SUCCESS | request_id=%s user=%s ratio=%s has_image_base64=%s has_image_url=%s",
+            request_id or "unknown",
+            user_id,
+            payload.effective_ratio,
+            "image_base64" in response_payload,
+            "image_url" in response_payload,
+        )
         return JSONResponse(status_code=200, content=response_payload)
     except BackendError as exc:
         await _track_api_action(
@@ -1324,15 +1479,42 @@ async def image_endpoint(request: Request, payload: ImageRequest) -> JSONRespons
             success=False,
             image_increment=1,
         )
-        return JSONResponse(status_code=exc.status_code, content={"error": exc.message})
+        logger.warning(
+            "API IMAGE BACKEND ERROR | request_id=%s user=%s status=%s error=%s",
+            request_id or "unknown",
+            user_id,
+            exc.status_code,
+            exc.message,
+        )
+        payload_response = {"error": exc.message}
+        if request_id:
+            payload_response["request_id"] = request_id
+        return JSONResponse(status_code=exc.status_code, content=payload_response)
+    except Exception as exc:
+        logger.exception(
+            "API IMAGE FAILED | request_id=%s user=%s error=%s",
+            request_id or "unknown",
+            user_id,
+            exc,
+        )
+        raise
 
 
 @app.post("/vision")
 @app.post("/api/vision")
 async def vision_endpoint(request: Request, payload: VisionDescribeRequest) -> JSONResponse:
+    request_id = _request_id_from_request(request)
     identity = _resolve_tracking_identity(request, payload)
+    user_id = identity.telegram_id if identity else "unknown"
     settings = get_settings()
     user_message = payload.effective_message
+    logger.info(
+        "API VISION START | request_id=%s user=%s message_len=%s image_base64_len=%s",
+        request_id or "unknown",
+        user_id,
+        len(user_message or ""),
+        len(payload.image_base64 or ""),
+    )
     refusal = _maybe_block_sensitive_request(payload.effective_message)
     if refusal:
         await _track_api_action(
@@ -1343,6 +1525,11 @@ async def vision_endpoint(request: Request, payload: VisionDescribeRequest) -> J
             model_used=settings.kimi_model,
             success=False,
             message_increment=1,
+        )
+        logger.info(
+            "API VISION REFUSED | request_id=%s user=%s",
+            request_id or "unknown",
+            user_id,
         )
         return refusal
     try:
@@ -1356,6 +1543,12 @@ async def vision_endpoint(request: Request, payload: VisionDescribeRequest) -> J
             success=True,
             message_increment=1,
         )
+        logger.info(
+            "API VISION SUCCESS | request_id=%s user=%s output_len=%s",
+            request_id or "unknown",
+            user_id,
+            len(output or ""),
+        )
         return JSONResponse(status_code=200, content={"output": output})
     except BackendError as exc:
         await _track_api_action(
@@ -1367,15 +1560,44 @@ async def vision_endpoint(request: Request, payload: VisionDescribeRequest) -> J
             success=False,
             message_increment=1,
         )
-        return JSONResponse(status_code=exc.status_code, content={"error": exc.message})
+        logger.warning(
+            "API VISION BACKEND ERROR | request_id=%s user=%s status=%s error=%s",
+            request_id or "unknown",
+            user_id,
+            exc.status_code,
+            exc.message,
+        )
+        payload_response = {"error": exc.message}
+        if request_id:
+            payload_response["request_id"] = request_id
+        return JSONResponse(status_code=exc.status_code, content=payload_response)
+    except Exception as exc:
+        logger.exception(
+            "API VISION FAILED | request_id=%s user=%s error=%s",
+            request_id or "unknown",
+            user_id,
+            exc,
+        )
+        raise
 
 
 @app.post("/tts")
 @app.post("/api/tts")
 async def tts_endpoint(request: Request, payload: TTSRequest) -> JSONResponse:
+    request_id = _request_id_from_request(request)
     identity = _resolve_tracking_identity(request, payload)
+    user_id = identity.telegram_id if identity else "unknown"
     settings = get_settings()
     user_text = payload.effective_text
+    logger.info(
+        "API TTS START | request_id=%s user=%s text_len=%s language=%s voice=%s emotion=%s",
+        request_id or "unknown",
+        user_id,
+        len(user_text or ""),
+        payload.effective_language,
+        payload.effective_voice,
+        payload.effective_emotion,
+    )
     refusal = _maybe_block_sensitive_request(
         payload.effective_text,
         payload.effective_language,
@@ -1391,6 +1613,11 @@ async def tts_endpoint(request: Request, payload: TTSRequest) -> JSONResponse:
             model_used=settings.tts_function_id,
             success=False,
             message_increment=1,
+        )
+        logger.info(
+            "API TTS REFUSED | request_id=%s user=%s",
+            request_id or "unknown",
+            user_id,
         )
         return refusal
     try:
@@ -1416,6 +1643,12 @@ async def tts_endpoint(request: Request, payload: TTSRequest) -> JSONResponse:
             success=True,
             message_increment=1,
         )
+        logger.info(
+            "API TTS SUCCESS | request_id=%s user=%s audio_mime_type=%s",
+            request_id or "unknown",
+            user_id,
+            response_payload.get("audio_mime_type", ""),
+        )
         return JSONResponse(status_code=200, content=response_payload)
     except BackendError as exc:
         await _track_api_action(
@@ -1427,7 +1660,25 @@ async def tts_endpoint(request: Request, payload: TTSRequest) -> JSONResponse:
             success=False,
             message_increment=1,
         )
-        return JSONResponse(status_code=exc.status_code, content={"error": exc.message})
+        logger.warning(
+            "API TTS BACKEND ERROR | request_id=%s user=%s status=%s error=%s",
+            request_id or "unknown",
+            user_id,
+            exc.status_code,
+            exc.message,
+        )
+        payload_response = {"error": exc.message}
+        if request_id:
+            payload_response["request_id"] = request_id
+        return JSONResponse(status_code=exc.status_code, content=payload_response)
+    except Exception as exc:
+        logger.exception(
+            "API TTS FAILED | request_id=%s user=%s error=%s",
+            request_id or "unknown",
+            user_id,
+            exc,
+        )
+        raise
 
 
 if __name__ == "__main__":

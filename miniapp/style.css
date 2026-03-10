@@ -29,6 +29,16 @@
   --viewport-stable-height: 100vh;
   --viewport-offset-top: 0px;
   --viewport-offset-bottom: 0px;
+  --ui-page-bg: #f7f8fb;
+  --ui-surface-bg: #ffffff;
+  --ui-surface-raised: #f8fafc;
+  --ui-user-bubble-bg: #e5f3ee;
+  --ui-assistant-bubble-bg: #ffffff;
+  --ui-input-bg: #ffffff;
+  --ui-text-primary: #111827;
+  --ui-text-secondary: #475569;
+  --ui-text-muted: #64748b;
+  --ui-border-strong: rgba(100, 116, 139, 0.28);
   color-scheme: light;
 }
 
@@ -3023,4 +3033,137 @@ body.tool-page #updatesClose {
     max-width: none;
     justify-content: flex-start;
   }
+}
+
+/* Defensive readability overrides for Telegram and unofficial clients. */
+body[data-theme-mode] {
+  background: var(--ui-page-bg) !important;
+  background-color: var(--ui-page-bg) !important;
+  color: var(--ui-text-primary) !important;
+}
+
+body[data-theme-mode]::before,
+body[data-theme-mode]::after {
+  display: none !important;
+  opacity: 0 !important;
+}
+
+body[data-theme-mode] .shell,
+body[data-theme-mode] .chat-shell,
+body[data-theme-mode] .card,
+body[data-theme-mode] .tool-card,
+body[data-theme-mode] .chat-history .message-bubble,
+body[data-theme-mode] .chat-input-row,
+body[data-theme-mode] .chat-composer,
+body[data-theme-mode] .empty-state,
+body[data-theme-mode] .chat-topbar,
+body[data-theme-mode] .welcome-card,
+body[data-theme-mode] .updates-card {
+  background: var(--ui-surface-bg) !important;
+  color: var(--ui-text-primary) !important;
+  border-color: var(--ui-border-strong) !important;
+  box-shadow: none !important;
+  backdrop-filter: none !important;
+  filter: none !important;
+}
+
+body[data-theme-mode] .chat-composer {
+  background: var(--ui-surface-raised) !important;
+}
+
+body[data-theme-mode] .chat-input-row {
+  background: var(--ui-input-bg) !important;
+}
+
+body[data-theme-mode] .chat-input,
+body[data-theme-mode] textarea,
+body[data-theme-mode] input[type="text"],
+body[data-theme-mode] select {
+  color: var(--ui-text-primary) !important;
+  background: transparent !important;
+}
+
+body[data-theme-mode] .chat-input::placeholder,
+body[data-theme-mode] textarea::placeholder,
+body[data-theme-mode] input[type="text"]::placeholder {
+  color: var(--ui-text-muted) !important;
+  opacity: 1 !important;
+}
+
+body[data-theme-mode] .message,
+body[data-theme-mode] .message-bubble,
+body[data-theme-mode] .message-body,
+body[data-theme-mode] .message-body p,
+body[data-theme-mode] .message-body li,
+body[data-theme-mode] .message-body h3,
+body[data-theme-mode] .message-body h4,
+body[data-theme-mode] .chat-title,
+body[data-theme-mode] .page-title,
+body[data-theme-mode] .tool-card h3,
+body[data-theme-mode] label {
+  color: var(--ui-text-primary) !important;
+}
+
+body[data-theme-mode] .hint,
+body[data-theme-mode] .subtitle,
+body[data-theme-mode] .message-head,
+body[data-theme-mode] .message-meta,
+body[data-theme-mode] .message-note,
+body[data-theme-mode] .chat-subtitle,
+body[data-theme-mode] .composer-status,
+body[data-theme-mode] .tool-card p,
+body[data-theme-mode] .tool-link,
+body[data-theme-mode] .chip.muted,
+body[data-theme-mode] #apiState {
+  color: var(--ui-text-secondary) !important;
+}
+
+body[data-theme-mode] .chat-history .message.assistant .message-bubble {
+  background: var(--ui-assistant-bubble-bg) !important;
+  border-color: var(--ui-border-strong) !important;
+}
+
+body[data-theme-mode] .chat-history .message.user .message-bubble {
+  background: var(--ui-user-bubble-bg) !important;
+  border-color: var(--ui-border-strong) !important;
+}
+
+body[data-theme-mode] .chat-history .message-avatar {
+  color: var(--ui-text-primary) !important;
+  background: var(--ui-surface-raised) !important;
+  border-color: var(--ui-border-strong) !important;
+}
+
+body[data-theme-mode] .chip {
+  color: var(--ui-text-primary) !important;
+  background: var(--ui-surface-raised) !important;
+  border-color: var(--ui-border-strong) !important;
+}
+
+body[data-theme-mode] .btn {
+  color: var(--ui-text-primary) !important;
+  background: var(--ui-surface-raised) !important;
+  border-color: var(--ui-border-strong) !important;
+}
+
+body[data-theme-mode] .btn.primary {
+  color: #ffffff !important;
+  background: linear-gradient(135deg, var(--brand-strong), var(--brand), #17a39a) !important;
+  border-color: transparent !important;
+}
+
+body[data-theme-mode] .bubble-copy,
+body[data-theme-mode] .back-link,
+body[data-theme-mode] .tool-link {
+  color: var(--brand-strong) !important;
+}
+
+body[data-theme-mode] .code-block,
+body[data-theme-mode] .code-block * {
+  color: #e8edf2 !important;
+}
+
+body[data-theme-mode] .code-block {
+  background: #13202b !important;
+  border-color: rgba(102, 119, 136, 0.36) !important;
 }

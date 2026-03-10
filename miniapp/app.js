@@ -7,7 +7,7 @@
   const STORAGE_VERSION_KEY = "jo_frontend_version";
   const HOME_ENTRY_STORAGE_KEY = "jo_home_entered";
   const HISTORY_PREFIX = "jo_history_";
-  const FRONTEND_VERSION = "v1.5.0";
+  const FRONTEND_VERSION = "v1.5.1";
   const SITE_BASE_URL = "https://ygirma315-cell.github.io/jo-ai/";
   const MAX_HISTORY_ITEMS = 18;
   const MAX_UPLOAD_BYTES = 8 * 1024 * 1024;
@@ -23,6 +23,15 @@
   ];
 
   const STATIC_RELEASES = [
+    {
+      version: "v1.5.1",
+      title: "Stability and readability hardening",
+      items: [
+        "Chat text colors now use explicit high-contrast fallbacks to prevent washed-out or invisible text on mixed Telegram themes.",
+        "Request flow now reports clearer network, timeout, and backend errors instead of one generic failure message.",
+        "Frontend request diagnostics and backend request IDs are surfaced to make cross-client failures easier to debug.",
+      ],
+    },
     {
       version: "v1.5.0",
       title: "Major mini app and bot organization update",
@@ -2001,10 +2010,62 @@
     syncOutputButtons();
     scrollHistoryToBottom(true);
   }
+  function delay(ms) {
+    const waitMs = Math.max(0, Number(ms) || 0);
+    return new Promise((resolve) => {
+      setTimeout(resolve, waitMs);
+    });
+  }
+
+  function isTimeoutMessage(message) {
+    return /longer than expected|timed out|timeout/i.test(String(message || ""));
+  }
+
+  function isLikelyNetworkMessage(message) {
+    return /failed to fetch|network|load failed|internet|connection|disconnected/i.test(String(message || ""));
+  }
+
+  function extractBackendErrorMessage(data, statusCode) {
+    const fallback = `Request failed with status ${statusCode}.`;
+    if (!data || typeof data !== "object") {
+      return fallback;
+    }
+
+    const candidates = [data.error, data.message, data.reason, data.detail, data.warning];
+    for (const candidate of candidates) {
+      if (typeof candidate === "string" && candidate.trim()) {
+        const requestId = typeof data.request_id === "string" ? data.request_id.trim() : "";
+        return requestId ? `${candidate.trim()} (request ${requestId})` : candidate.trim();
+      }
+    }
+
+    if (Array.isArray(data.detail) && data.detail.length) {
+      const first = data.detail[0];
+      if (first && typeof first.msg === "string" && first.msg.trim()) {
+        return first.msg.trim();
+      }
+    }
+    return fallback;
+  }
+
+  function summarizePayloadForLog(payload) {
+    const message = typeof payload.message === "string" ? payload.message : "";
+    return {
+      keys: Object.keys(payload || {}),
+      message_length: message.length,
+      has_code_file: Boolean(payload && payload.code_file_base64),
+      has_image: Boolean(payload && payload.image_base64),
+    };
+  }
+
   async function fetchJsonWithTimeout(url, options, timeoutMs = 60000) {
     if (typeof fetch !== "function") {
       throw new Error("This Telegram webview cannot make network requests.");
     }
+
+    const method = (options && options.method) || "GET";
+    const startedAt = Date.now();
+    console.info("[JO AI Mini App] request.dispatch", { method, url, timeout_ms: timeoutMs });
 
     const controller = typeof AbortController === "function" ? new AbortController() : null;
     let timer = 0;
@@ -2021,16 +2082,39 @@
               timer = setTimeout(() => reject(new Error("The assistant is taking longer than expected.")), timeoutMs);
             }),
           ]);
-      const raw = await response.text();
+      const requestId = response && response.headers && typeof response.headers.get === "function"
+        ? String(response.headers.get("x-request-id") || "").trim()
+        : "";
+      const rawText = await response.text();
       let data = {};
-      if (raw) {
+      if (rawText) {
         try {
-          data = JSON.parse(raw);
+          data = JSON.parse(rawText);
         } catch (_error) {
-          throw new Error("The assistant returned an unexpected response.");
+          console.warn("[JO AI Mini App] request.non_json_response", {
+            method,
+            url,
+            status: response.status,
+            request_id: requestId || undefined,
+            body_preview: rawText.slice(0, 180),
+          });
+          if (response.ok) {
+            throw new Error(
+              requestId
+                ? `The backend returned an unexpected response format (request ${requestId}).`
+                : "The backend returned an unexpected response format."
+            );
+          }
         }
       }
-      return { response, data };
+      console.info("[JO AI Mini App] request.response", {
+        method,
+        url,
+        status: response.status,
+        request_id: requestId || undefined,
+        duration_ms: Date.now() - startedAt,
+      });
+      return { response, data, rawText, requestId };
     } catch (error) {
       if (error && error.name === "AbortError") {
         throw new Error("The assistant is taking longer than expected.");
@@ -2239,38 +2323,159 @@
     }
 
     let timedOut = false;
+    let sawNetworkIssue = false;
+    let lastServerMessage = "";
+    let lastRequestId = "";
+    const diagnostics = [];
     const trackingHeaders = buildTrackingHeaders();
+    const shouldTryMinimalHeaders = Object.keys(trackingHeaders).length > 1;
+    const attempts = endpointAttempts(mode, payload);
+    const timeoutMs = requestTimeoutMsForMode(mode);
+    const payloadSummary = summarizePayloadForLog(payload);
+    console.info("[JO AI Mini App] request.start", {
+      mode,
+      api_base: apiBase,
+      attempt_count: attempts.length,
+      payload: payloadSummary,
+      header_keys: Object.keys(trackingHeaders),
+    });
 
-    for (const attempt of endpointAttempts(mode, payload)) {
-      try {
-        const { response, data } = await fetchJsonWithTimeout(
-          `${apiBase}${attempt.path}`,
-          {
-            method: "POST",
-            headers: { ...trackingHeaders },
-            body: JSON.stringify(attempt.payload),
-          },
-          requestTimeoutMsForMode(mode)
-        );
+    for (const attempt of attempts) {
+      const targetUrl = `${apiBase}${attempt.path}`;
+      const headerVariants = shouldTryMinimalHeaders
+        ? [
+            { name: "tracking", headers: { ...trackingHeaders } },
+            { name: "minimal", headers: { "Content-Type": "application/json" } },
+          ]
+        : [{ name: "tracking", headers: { ...trackingHeaders } }];
 
-        if (response.ok) {
-          return data || {};
+      let skipToNextEndpoint = false;
+      for (const variant of headerVariants) {
+        if (skipToNextEndpoint) {
+          break;
         }
 
-        if ([404, 405, 501].includes(response.status) || response.status >= 500) {
-          continue;
+        for (let tryIndex = 0; tryIndex < 2; tryIndex += 1) {
+          const startedAt = Date.now();
+          try {
+            const { response, data, requestId } = await fetchJsonWithTimeout(
+              targetUrl,
+              {
+                method: "POST",
+                headers: { ...variant.headers },
+                body: JSON.stringify(attempt.payload),
+              },
+              timeoutMs
+            );
+
+            const elapsedMs = Date.now() - startedAt;
+            const backendMessage = extractBackendErrorMessage(data, response.status);
+            diagnostics.push({
+              path: attempt.path,
+              header_variant: variant.name,
+              try_index: tryIndex,
+              status: response.status,
+              request_id: requestId || "",
+              duration_ms: elapsedMs,
+              message: backendMessage,
+            });
+
+            if (response.ok) {
+              console.info("[JO AI Mini App] request.success", {
+                mode,
+                path: attempt.path,
+                header_variant: variant.name,
+                request_id: requestId || undefined,
+                duration_ms: elapsedMs,
+              });
+              const payloadData = data && typeof data === "object" ? data : {};
+              return {
+                ...payloadData,
+                _request_id: requestId || (typeof payloadData.request_id === "string" ? payloadData.request_id : ""),
+                _endpoint: attempt.path,
+              };
+            }
+
+            if (requestId) {
+              lastRequestId = requestId;
+            }
+            if (backendMessage) {
+              lastServerMessage = backendMessage;
+            }
+
+            console.warn("[JO AI Mini App] request.http_error", {
+              mode,
+              path: attempt.path,
+              status: response.status,
+              request_id: requestId || undefined,
+              header_variant: variant.name,
+              message: backendMessage,
+            });
+
+            if ([404, 405, 501].includes(response.status)) {
+              skipToNextEndpoint = true;
+              break;
+            }
+
+            if (response.status >= 500 || response.status === 408 || response.status === 429) {
+              break;
+            }
+
+            throw new Error(backendMessage || `Request failed with status ${response.status}.`);
+          } catch (error) {
+            const message = error instanceof Error ? error.message : String(error);
+            const timeoutHit = isTimeoutMessage(message);
+            const networkHit = isLikelyNetworkMessage(message);
+            timedOut = timedOut || timeoutHit;
+            sawNetworkIssue = sawNetworkIssue || networkHit;
+
+            diagnostics.push({
+              path: attempt.path,
+              header_variant: variant.name,
+              try_index: tryIndex,
+              status: "request_error",
+              request_id: "",
+              duration_ms: Date.now() - startedAt,
+              message,
+            });
+
+            console.error("[JO AI Mini App] request.error", {
+              mode,
+              path: attempt.path,
+              header_variant: variant.name,
+              try_index: tryIndex,
+              message,
+            });
+
+            const retryable = tryIndex === 0 && (timeoutHit || networkHit);
+            if (retryable) {
+              await delay(220);
+              continue;
+            }
+            break;
+          }
         }
-      } catch (error) {
-        const message = error instanceof Error ? error.message : String(error);
-        timedOut = timedOut || /longer than expected|timed out/i.test(message);
-        continue;
       }
     }
 
+    let userMessage = "";
     if (timedOut) {
-      throw new Error("The assistant is taking longer than expected. Please try again.");
+      userMessage = "The assistant is taking longer than expected. Please try again.";
+    } else if (sawNetworkIssue) {
+      userMessage =
+        "Could not reach the JO AI backend from this Telegram client. Check your connection and reopen the mini app.";
+    } else if (lastServerMessage) {
+      userMessage = lastServerMessage;
+    } else {
+      userMessage = "The assistant could not complete this request right now.";
     }
-    throw new Error("The assistant could not complete this request right now.");
+    if (lastRequestId && !userMessage.includes("request ")) {
+      userMessage = `${userMessage} (request ${lastRequestId})`;
+    }
+
+    const finalError = new Error(userMessage);
+    finalError.details = diagnostics;
+    throw finalError;
   }
   function applyToolConfig() {
     const config = currentTool();
@@ -2601,6 +2806,11 @@
       return;
     }
 
+    console.info("[JO AI Mini App] submit.start", {
+      mode: getToolId(),
+      payload: summarizePayloadForLog(payload),
+    });
+
     pushHistory(buildUserEntry(payload));
     if (elements.aiInput) {
       elements.aiInput.value = "";
@@ -2700,10 +2910,24 @@
         timestamp: Date.now(),
       });
 
+      console.info("[JO AI Mini App] submit.success", {
+        mode: getToolId(),
+        endpoint: data && typeof data._endpoint === "string" ? data._endpoint : "",
+        request_id: data && typeof data._request_id === "string" ? data._request_id : "",
+        has_image: Boolean(imageDataUrl),
+        has_audio: Boolean(audioDataUrl),
+        has_code_file: Boolean(codeFileDataUrl),
+      });
+
       setApiState("ready", "success");
       showToast("Response ready.");
     } catch (error) {
       const message = error instanceof Error ? error.message : "The assistant could not complete this request.";
+      console.error("[JO AI Mini App] submit.failed", {
+        mode: getToolId(),
+        message,
+        details: error && typeof error === "object" && "details" in error ? error.details : [],
+      });
       replacePendingMessage({
         id: createId(),
         role: "assistant",
