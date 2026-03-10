@@ -23,6 +23,7 @@ from bot.runtime_info import build_runtime_info
 from version import WEB_VERSION, latest_release, latest_release_lines
 from bot.services.ai_service import ChatService, ImageGenerationService, TextToSpeechService, VideoGenerationService
 from bot.services.session_manager import SessionManager
+from bot.services.tracking_service import SupabaseTrackingService
 from bot.telegram_formatting import run_markdown_sanity_checks
 from version import VERSION
 
@@ -253,6 +254,14 @@ async def create_bot_runtime() -> BotRuntime:
         function_id=settings.tts_function_id,
     )
     dispatcher["video_generation_service"] = VideoGenerationService(api_key=settings.nvidia_api_key)
+    tracking_service = SupabaseTrackingService(settings)
+    dispatcher["tracking_service"] = tracking_service
+    logger.info(
+        "TELEGRAM TRACKING CONFIG | enabled=%s backend=%s disabled_reason=%s",
+        tracking_service.enabled,
+        tracking_service.backend,
+        tracking_service.disabled_reason,
+    )
     dispatcher["deepseek_api_key"] = settings.deepseek_api_key
     dispatcher["deepseek_model"] = settings.deepseek_model
     dispatcher["kimi_api_key"] = settings.kimi_api_key

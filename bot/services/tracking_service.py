@@ -179,13 +179,13 @@ class SupabaseTrackingService:
         success: bool,
         message_increment: int = 0,
         image_increment: int = 0,
-    ) -> None:
+    ) -> tuple[int, int]:
         if not self.enabled:
             logger.warning("TRACKING FAILED user=unknown error=tracking backend disabled reason=%s", self._disabled_reason)
-            return
+            return 0, 0
         if identity is None or identity.telegram_id <= 0:
             logger.warning("TRACKING FAILED user=unknown error=missing telegram identity")
-            return
+            return 0, 0
 
         safe_message_increment = max(0, int(message_increment))
         safe_image_increment = max(0, int(image_increment))
@@ -257,6 +257,7 @@ class SupabaseTrackingService:
             users_upserted,
             history_inserted,
         )
+        return users_upserted, history_inserted
 
     def _switch_to_http_backend(self, reason: str) -> bool:
         if self._supabase_client is None or self._supabase_config is None:
