@@ -1030,6 +1030,10 @@ body[data-tool="chat"] .page-title::before {
   content: "\1F916";
 }
 
+body[data-tool="gemini"] .page-title::before {
+  content: "\1F4A0";
+}
+
 body[data-tool="code"] .page-title::before {
   content: "\1F4BB";
 }
@@ -3166,4 +3170,60 @@ body[data-theme-mode] .code-block * {
 body[data-theme-mode] .code-block {
   background: #13202b !important;
   border-color: rgba(102, 119, 136, 0.36) !important;
+}
+
+/* v1.6.0 reliability-first overrides */
+body,
+body[data-page="home"],
+body.tool-page {
+  background: #f7f8fb !important;
+  background-image: none !important;
+}
+
+body::before,
+body::after {
+  display: none !important;
+}
+
+.shell,
+.tool-card,
+.card,
+.chat-shell,
+.chat-history .message-bubble {
+  box-shadow: none !important;
+  backdrop-filter: none !important;
+}
+
+.tool-card,
+.btn,
+.page-shell {
+  transition: none !important;
+}
+
+.referral-card .hint {
+  margin: 6px 0;
+}
+
+.referral-card .actions {
+  margin-top: 10px;
+}
+
+body.tool-page .chat-shell {
+  height: calc(var(--app-height) - var(--safe-top) - var(--safe-bottom)) !important;
+}
+
+body.tool-page .chat-main {
+  min-height: 0 !important;
+  grid-template-rows: minmax(0, 1fr) auto !important;
+  overflow: hidden !important;
+}
+
+body.tool-page .chat-history {
+  min-height: 0 !important;
+  max-height: none !important;
+  overflow-y: auto !important;
+}
+
+body.tool-page .chat-composer {
+  padding-bottom: calc(6px + var(--safe-bottom) + var(--keyboard-inset)) !important;
 }

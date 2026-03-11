@@ -25,11 +25,11 @@
     href="https://fonts.googleapis.com/css2?family=DM+Sans:wght@400;500;700&family=Space+Grotesk:wght@500;700&display=swap"
     rel="stylesheet"
   >
-  <link rel="stylesheet" href="style.css?v=1.5.1">
+  <link rel="stylesheet" href="style.css?v=1.6.0">
   <script src="https://telegram.org/js/telegram-web-app.js"></script>
-  <script src="bootstrap.js?v=1.5.1" defer></script>
-  <script src="config.js?v=1.5.1"></script>
-  <script src="app.js?v=1.5.1" defer></script>
+  <script src="bootstrap.js?v=1.6.0" defer></script>
+  <script src="config.js?v=1.6.0"></script>
+  <script src="app.js?v=1.6.0" defer></script>
 </head>
 <body data-page="home">
   <section id="appFallback" class="app-fallback" hidden>
@@ -43,7 +43,7 @@
         <div>
           <p class="eyebrow">JO AI CHAT BOT</p>
           <h1 class="home-title">Pick your AI workspace</h1>
-          <p class="hint">v1.5.0 refined: direct tool access, cleaner headers, safer Back navigation, and stronger code generation.</p>
+          <p class="hint">Step 1: Pick a tool below. Step 2: Start chatting right away.</p>
         </div>
         <div class="status-cluster">
           <span id="status" class="chip">Checking studio...</span>
@@ -85,6 +85,12 @@
             <p>Ask for detailed breakdowns, summaries, risks, and practical next steps.</p>
             <span class="tool-link">Open page</span>
           </a>
+          <a class="tool-card" href="gemini.html">
+            <span class="tool-emoji">&#128160;</span>
+            <h3>Gemini Chat</h3>
+            <p>Use Gemini capability through JO AI Chat branding with the same chat flow.</p>
+            <span class="tool-link">Open page</span>
+          </a>
         </div>
 
         <div class="tool-grid secondary-grid">
@@ -113,6 +119,28 @@
             <span class="tool-link">Open page</span>
           </a>
         </div>
+      </section>
+
+      <section class="menu-section">
+        <div class="section-head">
+          <div>
+            <p class="section-kicker">REFERRAL</p>
+            <h2>Step 3: Share your invite link</h2>
+            <p class="hint">Invite friends with your personal link. Self-referral and duplicate claims are blocked.</p>
+          </div>
+        </div>
+        <article id="referralCard" class="card referral-card" hidden>
+          <p class="hint">Your code: <strong id="referralCode">-</strong></p>
+          <p class="hint">Telegram link:</p>
+          <p class="hint"><a id="referralTelegramLink" target="_blank" rel="noopener noreferrer">-</a></p>
+          <p class="hint">Mini App link:</p>
+          <p class="hint"><a id="referralMiniappLink" target="_blank" rel="noopener noreferrer">-</a></p>
+          <div class="actions">
+            <button id="copyReferralCodeBtn" class="btn small" type="button">Copy code</button>
+            <button id="copyReferralLinkBtn" class="btn small" type="button">Copy link</button>
+          </div>
+          <p id="referralStatus" class="hint">Loading referral details...</p>
+        </article>
       </section>
     </section>
   </main>

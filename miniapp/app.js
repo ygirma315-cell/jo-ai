@@ -7,7 +7,10 @@
   const STORAGE_VERSION_KEY = "jo_frontend_version";
   const HOME_ENTRY_STORAGE_KEY = "jo_home_entered";
   const HISTORY_PREFIX = "jo_history_";
-  const FRONTEND_VERSION = "v1.5.1";
+  const REFERRAL_STORAGE_KEY = "jo_referral_code";
+  const REFERRAL_CLAIMED_PREFIX = "jo_referral_claimed_";
+  const CONVERSATION_STORAGE_PREFIX = "jo_conversation_";
+  const FRONTEND_VERSION = "v1.6.0";
   const SITE_BASE_URL = "https://ygirma315-cell.github.io/jo-ai/";
   const MAX_HISTORY_ITEMS = 18;
   const MAX_UPLOAD_BYTES = 8 * 1024 * 1024;
@@ -23,6 +26,15 @@
   ];
 
   const STATIC_RELEASES = [
+    {
+      version: "v1.6.0",
+      title: "Mobile stability + referral + Gemini update",
+      items: [
+        "Added Gemini chat mode in the same JO AI interface with server-side provider routing.",
+        "Referral section now loads your personal invite links and tracks referral claims safely.",
+        "Mini app now sends frontend source, conversation ID, and referral headers for cleaner analytics across admin and backend.",
+      ],
+    },
     {
       version: "v1.5.1",
       title: "Stability and readability hardening",
@@ -101,6 +113,19 @@
       historyTitle: "Conversation",
       emptyTitle: "Ask Joe AI chatbot",
       emptyCopy: "Fast help for ideas, questions, and tasks.",
+    },
+    gemini: {
+      title: "Gemini Chat",
+      description: "Gemini-powered chat routed through JO AI branding and guardrails.",
+      lead: "Ask anything and get Gemini capability in the same JO AI interface.",
+      example: "Give me a concise plan to improve my study schedule this week.",
+      label: "Ask Gemini via JO AI",
+      placeholder: "Ask Gemini via JO AI",
+      rows: 1,
+      maxComposerHeight: 152,
+      historyTitle: "Gemini conversation",
+      emptyTitle: "Ask Gemini via JO AI",
+      emptyCopy: "Gemini responses appear here with JO AI guardrails.",
     },
     code: {
       title: "Code Generator",
@@ -237,6 +262,7 @@
     scrollLockY: 0,
     bodyLockStyles: null,
     runtimeInfo: null,
+    referralCode: "",
   };
 
   const sensitiveTargetsPattern =
@@ -247,7 +273,7 @@
     /\b(ignore|bypass|override|forget|disregard)\b[\s\S]{0,80}\b(instructions|rules|system|developer|policy|guardrails?)\b/i;
   const selfContextPattern =
     /\b(you|your|jo\s+ai|this\s+bot|the\s+bot|the\s+website|the\s+mini\s+app|the\s+backend)\b/i;
-  const providerNamesPattern = /\b(nvidia|openai|anthropic|moonshot|deepseek|render|onrender|llama|flux|kimi)\b/i;
+  const providerNamesPattern = /\b(nvidia|openai|anthropic|moonshot|deepseek|render|onrender|llama|flux|kimi|google|gemini|meta)\b/i;
 
   function byId(id) {
     return document.getElementById(id);
@@ -434,6 +460,13 @@
       updatesClose: byId("updatesClose"),
       comingSoonModal: byId("comingSoonModal"),
       comingSoonClose: byId("comingSoonClose"),
+      referralCard: byId("referralCard"),
+      referralCode: byId("referralCode"),
+      referralTelegramLink: byId("referralTelegramLink"),
+      referralMiniappLink: byId("referralMiniappLink"),
+      referralStatus: byId("referralStatus"),
+      copyReferralCodeBtn: byId("copyReferralCodeBtn"),
+      copyReferralLinkBtn: byId("copyReferralLinkBtn"),
       toast: byId("toast"),
     };
   }
@@ -667,11 +700,11 @@
 
   function buildTrackingPayloadFields() {
     const user = getTelegramWebAppUser();
+    const tracking = { frontend_source: "mini_app" };
     if (!user) {
-      return {};
+      return tracking;
     }
 
-    const tracking = {};
     const rawId = user.id;
     const parsedId = Number.parseInt(String(rawId), 10);
     if (Number.isFinite(parsedId) && parsedId > 0) {
@@ -689,8 +722,67 @@
     return tracking;
   }
 
+  function sanitizeReferralCode(rawValue) {
+    const raw = String(rawValue || "").trim().toLowerCase();
+    if (!raw) {
+      return "";
+    }
+    const normalized = raw.startsWith("ref_") || raw.startsWith("ref-") ? raw.slice(4) : raw;
+    const cleaned = normalized.replace(/[^a-z0-9_-]/g, "");
+    return cleaned.slice(0, 64);
+  }
+
+  function resolveReferralCode() {
+    if (state.referralCode) {
+      return state.referralCode;
+    }
+
+    const fromUrl = sanitizeReferralCode(
+      getQueryParam("ref") ||
+      getQueryParam("referral") ||
+      getQueryParam("referral_code") ||
+      getQueryParam("startapp") ||
+      getQueryParam("start")
+    );
+    const local = getLocalStorage();
+    const stored = sanitizeReferralCode(safeStorageGet(local, REFERRAL_STORAGE_KEY));
+    const selected = fromUrl || stored;
+    if (!selected) {
+      return "";
+    }
+    state.referralCode = selected;
+    safeStorageSet(local, REFERRAL_STORAGE_KEY, selected);
+    return selected;
+  }
+
+  function conversationStorageKey() {
+    const tracking = buildTrackingPayloadFields();
+    const tool = getToolId() || getPage() || "home";
+    const userPart = tracking.telegram_id ? String(tracking.telegram_id) : "anon";
+    return `${CONVERSATION_STORAGE_PREFIX}${tool}_${userPart}`;
+  }
+
+  function resolveConversationId() {
+    const session = getSessionStorage();
+    const key = conversationStorageKey();
+    const existing = safeStorageGet(session, key).trim();
+    if (existing) {
+      return existing;
+    }
+
+    const tool = getToolId() || getPage() || "home";
+    const tracking = buildTrackingPayloadFields();
+    const userPart = tracking.telegram_id ? String(tracking.telegram_id) : "anon";
+    const generated = `${userPart}:${tool}:${Date.now().toString(36)}`;
+    safeStorageSet(session, key, generated);
+    return generated;
+  }
+
   function buildTrackingHeaders() {
     const headers = { "Content-Type": "application/json" };
+    headers["X-Frontend-Source"] = "mini_app";
+    headers["X-Conversation-ID"] = resolveConversationId();
+
     const initData = tg && typeof tg.initData === "string" ? tg.initData.trim() : "";
     if (initData) {
       headers["X-Telegram-Init-Data"] = initData;
@@ -708,6 +800,10 @@
     }
     if (tracking.last_name) {
       headers["X-Telegram-Last-Name"] = tracking.last_name;
+    }
+    const referralCode = resolveReferralCode();
+    if (referralCode) {
+      headers["X-Referral-Code"] = referralCode;
     }
     return headers;
   }
@@ -1293,6 +1389,36 @@
       elements.comingSoonModal.addEventListener("click", (event) => {
         if (event.target === elements.comingSoonModal) {
           closeComingSoonModal();
+        }
+      });
+    }
+    if (elements.copyReferralCodeBtn) {
+      elements.copyReferralCodeBtn.addEventListener("click", async () => {
+        const code = elements.referralCode ? String(elements.referralCode.textContent || "").trim() : "";
+        if (!code || code === "-") {
+          showToast("Referral code is not ready yet.", "error");
+          return;
+        }
+        try {
+          await copyText(code);
+          showToast("Referral code copied.");
+        } catch (error) {
+          showToast(error instanceof Error ? error.message : "Copy failed.", "error");
+        }
+      });
+    }
+    if (elements.copyReferralLinkBtn) {
+      elements.copyReferralLinkBtn.addEventListener("click", async () => {
+        const link = elements.referralMiniappLink ? String(elements.referralMiniappLink.textContent || "").trim() : "";
+        if (!link || link === "-") {
+          showToast("Referral link is not ready yet.", "error");
+          return;
+        }
+        try {
+          await copyText(link);
+          showToast("Referral link copied.");
+        } catch (error) {
+          showToast(error instanceof Error ? error.message : "Copy failed.", "error");
         }
       });
     }
@@ -2194,10 +2320,133 @@
     return state.apiBase;
   }
 
+  function referralClaimStorageKey(tracking) {
+    const userPart = tracking && tracking.telegram_id ? String(tracking.telegram_id) : "anon";
+    return `${REFERRAL_CLAIMED_PREFIX}${userPart}`;
+  }
+
+  function ownReferralCodeForUser(tracking) {
+    if (!tracking || !tracking.telegram_id) {
+      return "";
+    }
+    const numericId = Number.parseInt(String(tracking.telegram_id), 10);
+    if (!Number.isFinite(numericId) || numericId <= 0) {
+      return "";
+    }
+    return `jo${numericId.toString(16)}`;
+  }
+
+  function setReferralStatus(text, isError = false) {
+    if (!elements.referralStatus) {
+      return;
+    }
+    elements.referralStatus.textContent = String(text || "");
+    elements.referralStatus.style.color = isError ? "#b42318" : "";
+  }
+
+  async function claimReferralIfNeeded(apiBase) {
+    const referralCode = resolveReferralCode();
+    if (!apiBase || !referralCode) {
+      return;
+    }
+
+    const tracking = buildTrackingPayloadFields();
+    if (!tracking.telegram_id) {
+      return;
+    }
+
+    const ownCode = sanitizeReferralCode(ownReferralCodeForUser(tracking));
+    if (ownCode && ownCode === sanitizeReferralCode(referralCode)) {
+      return;
+    }
+
+    const local = getLocalStorage();
+    const claimKey = referralClaimStorageKey(tracking);
+    const alreadyClaimed = sanitizeReferralCode(safeStorageGet(local, claimKey));
+    if (alreadyClaimed === sanitizeReferralCode(referralCode)) {
+      return;
+    }
+
+    try {
+      const { response } = await fetchJsonWithTimeout(
+        `${apiBase}/api/referral/claim`,
+        {
+          method: "POST",
+          headers: buildTrackingHeaders(),
+          body: JSON.stringify({
+            ...tracking,
+            frontend_source: "mini_app",
+            referral_code: referralCode,
+          }),
+        },
+        8000
+      );
+      if (response && response.ok) {
+        safeStorageSet(local, claimKey, referralCode);
+      }
+    } catch (_error) {
+      // Non-blocking: do not break page load if referral claim fails.
+    }
+  }
+
+  async function loadReferralCard(apiBase) {
+    if (!elements.referralCard) {
+      return;
+    }
+    elements.referralCard.hidden = false;
+
+    const tracking = buildTrackingPayloadFields();
+    if (!tracking.telegram_id) {
+      setReferralStatus("Open from Telegram to load your personal referral links.");
+      return;
+    }
+
+    if (!apiBase) {
+      setReferralStatus("Referral links are unavailable while the backend is waking up.");
+      return;
+    }
+
+    try {
+      await claimReferralIfNeeded(apiBase);
+      const { response, data } = await fetchJsonWithTimeout(
+        `${apiBase}/api/referral/me`,
+        {
+          method: "GET",
+          headers: buildTrackingHeaders(),
+        },
+        8000
+      );
+      if (!response || !response.ok || !data || data.ok !== true) {
+        throw new Error("Referral API unavailable");
+      }
+
+      const code = sanitizeReferralCode(data.referral_code);
+      state.referralCode = code || state.referralCode;
+      if (code) {
+        safeStorageSet(getLocalStorage(), REFERRAL_STORAGE_KEY, code);
+      }
+
+      if (elements.referralCode) {
+        elements.referralCode.textContent = code || "-";
+      }
+      if (elements.referralTelegramLink) {
+        elements.referralTelegramLink.textContent = data.telegram_link || "-";
+        elements.referralTelegramLink.href = data.telegram_link || "#";
+      }
+      if (elements.referralMiniappLink) {
+        elements.referralMiniappLink.textContent = data.miniapp_link || "-";
+        elements.referralMiniappLink.href = data.miniapp_link || "#";
+      }
+      setReferralStatus("Referral links ready.");
+    } catch (_error) {
+      setReferralStatus("Could not load referral links right now.", true);
+    }
+  }
+
   function endpointAttempts(mode, payload) {
     const basePayload = { ...payload };
     const trackingFields = {};
-    for (const key of ["telegram_id", "username", "first_name", "last_name"]) {
+    for (const key of ["telegram_id", "username", "first_name", "last_name", "frontend_source"]) {
       if (Object.prototype.hasOwnProperty.call(basePayload, key) && basePayload[key] !== undefined) {
         trackingFields[key] = basePayload[key];
       }
@@ -2210,6 +2459,12 @@
           payload: { ...trackingFields, mode: "chat", message: basePayload.message },
         },
         { path: "/api/chat", payload: basePayload },
+      ];
+    }
+    if (mode === "gemini") {
+      return [
+        { path: "/api/gemini", payload: basePayload },
+        { path: "/gemini", payload: basePayload },
       ];
     }
     if (mode === "code") {
@@ -2303,6 +2558,9 @@
   function requestTimeoutMsForMode(mode) {
     if (mode === "image") {
       return 120000;
+    }
+    if (mode === "gemini") {
+      return 90000;
     }
     if (mode === "code" || mode === "research" || mode === "deepseek") {
       return 110000;
@@ -3125,7 +3383,8 @@
       initHomePage();
       markStartupComplete();
       runAfterFirstPaint(async () => {
-        await resolveApiBase();
+        const apiBase = await resolveApiBase();
+        await loadReferralCard(apiBase);
       });
       return;
     }
@@ -3140,7 +3399,8 @@
       initToolPage();
       markStartupComplete();
       runAfterFirstPaint(async () => {
-        await resolveApiBase();
+        const apiBase = await resolveApiBase();
+        await claimReferralIfNeeded(apiBase);
       });
       return;
     }
