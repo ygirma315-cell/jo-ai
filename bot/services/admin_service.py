@@ -4,6 +4,7 @@ from collections import Counter
 from datetime import datetime, timedelta, timezone
 import logging
 from typing import Any
+from urllib.parse import quote
 
 from supabase import Client, create_client
 
@@ -11,7 +12,7 @@ from bot.config import Settings, load_settings
 from bot.services.supabase_client import SupabaseConfig, build_supabase_config
 
 logger = logging.getLogger(__name__)
-IMAGE_MESSAGE_TYPE = "image"
+IMAGE_MESSAGE_TYPES = frozenset({"image", "vision"})
 AUDIO_MESSAGE_TYPES = frozenset({"tts", "voice", "audio"})
 
 
@@ -67,6 +68,18 @@ def _start_of_utc_day(day: datetime | None = None) -> datetime:
     return datetime(current.year, current.month, current.day, tzinfo=timezone.utc)
 
 
+def _media_preview_ref(media_url: Any, storage_path: Any) -> str | None:
+    raw_media_url = str(media_url or "").strip()
+    if raw_media_url:
+        return raw_media_url
+    raw_storage_path = str(storage_path or "").strip()
+    if not raw_storage_path:
+        return None
+    if raw_storage_path.startswith("telegram_file:"):
+        return f"/api/admin/media/proxy?ref={quote(raw_storage_path, safe='')}"
+    return raw_storage_path
+
+
 class SupabaseAdminService:
     def __init__(self, settings: Settings | None = None) -> None:
         self._settings = settings or load_settings()
@@ -106,7 +119,12 @@ class SupabaseAdminService:
         while offset < max_rows:
             response = (
                 client.table(config.users_table)
-                .select("telegram_id,total_messages,total_images")
+                .select(
+                    (
+                        "telegram_id,total_messages,total_images,first_seen_at,last_seen_at,"
+                        "has_started,is_active,is_blocked,status,referred_by,unreachable_count"
+                    )
+                )
                 .order("telegram_id", desc=False)
                 .range(offset, offset + page_size - 1)
                 .execute()
@@ -160,7 +178,11 @@ class SupabaseAdminService:
             return {}
 
         query = client.table(config.users_table).select(
-            "telegram_id,username,first_name,last_name,total_messages,total_images,last_seen_at,first_seen_at"
+            (
+                "telegram_id,username,first_name,last_name,total_messages,total_images,last_seen_at,first_seen_at,"
+                "has_started,started_at,is_active,status,is_blocked,unreachable_count,last_delivery_error,"
+                "referral_code,referred_by,started_via_referral,last_engagement_sent_at,engagement_count"
+            )
         )
         if len(unique_ids) == 1:
             response = query.eq("telegram_id", unique_ids[0]).execute()
@@ -229,7 +251,7 @@ class SupabaseAdminService:
 
             message_type = str(row.get("message_type") or "").strip().lower()
             day_events[key] += 1
-            if message_type == IMAGE_MESSAGE_TYPE:
+            if message_type in IMAGE_MESSAGE_TYPES:
                 day_images[key] += 1
             if message_type in AUDIO_MESSAGE_TYPES:
                 day_audio[key] += 1
@@ -265,15 +287,9 @@ class SupabaseAdminService:
         utc_today = _start_of_utc_day()
         today_iso = utc_today.isoformat()
 
-        total_users_response = (
-            client.table(config.users_table).select("telegram_id", count="exact").limit(1).execute()
-        )
+        total_users_response = client.table(config.users_table).select("telegram_id", count="exact").limit(1).execute()
         active_users_today_response = (
-            client.table(config.users_table)
-            .select("telegram_id", count="exact")
-            .gte("last_seen_at", today_iso)
-            .limit(1)
-            .execute()
+            client.table(config.users_table).select("telegram_id", count="exact").gte("last_seen_at", today_iso).limit(1).execute()
         )
         total_audio_response = (
             client.table(config.history_table)
@@ -284,12 +300,42 @@ class SupabaseAdminService:
         )
 
         totals_rows = self._fetch_all_user_totals()
+        total_users = len(totals_rows)
         total_messages = sum(max(0, _safe_int(item.get("total_messages"))) for item in totals_rows)
         total_images = sum(max(0, _safe_int(item.get("total_images"))) for item in totals_rows)
+        total_started_users = sum(1 for row in totals_rows if bool(row.get("has_started")))
+        active_users = sum(
+            1
+            for row in totals_rows
+            if bool(row.get("is_active", True)) and not bool(row.get("is_blocked"))
+        )
+        blocked_users = sum(
+            1
+            for row in totals_rows
+            if bool(row.get("is_blocked")) or str(row.get("status") or "").strip().lower() in {"blocked", "unreachable"}
+        )
+        today_cutoff = utc_today
+        week_cutoff = utc_today - timedelta(days=6)
+        new_users_today = 0
+        new_users_week = 0
+        referrals_total = 0
+        for row in totals_rows:
+            first_seen = _parse_timestamp(row.get("first_seen_at"))
+            if first_seen and first_seen >= today_cutoff:
+                new_users_today += 1
+            if first_seen and first_seen >= week_cutoff:
+                new_users_week += 1
+            if _safe_int(row.get("referred_by")) > 0:
+                referrals_total += 1
 
         recent_response = (
             client.table(config.history_table)
-            .select("id,telegram_id,message_type,user_message,bot_reply,model_used,success,created_at")
+            .select(
+                (
+                    "id,telegram_id,message_type,user_message,bot_reply,model_used,success,created_at,"
+                    "frontend_source,feature_used,conversation_id,text_content,media_type,media_url"
+                )
+            )
             .order("created_at", desc=True)
             .limit(16)
             .execute()
@@ -309,9 +355,17 @@ class SupabaseAdminService:
                     "first_name": user.get("first_name"),
                     "last_name": user.get("last_name"),
                     "message_type": row.get("message_type"),
+                    "frontend_source": row.get("frontend_source"),
+                    "feature_used": row.get("feature_used") or row.get("message_type"),
+                    "conversation_id": row.get("conversation_id"),
                     "success": bool(row.get("success")),
                     "created_at": row.get("created_at"),
-                    "preview": _truncate_text(row.get("user_message") or row.get("bot_reply"), max_len=130),
+                    "preview": _truncate_text(
+                        row.get("text_content") or row.get("user_message") or row.get("bot_reply"),
+                        max_len=130,
+                    ),
+                    "media_type": row.get("media_type"),
+                    "media_url": row.get("media_url"),
                 }
             )
 
@@ -326,6 +380,13 @@ class SupabaseAdminService:
         return {
             "summary": {
                 "total_users": _response_count(total_users_response),
+                "unique_users": total_users,
+                "total_started_users": total_started_users,
+                "active_users": active_users,
+                "blocked_users": blocked_users,
+                "new_users_today": new_users_today,
+                "new_users_week": new_users_week,
+                "referrals_total": referrals_total,
                 "active_users_today": _response_count(active_users_today_response),
                 "total_messages": total_messages,
                 "total_images": total_images,
@@ -344,6 +405,10 @@ class SupabaseAdminService:
         search: str | None = None,
         message_type: str | None = None,
         scope: str | None = None,
+        date_from: str | None = None,
+        date_to: str | None = None,
+        frontend_source: str | None = None,
+        feature_used: str | None = None,
     ) -> dict[str, Any]:
         client, config = self._ensure_ready()
         page_limit = _clamp(limit, 1, 100)
@@ -351,13 +416,29 @@ class SupabaseAdminService:
         search_term = str(search or "").strip()
         normalized_message_type = str(message_type or "").strip().lower()
         normalized_scope = str(scope or "all").strip().lower()
+        normalized_frontend = str(frontend_source or "").strip().lower()
+        normalized_feature = str(feature_used or "").strip().lower()
+        normalized_date_from = str(date_from or "").strip()
+        normalized_date_to = str(date_to or "").strip()
 
         query = client.table(config.history_table).select(
-            "id,telegram_id,message_type,user_message,bot_reply,model_used,success,created_at",
+            (
+                "id,telegram_id,message_type,user_message,bot_reply,model_used,success,created_at,"
+                "frontend_source,feature_used,conversation_id,text_content,media_type,media_url,"
+                "storage_path,mime_type,media_width,media_height,provider_source,media_origin,media_status,media_error_reason"
+            ),
             count="exact",
         )
         if normalized_message_type and normalized_message_type != "all":
             query = query.eq("message_type", normalized_message_type)
+        if normalized_frontend and normalized_frontend != "all":
+            query = query.eq("frontend_source", normalized_frontend)
+        if normalized_feature and normalized_feature != "all":
+            query = query.eq("feature_used", normalized_feature)
+        if normalized_date_from:
+            query = query.gte("created_at", normalized_date_from)
+        if normalized_date_to:
+            query = query.lte("created_at", normalized_date_to)
         if normalized_scope == "private":
             query = query.gte("telegram_id", 1)
         elif normalized_scope == "group":
@@ -396,11 +477,25 @@ class SupabaseAdminService:
                     "first_name": user.get("first_name"),
                     "last_name": user.get("last_name"),
                     "message_type": row.get("message_type"),
+                    "frontend_source": row.get("frontend_source") or "unknown",
+                    "feature_used": row.get("feature_used") or row.get("message_type"),
+                    "conversation_id": row.get("conversation_id"),
+                    "text_content": row.get("text_content") or row.get("user_message"),
                     "user_message": row.get("user_message"),
                     "bot_reply": row.get("bot_reply"),
                     "model_used": row.get("model_used"),
                     "success": bool(row.get("success")),
                     "created_at": row.get("created_at"),
+                    "media_type": row.get("media_type"),
+                    "media_url": row.get("media_url"),
+                    "storage_path": row.get("storage_path"),
+                    "mime_type": row.get("mime_type"),
+                    "media_width": row.get("media_width"),
+                    "media_height": row.get("media_height"),
+                    "provider_source": row.get("provider_source"),
+                    "media_origin": row.get("media_origin"),
+                    "media_status": row.get("media_status"),
+                    "media_error_reason": row.get("media_error_reason"),
                 }
             )
 
@@ -428,7 +523,11 @@ class SupabaseAdminService:
         search_term = str(search or "").strip()
 
         query = client.table(config.users_table).select(
-            "telegram_id,username,first_name,last_name,first_seen_at,last_seen_at,total_messages,total_images",
+            (
+                "telegram_id,username,first_name,last_name,first_seen_at,last_seen_at,total_messages,total_images,"
+                "has_started,started_at,is_active,status,is_blocked,blocked_at,unreachable_count,last_delivery_error,"
+                "referral_code,referred_by,started_via_referral,last_engagement_sent_at,engagement_count"
+            ),
             count="exact",
         )
         if search_term:
@@ -467,6 +566,18 @@ class SupabaseAdminService:
                     "total_messages": max(0, _safe_int(row.get("total_messages"))),
                     "total_images": max(0, _safe_int(row.get("total_images"))),
                     "is_active": bool(last_seen and last_seen >= active_cutoff),
+                    "has_started": bool(row.get("has_started")),
+                    "started_at": row.get("started_at"),
+                    "status": row.get("status") or ("active" if bool(row.get("is_active", True)) else "inactive"),
+                    "is_blocked": bool(row.get("is_blocked")),
+                    "blocked_at": row.get("blocked_at"),
+                    "unreachable_count": max(0, _safe_int(row.get("unreachable_count"))),
+                    "last_delivery_error": row.get("last_delivery_error"),
+                    "referral_code": row.get("referral_code"),
+                    "referred_by": _safe_int(row.get("referred_by")),
+                    "started_via_referral": row.get("started_via_referral"),
+                    "last_engagement_sent_at": row.get("last_engagement_sent_at"),
+                    "engagement_count": max(0, _safe_int(row.get("engagement_count"))),
                 }
             )
 
@@ -495,9 +606,13 @@ class SupabaseAdminService:
         filtered_user_ids: list[int] | None = None
 
         query = client.table(config.history_table).select(
-            "id,telegram_id,user_message,bot_reply,model_used,success,created_at",
+            (
+                "id,telegram_id,message_type,user_message,bot_reply,model_used,success,created_at,"
+                "frontend_source,feature_used,text_content,media_type,media_url,storage_path,mime_type,"
+                "media_width,media_height,provider_source,media_origin,media_status,media_error_reason"
+            ),
             count="exact",
-        ).eq("message_type", IMAGE_MESSAGE_TYPE)
+        ).in_("message_type", sorted(IMAGE_MESSAGE_TYPES))
         if search_term:
             numeric_id = _safe_int(search_term, default=0)
             if search_term.lstrip("-").isdigit() and numeric_id != 0:
@@ -524,13 +639,13 @@ class SupabaseAdminService:
         successful_query = (
             client.table(config.history_table)
             .select("id", count="exact")
-            .eq("message_type", IMAGE_MESSAGE_TYPE)
+            .in_("message_type", sorted(IMAGE_MESSAGE_TYPES))
             .eq("success", True)
         )
         recent_query = (
             client.table(config.history_table)
             .select("id", count="exact")
-            .eq("message_type", IMAGE_MESSAGE_TYPE)
+            .in_("message_type", sorted(IMAGE_MESSAGE_TYPES))
             .gte("created_at", last_7_days_iso)
         )
         if filtered_user_ids:
@@ -560,6 +675,21 @@ class SupabaseAdminService:
                     "model_used": row.get("model_used"),
                     "success": bool(row.get("success")),
                     "created_at": row.get("created_at"),
+                    "message_type": row.get("message_type"),
+                    "frontend_source": row.get("frontend_source") or "unknown",
+                    "feature_used": row.get("feature_used") or row.get("message_type"),
+                    "text_content": row.get("text_content") or row.get("user_message"),
+                    "media_type": row.get("media_type"),
+                    "media_url": row.get("media_url"),
+                    "storage_path": row.get("storage_path"),
+                    "preview_ref": _media_preview_ref(row.get("media_url"), row.get("storage_path")),
+                    "mime_type": row.get("mime_type"),
+                    "media_width": row.get("media_width"),
+                    "media_height": row.get("media_height"),
+                    "provider_source": row.get("provider_source"),
+                    "media_origin": row.get("media_origin"),
+                    "media_status": row.get("media_status"),
+                    "media_error_reason": row.get("media_error_reason"),
                 }
             )
 
@@ -583,7 +713,7 @@ class SupabaseAdminService:
         start_day = _start_of_utc_day() - timedelta(days=window_days - 1)
         rows = self._fetch_history_since(
             start_day.isoformat(),
-            "telegram_id,message_type,created_at,success,model_used",
+            "telegram_id,message_type,created_at,success,model_used,frontend_source,feature_used",
             max_rows=80000,
         )
         trends = self._build_trends(rows, days=window_days)
@@ -591,6 +721,8 @@ class SupabaseAdminService:
         user_counter: Counter[int] = Counter()
         message_type_counter: Counter[str] = Counter()
         model_counter: Counter[str] = Counter()
+        frontend_counter: Counter[str] = Counter()
+        feature_counter: Counter[str] = Counter()
         for row in rows:
             telegram_id = _safe_int(row.get("telegram_id"))
             if telegram_id != 0:
@@ -600,6 +732,10 @@ class SupabaseAdminService:
             model_used = str(row.get("model_used") or "").strip()
             if model_used:
                 model_counter[model_used] += 1
+            frontend_source = str(row.get("frontend_source") or "unknown").strip().lower() or "unknown"
+            frontend_counter[frontend_source] += 1
+            feature_used = str(row.get("feature_used") or message_type).strip().lower() or message_type
+            feature_counter[feature_used] += 1
 
         top_user_ids = [user_id for user_id, _ in user_counter.most_common(normalized_top_limit)]
         users_map = self._load_users_map(top_user_ids)
@@ -622,7 +758,156 @@ class SupabaseAdminService:
             "window_days": window_days,
             "trends": trends,
             "message_type_breakdown": dict(message_type_counter.most_common()),
+            "frontend_breakdown": dict(frontend_counter.most_common()),
+            "feature_breakdown": dict(feature_counter.most_common()),
             "top_models": [{"model": model, "count": count} for model, count in model_counter.most_common(8)],
             "top_users": top_users,
             "total_events": sum(user_counter.values()),
         }
+
+    def get_referrals(self, *, limit: int = 25, offset: int = 0, search: str | None = None) -> dict[str, Any]:
+        client, _config = self._ensure_ready()
+        page_limit = _clamp(limit, 1, 100)
+        page_offset = max(0, int(offset))
+        search_term = str(search or "").strip()
+
+        try:
+            query = client.table("referrals").select(
+                "id,referral_code,inviter_telegram_id,invitee_telegram_id,frontend_source,created_at",
+                count="exact",
+            )
+            if search_term:
+                numeric = _safe_int(search_term, default=0)
+                if numeric > 0:
+                    query = query.or_(f"inviter_telegram_id.eq.{numeric},invitee_telegram_id.eq.{numeric}")
+                else:
+                    query = query.ilike("referral_code", f"%{search_term.lower()}%")
+            response = query.order("created_at", desc=True).range(page_offset, page_offset + page_limit - 1).execute()
+            rows = _response_rows(response)
+        except Exception:
+            logger.warning("Referral table query failed; returning empty payload.", exc_info=True)
+            return {
+                "summary": {"total_referrals": 0, "unique_inviters": 0, "unique_invitees": 0},
+                "items": [],
+                "total": 0,
+                "limit": page_limit,
+                "offset": page_offset,
+                "has_more": False,
+            }
+
+        all_ids: list[int] = []
+        for row in rows:
+            all_ids.extend(
+                [
+                    _safe_int(row.get("inviter_telegram_id")),
+                    _safe_int(row.get("invitee_telegram_id")),
+                ]
+            )
+        users_map = self._load_users_map(all_ids)
+
+        inviter_ids = {_safe_int(row.get("inviter_telegram_id")) for row in rows if _safe_int(row.get("inviter_telegram_id")) > 0}
+        invitee_ids = {_safe_int(row.get("invitee_telegram_id")) for row in rows if _safe_int(row.get("invitee_telegram_id")) > 0}
+        items: list[dict[str, Any]] = []
+        for row in rows:
+            inviter_id = _safe_int(row.get("inviter_telegram_id"))
+            invitee_id = _safe_int(row.get("invitee_telegram_id"))
+            inviter = users_map.get(inviter_id, {})
+            invitee = users_map.get(invitee_id, {})
+            items.append(
+                {
+                    "id": row.get("id"),
+                    "referral_code": row.get("referral_code"),
+                    "inviter_telegram_id": inviter_id,
+                    "invitee_telegram_id": invitee_id,
+                    "frontend_source": row.get("frontend_source") or "unknown",
+                    "created_at": row.get("created_at"),
+                    "inviter_username": inviter.get("username"),
+                    "inviter_first_name": inviter.get("first_name"),
+                    "invitee_username": invitee.get("username"),
+                    "invitee_first_name": invitee.get("first_name"),
+                }
+            )
+
+        total = _response_count(response)
+        return {
+            "summary": {
+                "total_referrals": total,
+                "unique_inviters": len(inviter_ids),
+                "unique_invitees": len(invitee_ids),
+            },
+            "items": items,
+            "total": total,
+            "limit": page_limit,
+            "offset": page_offset,
+            "has_more": page_offset + len(items) < total,
+        }
+
+    def get_engagement_config(self) -> dict[str, Any]:
+        client, _config = self._ensure_ready()
+        defaults = {
+            "enabled": bool(self._settings.engagement_enabled),
+            "message_template": str(self._settings.engagement_message_template or "").strip(),
+            "inactivity_minutes": int(self._settings.engagement_inactivity_minutes),
+            "cooldown_minutes": int(self._settings.engagement_cooldown_minutes),
+            "batch_size": int(self._settings.engagement_batch_size),
+        }
+        try:
+            response = client.table("admin_config").select("config_key,value_json,updated_at").eq("config_key", "engagement").limit(1).execute()
+            rows = _response_rows(response)
+        except Exception:
+            logger.warning("Engagement config query failed; falling back to defaults.", exc_info=True)
+            return {"config": defaults, "updated_at": None}
+
+        if not rows:
+            return {"config": defaults, "updated_at": None}
+
+        value_json = rows[0].get("value_json")
+        if isinstance(value_json, dict):
+            merged = {
+                "enabled": bool(value_json.get("enabled", defaults["enabled"])),
+                "message_template": str(value_json.get("message_template") or defaults["message_template"])[:400],
+                "inactivity_minutes": _clamp(_safe_int(value_json.get("inactivity_minutes"), defaults["inactivity_minutes"]), 30, 10_080),
+                "cooldown_minutes": _clamp(_safe_int(value_json.get("cooldown_minutes"), defaults["cooldown_minutes"]), 30, 43_200),
+                "batch_size": _clamp(_safe_int(value_json.get("batch_size"), defaults["batch_size"]), 1, 500),
+            }
+        else:
+            merged = defaults
+        return {"config": merged, "updated_at": rows[0].get("updated_at")}
+
+    def update_engagement_config(self, payload: dict[str, Any]) -> dict[str, Any]:
+        client, _config = self._ensure_ready()
+        current = self.get_engagement_config().get("config", {})
+        merged = {
+            "enabled": bool(payload.get("enabled", current.get("enabled", True))),
+            "message_template": str(payload.get("message_template") or current.get("message_template") or self._settings.engagement_message_template)[:400],
+            "inactivity_minutes": _clamp(
+                _safe_int(payload.get("inactivity_minutes"), _safe_int(current.get("inactivity_minutes"), self._settings.engagement_inactivity_minutes)),
+                30,
+                10_080,
+            ),
+            "cooldown_minutes": _clamp(
+                _safe_int(payload.get("cooldown_minutes"), _safe_int(current.get("cooldown_minutes"), self._settings.engagement_cooldown_minutes)),
+                30,
+                43_200,
+            ),
+            "batch_size": _clamp(
+                _safe_int(payload.get("batch_size"), _safe_int(current.get("batch_size"), self._settings.engagement_batch_size)),
+                1,
+                500,
+            ),
+        }
+        if not str(merged["message_template"]).strip():
+            merged["message_template"] = self._settings.engagement_message_template
+
+        response = client.table("admin_config").upsert(
+            {
+                "config_key": "engagement",
+                "value_json": merged,
+                "updated_at": datetime.now(timezone.utc).isoformat(),
+            },
+            on_conflict="config_key",
+            returning="representation",
+        ).execute()
+        rows = _response_rows(response)
+        updated_at = rows[0].get("updated_at") if rows else datetime.now(timezone.utc).isoformat()
+        return {"config": merged, "updated_at": updated_at}

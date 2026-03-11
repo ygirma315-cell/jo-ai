@@ -12,9 +12,12 @@ from bot.services.ai_service import DEFAULT_IMAGE_MODEL
 DEFAULT_CHAT_MODEL = "meta/llama-3.1-8b-instruct"
 DEFAULT_DEEPSEEK_MODEL = "deepseek-ai/deepseek-v3.2"
 DEFAULT_KIMI_MODEL = "moonshotai/kimi-k2.5"
+DEFAULT_GEMINI_MODEL = "gemini-2.0-flash"
 DEFAULT_TTS_FUNCTION_ID = "bc45d9e9-7c78-4d56-9737-e27011962ba8"
 DEFAULT_AI_BASE_URL = "https://integrate.api.nvidia.com/v1"
 DEFAULT_MINIAPP_URL = "https://ygirma315-cell.github.io/jo-ai/"
+DEFAULT_ENGAGEMENT_MESSAGE_TEMPLATE = "What do you want to do with your chat bot today?"
+DEFAULT_HEARTBEAT_TELEGRAM_ID = 7799059248
 _PLACEHOLDER_VALUE_SNIPPETS = (
     "[your-password]",
     "<your-password>",
@@ -45,6 +48,8 @@ class Settings:
     deepseek_model: str
     kimi_api_key: str | None
     kimi_model: str
+    gemini_api_key: str | None
+    gemini_model: str
     tts_api_key: str | None
     tts_function_id: str
     supabase_url: str | None
@@ -61,7 +66,19 @@ class Settings:
     telegram_webhook_secret: str | None
     admin_dashboard_token: str | None
     admin_dashboard_owner_telegram_id: int | None
+    admin_dashboard_allowlist_telegram_ids: tuple[int, ...]
     admin_dashboard_telegram_bot_token: str | None
+    engagement_enabled: bool
+    engagement_message_template: str
+    engagement_inactivity_minutes: int
+    engagement_cooldown_minutes: int
+    engagement_batch_size: int
+    keepalive_self_ping_enabled: bool
+    keepalive_ping_interval_minutes: int
+    keepalive_heartbeat_enabled: bool
+    keepalive_heartbeat_interval_minutes: int
+    keepalive_heartbeat_telegram_id: int | None
+    keepalive_heartbeat_message: str
     allowed_origins: tuple[str, ...]
     request_timeout_seconds: int
     validation_errors: tuple[str, ...]
@@ -237,6 +254,23 @@ def _parse_bool_env(raw_value: str | None, default: bool = False) -> bool:
     return default
 
 
+def _parse_csv_positive_ints(raw_value: str | None) -> tuple[int, ...]:
+    values: list[int] = []
+    for token in str(raw_value or "").split(","):
+        parsed = _parse_positive_int(token)
+        if parsed is not None and parsed not in values:
+            values.append(parsed)
+    return tuple(values)
+
+
+def _parse_bounded_int(raw_value: str | None, *, default: int, minimum: int, maximum: int) -> int:
+    try:
+        parsed = int(str(raw_value or "").strip())
+    except (TypeError, ValueError):
+        parsed = default
+    return max(minimum, min(maximum, parsed))
+
+
 def load_settings() -> Settings:
     root_dir = Path(__file__).resolve().parent.parent
     load_dotenv(dotenv_path=root_dir / ".env")
@@ -267,6 +301,14 @@ def load_settings() -> Settings:
     kimi_api_key = _read_env("KIMI_API_KEY") or (ai_api_key or "")
     kimi_api_key = kimi_api_key or None
     kimi_model = _read_env("KIMI_MODEL") or DEFAULT_KIMI_MODEL
+    gemini_api_key = (
+        _read_env("GEMINI_API_KEY")
+        or _read_env("GOOGLE_AI_STUDIO_API_KEY")
+        or _read_env("GOOGLE_API_KEY")
+        or ""
+    )
+    gemini_api_key = gemini_api_key or None
+    gemini_model = _read_env("GEMINI_MODEL") or DEFAULT_GEMINI_MODEL
     tts_api_key = _read_env("TTS_API_KEY") or _read_env("NVIDIA_TTS_API_KEY") or nvidia_api_key or ai_api_key
     tts_api_key = tts_api_key or None
     tts_function_id = _read_env("TTS_FUNCTION_ID") or DEFAULT_TTS_FUNCTION_ID
@@ -301,7 +343,64 @@ def load_settings() -> Settings:
     telegram_webhook_secret = _read_env("TELEGRAM_WEBHOOK_SECRET") or None
     admin_dashboard_token = _read_env("ADMIN_DASHBOARD_TOKEN") or _read_env("ADMIN_API_TOKEN") or None
     admin_dashboard_owner_telegram_id = _parse_positive_int(_read_env("ADMIN_DASHBOARD_OWNER_TELEGRAM_ID"))
+    admin_dashboard_allowlist_telegram_ids = _parse_csv_positive_ints(
+        _read_env("ADMIN_DASHBOARD_ALLOWLIST_TELEGRAM_IDS")
+        or _read_env("ADMIN_ALLOWLIST_TELEGRAM_IDS")
+    )
+    if admin_dashboard_owner_telegram_id and admin_dashboard_owner_telegram_id not in admin_dashboard_allowlist_telegram_ids:
+        admin_dashboard_allowlist_telegram_ids = (
+            admin_dashboard_owner_telegram_id,
+            *admin_dashboard_allowlist_telegram_ids,
+        )
     admin_dashboard_telegram_bot_token = _read_env("ADMIN_DASHBOARD_TELEGRAM_BOT_TOKEN") or None
+    engagement_enabled = _parse_bool_env(_read_env("ENGAGEMENT_ENABLED"), default=True)
+    engagement_message_template = (
+        _read_env("ENGAGEMENT_MESSAGE_TEMPLATE") or DEFAULT_ENGAGEMENT_MESSAGE_TEMPLATE
+    )[:400]
+    if not engagement_message_template.strip():
+        engagement_message_template = DEFAULT_ENGAGEMENT_MESSAGE_TEMPLATE
+    engagement_inactivity_minutes = _parse_bounded_int(
+        _read_env("ENGAGEMENT_INACTIVITY_MINUTES"),
+        default=240,
+        minimum=30,
+        maximum=10_080,
+    )
+    engagement_cooldown_minutes = _parse_bounded_int(
+        _read_env("ENGAGEMENT_COOLDOWN_MINUTES"),
+        default=720,
+        minimum=30,
+        maximum=43_200,
+    )
+    engagement_batch_size = _parse_bounded_int(
+        _read_env("ENGAGEMENT_BATCH_SIZE"),
+        default=30,
+        minimum=1,
+        maximum=500,
+    )
+    keepalive_self_ping_enabled = _parse_bool_env(_read_env("KEEPALIVE_SELF_PING_ENABLED"), default=True)
+    keepalive_ping_interval_minutes = _parse_bounded_int(
+        _read_env("KEEPALIVE_PING_INTERVAL_MINUTES"),
+        default=5,
+        minimum=1,
+        maximum=120,
+    )
+    keepalive_heartbeat_enabled = _parse_bool_env(_read_env("KEEPALIVE_HEARTBEAT_ENABLED"), default=False)
+    keepalive_heartbeat_interval_minutes = _parse_bounded_int(
+        _read_env("KEEPALIVE_HEARTBEAT_INTERVAL_MINUTES"),
+        default=10,
+        minimum=1,
+        maximum=180,
+    )
+    keepalive_heartbeat_telegram_id = _parse_positive_int(
+        _read_env("KEEPALIVE_HEARTBEAT_TELEGRAM_ID")
+        or _read_env("ADMIN_DASHBOARD_OWNER_TELEGRAM_ID")
+        or str(DEFAULT_HEARTBEAT_TELEGRAM_ID)
+    )
+    keepalive_heartbeat_message = (
+        _read_env("KEEPALIVE_HEARTBEAT_MESSAGE") or "I'm making your bot active automatically."
+    )[:500]
+    if not keepalive_heartbeat_message.strip():
+        keepalive_heartbeat_message = "I'm making your bot active automatically."
     allowed_origins = _parse_allowed_origins(_read_env("ALLOWED_ORIGINS"), public_base_url, miniapp_url)
     request_timeout_seconds = _parse_timeout_seconds(_read_env("REQUEST_TIMEOUT_SECONDS"))
 
@@ -324,6 +423,14 @@ def load_settings() -> Settings:
         validation_warnings.append(
             "ADMIN_DASHBOARD_OWNER_TELEGRAM_ID is missing. Telegram-ID admin login shortcut is disabled."
         )
+    if not admin_dashboard_allowlist_telegram_ids:
+        validation_warnings.append(
+            "ADMIN_DASHBOARD_ALLOWLIST_TELEGRAM_IDS is empty. Telegram admin login is disabled until at least one Telegram ID is allowed."
+        )
+    if keepalive_heartbeat_enabled and not keepalive_heartbeat_telegram_id:
+        validation_warnings.append(
+            "KEEPALIVE_HEARTBEAT_ENABLED is true but KEEPALIVE_HEARTBEAT_TELEGRAM_ID is missing."
+        )
     if miniapp_url_warning:
         validation_warnings.append(miniapp_url_warning)
     if not miniapp_url:
@@ -332,6 +439,8 @@ def load_settings() -> Settings:
         validation_warnings.append("Deep Analysis credentials are missing. Deep Analysis will use default credentials.")
     if not kimi_api_key:
         validation_warnings.append("Vision mode credentials are missing. Vision requests will fail until configured.")
+    if not gemini_api_key:
+        validation_warnings.append("Gemini credentials are missing. Gemini mode will be unavailable until GEMINI_API_KEY is configured.")
     if not tts_api_key:
         validation_warnings.append("Text-to-Speech credentials are missing. TTS will use fallback synthesis.")
     for alias_warning in (
@@ -406,6 +515,8 @@ def load_settings() -> Settings:
         deepseek_model=deepseek_model,
         kimi_api_key=kimi_api_key,
         kimi_model=kimi_model,
+        gemini_api_key=gemini_api_key,
+        gemini_model=gemini_model,
         tts_api_key=tts_api_key,
         tts_function_id=tts_function_id,
         supabase_url=supabase_url,
@@ -422,7 +533,19 @@ def load_settings() -> Settings:
         telegram_webhook_secret=telegram_webhook_secret,
         admin_dashboard_token=admin_dashboard_token,
         admin_dashboard_owner_telegram_id=admin_dashboard_owner_telegram_id,
+        admin_dashboard_allowlist_telegram_ids=admin_dashboard_allowlist_telegram_ids,
         admin_dashboard_telegram_bot_token=admin_dashboard_telegram_bot_token,
+        engagement_enabled=engagement_enabled,
+        engagement_message_template=engagement_message_template,
+        engagement_inactivity_minutes=engagement_inactivity_minutes,
+        engagement_cooldown_minutes=engagement_cooldown_minutes,
+        engagement_batch_size=engagement_batch_size,
+        keepalive_self_ping_enabled=keepalive_self_ping_enabled,
+        keepalive_ping_interval_minutes=keepalive_ping_interval_minutes,
+        keepalive_heartbeat_enabled=keepalive_heartbeat_enabled,
+        keepalive_heartbeat_interval_minutes=keepalive_heartbeat_interval_minutes,
+        keepalive_heartbeat_telegram_id=keepalive_heartbeat_telegram_id,
+        keepalive_heartbeat_message=keepalive_heartbeat_message,
         allowed_origins=allowed_origins,
         request_timeout_seconds=request_timeout_seconds,
         validation_errors=tuple(validation_errors),

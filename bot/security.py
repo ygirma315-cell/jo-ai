@@ -6,6 +6,7 @@ from version import latest_release, public_releases
 
 DEVELOPER_HANDLE = "@grpbuyer3"
 BRANDING_LINE = "Created by JO AI"
+SAFE_IDENTITY_RESPONSE = "I'm JO AI Chat, created by JO AI Chat / @GRPBUYER3."
 SAFE_PUBLIC_SUPPORT_LINE = f"{BRANDING_LINE}. Contact {DEVELOPER_HANDLE} to get the JO API."
 SAFE_INTERNAL_DETAILS_REFUSAL = (
     "I can't share internal backend or API details. "
@@ -86,7 +87,7 @@ _SELF_CONTEXT = re.compile(
 )
 
 _PROVIDER_NAMES = re.compile(
-    r"\b(nvidia|openai|anthropic|moonshot|deepseek|render|onrender|llama|flux|kimi)\b",
+    r"\b(nvidia|openai|anthropic|moonshot|deepseek|render|onrender|llama|flux|kimi|google|gemini|meta|facebook|azure|aws)\b",
     re.IGNORECASE,
 )
 
@@ -94,6 +95,54 @@ _TOKEN_DUMP = re.compile(
     r"\b(print|show|dump|reveal|list)\b[\s\S]{0,40}\b(token|secret|credential|authorization|bearer|header)\b",
     re.IGNORECASE,
 )
+
+_CREATOR_DIRECT_PHRASES = (
+    "who created you",
+    "who s your creator",
+    "who's your creator",
+    "who made you",
+    "who built you",
+    "who is your creator",
+    "who is ur creator",
+    "who is u creator",
+    "whos ur creator",
+    "whos your creator",
+    "who is your developer",
+    "who is ur developer",
+    "who is u developer",
+    "who is your dev",
+    "who is ur dev",
+    "who is u dev",
+    "who owns you",
+    "whose bot are you",
+    "who owns this bot",
+    "who made this bot",
+    "who built this bot",
+    "created by",
+    "made by",
+    "built by",
+    "your creator",
+    "ur creator",
+    "u creator",
+    "your developer",
+    "ur developer",
+    "u developer",
+    "your dev",
+    "ur dev",
+    "u dev",
+    "your owner",
+    "ur owner",
+    "u owner",
+)
+_SELF_TOKENS = ("you", "your", "ur", "u", "bot", "jo ai")
+_CREATOR_TOKENS = ("creator", "develop", "developer", "dev", "owner", "made", "built")
+
+
+def _normalize_guardrail_text(*parts: str | None) -> str:
+    raw_text = "\n".join(str(part or "").strip() for part in parts if part).strip().lower()
+    if not raw_text:
+        return ""
+    return re.sub(r"[^a-z0-9]+", " ", raw_text).strip()
 
 
 def contains_internal_detail_request(*parts: str | None) -> bool:
@@ -112,6 +161,33 @@ def contains_internal_detail_request(*parts: str | None) -> bool:
     if _SELF_CONTEXT.search(text) and (_SENSITIVE_TARGETS.search(text) or _PROVIDER_NAMES.search(text)):
         return True
     return False
+
+
+def is_creator_identity_question(*parts: str | None) -> bool:
+    normalized = _normalize_guardrail_text(*parts)
+    if not normalized:
+        return False
+
+    for phrase in _CREATOR_DIRECT_PHRASES:
+        if phrase in normalized:
+            return True
+
+    has_self_reference = any(token in normalized for token in _SELF_TOKENS)
+    has_creator_term = any(token in normalized for token in _CREATOR_TOKENS)
+    return has_self_reference and has_creator_term
+
+
+def guardrail_response_for_user_query(*parts: str | None) -> str | None:
+    creator_intent = is_creator_identity_question(*parts)
+    internal_intent = contains_internal_detail_request(*parts)
+
+    if creator_intent and internal_intent:
+        return f"{SAFE_IDENTITY_RESPONSE} {SAFE_INTERNAL_DETAILS_REFUSAL}"
+    if creator_intent:
+        return SAFE_IDENTITY_RESPONSE
+    if internal_intent:
+        return SAFE_INTERNAL_DETAILS_REFUSAL
+    return None
 
 
 def build_safe_version_summary(*, bot_version: str, web_version: str | None = None) -> dict[str, object]:

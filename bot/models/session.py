@@ -15,6 +15,7 @@ class Feature(str, Enum):
 class JoAIMode(str, Enum):
     MENU = "menu"
     CHAT = "chat"
+    GEMINI = "gemini"
     CODE = "code"
     RESEARCH = "research"
     DEEP_ANALYSIS = "deep_analysis"
