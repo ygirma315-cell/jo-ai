@@ -1,358 +1,206 @@
-<!doctype html>
+﻿<!doctype html>
 <html lang="en">
 <head>
   <meta charset="utf-8">
-  <meta name="viewport" content="width=device-width, initial-scale=1">
-  <title>JO AI Admin Console</title>
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+  <title>JO AI Admin</title>
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-  <link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Sans:wght@400;500;600&family=Sora:wght@500;600;700&display=swap" rel="stylesheet">
-  <link rel="stylesheet" href="/admin/static/style.css?v=1.0.1">
-  <script src="/admin/static/app.js?v=1.0.1" defer></script>
+  <link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Sans:wght@400;500;600;700&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="/admin/static/style.css?v=2.0.0">
+  <script src="/admin/static/app.js?v=2.0.0" defer></script>
 </head>
 <body>
   <div id="loginOverlay" class="login-overlay">
-    <div class="login-panel">
-      <p class="eyebrow">Secure Access</p>
-      <h1>JO AI Admin Console</h1>
-      <p class="login-note">Enter your admin token to access Supabase-backed operations data.</p>
+    <div class="login-card">
+      <h1>JO AI Admin</h1>
+      <p>Secure access for approved admins only.</p>
       <form id="loginForm" class="login-form">
         <label for="loginToken">Admin token</label>
-        <input id="loginToken" type="password" autocomplete="current-password" placeholder="Paste ADMIN_DASHBOARD_TOKEN">
-        <button id="loginBtn" type="submit" class="btn btn-primary">Unlock dashboard</button>
+        <input id="loginToken" type="password" placeholder="ADMIN_DASHBOARD_TOKEN">
+        <button type="submit" class="btn btn-primary">Sign in with token</button>
       </form>
-      <div class="login-divider"><span>or</span></div>
-      <button id="telegramLoginBtn" type="button" class="btn">Sign in with Telegram ID</button>
-      <p class="login-note small">Works when this page is opened from Telegram mini app context.</p>
-      <p id="loginError" class="error-text" hidden></p>
+      <button id="telegramLoginBtn" type="button" class="btn">Sign in with Telegram</button>
+      <p id="loginError" class="error" hidden></p>
     </div>
   </div>
 
-  <div class="shell" id="appShell">
-    <aside class="sidebar" id="sidebar">
+  <div id="shell" class="shell" hidden>
+    <aside id="sidebar" class="sidebar">
       <div class="brand">
-        <div class="brand-mark">JO</div>
-        <div>
-          <p class="brand-kicker">Ops Portal</p>
-          <h2>Admin Console</h2>
-        </div>
+        <strong>JO AI Admin</strong>
+        <span id="authChip" class="chip">Locked</span>
       </div>
-      <nav class="nav">
-        <button class="nav-link active" data-section="overview">Overview</button>
-        <button class="nav-link" data-section="messages">Messages</button>
-        <button class="nav-link" data-section="users">Users</button>
-        <button class="nav-link" data-section="media">Media</button>
-        <button class="nav-link" data-section="analytics">Analytics</button>
-        <button class="nav-link" data-section="settings">Settings</button>
+      <nav class="nav" id="nav">
+        <button class="nav-btn active" data-section="overview">Overview</button>
+        <button class="nav-btn" data-section="users">Users</button>
+        <button class="nav-btn" data-section="conversations">Conversations</button>
+        <button class="nav-btn" data-section="media">Media</button>
+        <button class="nav-btn" data-section="referrals">Referrals</button>
+        <button class="nav-btn" data-section="engagement">Broadcast / Engagement</button>
+        <button class="nav-btn" data-section="bot-status">Bot Status</button>
+        <button class="nav-btn" data-section="settings">Settings</button>
+        <button class="nav-btn" data-section="logs">Logs / Errors</button>
       </nav>
-      <div class="sidebar-foot">
-        <p id="authStateChip" class="chip">Locked</p>
-      </div>
     </aside>
 
-    <div class="workspace">
+    <main class="workspace">
       <header class="topbar">
-        <div class="topbar-left">
-          <button id="menuToggle" class="icon-btn" type="button" aria-label="Toggle menu">&#9776;</button>
-          <div>
-            <p class="topbar-kicker">Operations</p>
-            <h1 id="pageHeading">Dashboard overview</h1>
-          </div>
-        </div>
-        <div class="topbar-actions">
-          <label for="globalDays" class="inline-label">Range</label>
-          <select id="globalDays">
-            <option value="7">7 days</option>
-            <option value="14" selected>14 days</option>
-            <option value="30">30 days</option>
-            <option value="60">60 days</option>
-          </select>
-          <button id="refreshBtn" type="button" class="btn">Refresh all</button>
-          <button id="logoutBtn" type="button" class="btn btn-danger">Logout</button>
+        <button id="menuToggle" class="btn btn-ghost">Menu</button>
+        <h2 id="pageTitle">Overview</h2>
+        <div class="top-actions">
+          <button id="refreshBtn" class="btn">Refresh</button>
+          <button id="logoutBtn" class="btn btn-danger">Logout</button>
         </div>
       </header>
 
-      <main class="content">
-        <section id="section-overview" class="panel active">
-          <div class="summary-grid">
-            <article class="summary-card">
-              <p class="label">Total users</p>
-              <p class="value" id="summaryTotalUsers">--</p>
-            </article>
-            <article class="summary-card">
-              <p class="label">Active today</p>
-              <p class="value" id="summaryActiveToday">--</p>
-            </article>
-            <article class="summary-card">
-              <p class="label">Total messages</p>
-              <p class="value" id="summaryTotalMessages">--</p>
-            </article>
-            <article class="summary-card">
-              <p class="label">Total images</p>
-              <p class="value" id="summaryTotalImages">--</p>
-            </article>
-            <article class="summary-card">
-              <p class="label">Total audio</p>
-              <p class="value" id="summaryTotalAudio">--</p>
-            </article>
-          </div>
+      <section id="section-overview" class="section active">
+        <div class="card-grid" id="overviewSummary"></div>
+        <article class="card">
+          <h3>Recent Activity</h3>
+          <div id="overviewRecent" class="list"></div>
+        </article>
+      </section>
 
-          <div class="chart-grid">
-            <article class="chart-card">
-              <h3>Message trend</h3>
-              <div id="overviewMessagesChart" class="bar-chart"></div>
-            </article>
-            <article class="chart-card">
-              <h3>Active users trend</h3>
-              <div id="overviewActiveChart" class="bar-chart"></div>
-            </article>
-          </div>
+      <section id="section-users" class="section">
+        <div class="toolbar">
+          <input id="usersSearch" type="search" placeholder="Search username or Telegram ID">
+          <select id="usersActiveWindow">
+            <option value="1">Active in 1 day</option>
+            <option value="7" selected>Active in 7 days</option>
+            <option value="30">Active in 30 days</option>
+          </select>
+          <button id="usersApply" class="btn">Apply</button>
+        </div>
+        <div id="usersList" class="list"></div>
+        <div class="pager">
+          <button id="usersPrev" class="btn">Prev</button>
+          <span id="usersPageInfo"></span>
+          <button id="usersNext" class="btn">Next</button>
+        </div>
+      </section>
 
-          <article class="table-card">
-            <div class="table-head">
-              <h3>Recent activity</h3>
-            </div>
-            <div class="table-wrap">
-              <table>
-                <thead>
-                  <tr>
-                    <th>Time</th>
-                    <th>User</th>
-                    <th>Type</th>
-                    <th>Status</th>
-                    <th>Preview</th>
-                  </tr>
-                </thead>
-                <tbody id="overviewRecentBody"></tbody>
-              </table>
-            </div>
-          </article>
-        </section>
+      <section id="section-conversations" class="section">
+        <div class="toolbar wrap">
+          <input id="convSearch" type="search" placeholder="Search user">
+          <select id="convType">
+            <option value="all">All features</option>
+            <option value="chat">Chat</option>
+            <option value="gemini">Gemini</option>
+            <option value="code">Code</option>
+            <option value="research">Research</option>
+            <option value="prompt">Prompt</option>
+            <option value="image">Image</option>
+            <option value="vision">Vision</option>
+            <option value="tts">TTS</option>
+            <option value="deep_analysis">Deep Analysis</option>
+          </select>
+          <select id="convFrontend">
+            <option value="all">All frontends</option>
+            <option value="telegram_bot">Telegram Bot</option>
+            <option value="website">Website</option>
+            <option value="mini_app">Mini App</option>
+            <option value="api">API</option>
+          </select>
+          <input id="convDateFrom" type="date">
+          <input id="convDateTo" type="date">
+          <button id="convApply" class="btn">Apply</button>
+        </div>
+        <div id="conversationsList" class="list"></div>
+        <div class="pager">
+          <button id="convPrev" class="btn">Prev</button>
+          <span id="convPageInfo"></span>
+          <button id="convNext" class="btn">Next</button>
+        </div>
+      </section>
 
-        <section id="section-messages" class="panel">
-          <div class="filters">
-            <input id="messagesSearch" type="search" placeholder="Search username or telegram_id">
-            <select id="messagesScope">
-              <option value="all">All scopes</option>
-              <option value="private">Private</option>
-              <option value="group">Group</option>
-            </select>
-            <select id="messagesType">
-              <option value="all">All types</option>
-              <option value="chat">Chat</option>
-              <option value="code">Code</option>
-              <option value="research">Research</option>
-              <option value="prompt">Prompt</option>
-              <option value="image">Image</option>
-              <option value="vision">Vision</option>
-              <option value="tts">TTS</option>
-              <option value="deep_analysis">Deep analysis</option>
-            </select>
-            <button id="messagesApply" type="button" class="btn">Apply</button>
-          </div>
-          <p class="hint-text">Click any row to open full details, including bot reply.</p>
-          <article class="table-card">
-            <div class="table-wrap">
-              <table>
-                <thead>
-                  <tr>
-                    <th>Time</th>
-                    <th>User</th>
-                    <th>Type</th>
-                    <th>Scope</th>
-                    <th>Status</th>
-                    <th>User message</th>
-                    <th>Bot reply</th>
-                  </tr>
-                </thead>
-                <tbody id="messagesBody"></tbody>
-              </table>
-            </div>
-            <div class="pager">
-              <button id="messagesPrev" type="button" class="btn">Prev</button>
-              <p id="messagesPageInfo">Page 1</p>
-              <button id="messagesNext" type="button" class="btn">Next</button>
-            </div>
-          </article>
-        </section>
+      <section id="section-media" class="section">
+        <div class="toolbar">
+          <input id="mediaSearch" type="search" placeholder="Search user">
+          <button id="mediaApply" class="btn">Apply</button>
+        </div>
+        <div class="card-grid" id="mediaSummary"></div>
+        <div id="mediaList" class="list"></div>
+        <div class="pager">
+          <button id="mediaPrev" class="btn">Prev</button>
+          <span id="mediaPageInfo"></span>
+          <button id="mediaNext" class="btn">Next</button>
+        </div>
+      </section>
 
-        <section id="section-users" class="panel">
-          <div class="filters">
-            <input id="usersSearch" type="search" placeholder="Search username or telegram_id">
-            <select id="usersActiveWindow">
-              <option value="1">Active within 1 day</option>
-              <option value="7" selected>Active within 7 days</option>
-              <option value="30">Active within 30 days</option>
-            </select>
-            <button id="usersApply" type="button" class="btn">Apply</button>
-          </div>
-          <article class="table-card">
-            <div class="table-wrap">
-              <table>
-                <thead>
-                  <tr>
-                    <th>User</th>
-                    <th>Scope</th>
-                    <th>First seen</th>
-                    <th>Last seen</th>
-                    <th>Total messages</th>
-                    <th>Total images</th>
-                    <th>Active</th>
-                  </tr>
-                </thead>
-                <tbody id="usersBody"></tbody>
-              </table>
-            </div>
-            <div class="pager">
-              <button id="usersPrev" type="button" class="btn">Prev</button>
-              <p id="usersPageInfo">Page 1</p>
-              <button id="usersNext" type="button" class="btn">Next</button>
-            </div>
-          </article>
-        </section>
+      <section id="section-referrals" class="section">
+        <div class="toolbar">
+          <input id="refSearch" type="search" placeholder="Search code or user ID">
+          <button id="refApply" class="btn">Apply</button>
+        </div>
+        <div class="card-grid" id="refSummary"></div>
+        <div id="refList" class="list"></div>
+        <div class="pager">
+          <button id="refPrev" class="btn">Prev</button>
+          <span id="refPageInfo"></span>
+          <button id="refNext" class="btn">Next</button>
+        </div>
+      </section>
 
-        <section id="section-media" class="panel">
-          <div class="summary-grid compact">
-            <article class="summary-card">
-              <p class="label">Images total</p>
-              <p class="value" id="mediaTotalImages">--</p>
-            </article>
-            <article class="summary-card">
-              <p class="label">Successful</p>
-              <p class="value" id="mediaSuccessfulImages">--</p>
-            </article>
-            <article class="summary-card">
-              <p class="label">Last 7 days</p>
-              <p class="value" id="mediaLast7Days">--</p>
-            </article>
+      <section id="section-engagement" class="section">
+        <article class="card">
+          <h3>Re-engagement Settings</h3>
+          <div class="form-grid">
+            <label><input id="engEnabled" type="checkbox"> Enable engagement</label>
+            <label>Inactivity minutes <input id="engInactivity" type="number" min="30" max="10080"></label>
+            <label>Cooldown minutes <input id="engCooldown" type="number" min="30" max="43200"></label>
+            <label>Batch size <input id="engBatch" type="number" min="1" max="500"></label>
           </div>
-          <div class="filters">
-            <input id="mediaSearch" type="search" placeholder="Search username or telegram_id">
-            <button id="mediaApply" type="button" class="btn">Apply</button>
+          <label>Message template</label>
+          <textarea id="engMessage" rows="4"></textarea>
+          <div class="toolbar">
+            <button id="engSave" class="btn btn-primary">Save settings</button>
+            <span id="engUpdated" class="muted"></span>
           </div>
-          <article class="table-card">
-            <div class="table-wrap">
-              <table>
-                <thead>
-                  <tr>
-                    <th>Time</th>
-                    <th>User</th>
-                    <th>Status</th>
-                    <th>Prompt</th>
-                    <th>Model</th>
-                  </tr>
-                </thead>
-                <tbody id="mediaBody"></tbody>
-              </table>
-            </div>
-            <div class="pager">
-              <button id="mediaPrev" type="button" class="btn">Prev</button>
-              <p id="mediaPageInfo">Page 1</p>
-              <button id="mediaNext" type="button" class="btn">Next</button>
-            </div>
-          </article>
-        </section>
+        </article>
+      </section>
 
-        <section id="section-analytics" class="panel">
-          <div class="filters">
-            <select id="analyticsDays">
-              <option value="7">7 days</option>
-              <option value="14">14 days</option>
-              <option value="30" selected>30 days</option>
-              <option value="60">60 days</option>
-              <option value="90">90 days</option>
-            </select>
-            <button id="analyticsApply" type="button" class="btn">Refresh analytics</button>
+      <section id="section-bot-status" class="section">
+        <article class="card">
+          <div class="toolbar">
+            <h3>Runtime Status</h3>
+            <button id="botStatusRefresh" class="btn">Refresh</button>
           </div>
-          <div class="analytics-nav">
-            <a href="#analyticsTopUsersCard" class="chip-link">Jump to top users</a>
-            <a href="#analyticsBreakdownCard" class="chip-link">Jump to breakdown</a>
-          </div>
-          <div class="chart-grid">
-            <article class="chart-card">
-              <h3>Messages over time</h3>
-              <div id="analyticsMessagesChart" class="bar-chart"></div>
-            </article>
-            <article class="chart-card">
-              <h3>Active users over time</h3>
-              <div id="analyticsUsersChart" class="bar-chart"></div>
-            </article>
-            <article class="chart-card">
-              <h3>Images over time</h3>
-              <div id="analyticsImagesChart" class="bar-chart"></div>
-            </article>
-          </div>
+          <div id="botStatusGrid" class="card-grid"></div>
+          <div id="botWarnings" class="list"></div>
+        </article>
+      </section>
 
-          <div class="split-grid">
-            <article id="analyticsTopUsersCard" class="table-card">
-              <div class="table-head">
-                <h3>Top users</h3>
-              </div>
-              <div class="table-wrap">
-                <table>
-                  <thead>
-                    <tr>
-                      <th>User</th>
-                      <th>Events</th>
-                      <th>Total messages</th>
-                      <th>Total images</th>
-                    </tr>
-                  </thead>
-                  <tbody id="analyticsTopUsersBody"></tbody>
-                </table>
-              </div>
-            </article>
-            <article id="analyticsBreakdownCard" class="table-card">
-              <div class="table-head">
-                <h3>Type breakdown</h3>
-              </div>
-              <ul id="analyticsTypeBreakdown" class="metric-list"></ul>
-              <h3>Top models</h3>
-              <ul id="analyticsTopModels" class="metric-list"></ul>
-            </article>
+      <section id="section-settings" class="section">
+        <article class="card">
+          <h3>Admin Settings</h3>
+          <p id="statusInfo" class="muted">Loading...</p>
+          <div class="toolbar">
+            <input id="settingsToken" type="password" placeholder="Admin token (session only)">
+            <button id="settingsTokenSave" class="btn">Save session token</button>
+            <button id="settingsTokenTest" class="btn">Test token</button>
           </div>
-        </section>
+          <button id="settingsLogout" class="btn btn-danger">Logout session</button>
+        </article>
+      </section>
 
-        <section id="section-settings" class="panel">
-          <article class="table-card">
-            <h3>Admin access</h3>
-            <p id="settingsStatus" class="hint-text">Checking status...</p>
-            <div class="filters single-row">
-              <input id="settingsTokenInput" type="password" placeholder="Update admin token">
-              <button id="settingsTokenSave" type="button" class="btn">Save token</button>
-              <button id="settingsTokenTest" type="button" class="btn">Test token</button>
-            </div>
-            <button id="settingsLogout" type="button" class="btn btn-danger">Logout this session</button>
-          </article>
-        </section>
-      </main>
-    </div>
+      <section id="section-logs" class="section">
+        <div class="toolbar wrap">
+          <select id="logsLevel">
+            <option value="">All levels</option>
+            <option value="ERROR">ERROR</option>
+            <option value="WARNING">WARNING</option>
+            <option value="INFO">INFO</option>
+          </select>
+          <input id="logsSearch" type="search" placeholder="Search logs">
+          <input id="logsLimit" type="number" min="20" max="1000" value="200">
+          <button id="logsApply" class="btn">Load logs</button>
+        </div>
+        <pre id="logsOutput" class="logs-box"></pre>
+      </section>
+    </main>
   </div>
 
   <div id="toast" class="toast" hidden></div>
-  <div id="messageDetailModal" class="detail-modal" hidden>
-    <div class="detail-panel">
-      <div class="detail-head">
-        <h3>Message detail</h3>
-        <button id="messageDetailClose" type="button" class="btn">Close</button>
-      </div>
-      <div class="detail-grid">
-        <p><strong>Time:</strong> <span id="detailCreatedAt">-</span></p>
-        <p><strong>User:</strong> <span id="detailUser">-</span></p>
-        <p><strong>Type:</strong> <span id="detailMessageType">-</span></p>
-        <p><strong>Scope:</strong> <span id="detailScope">-</span></p>
-        <p><strong>Status:</strong> <span id="detailStatus">-</span></p>
-        <p><strong>Model:</strong> <span id="detailModel">-</span></p>
-      </div>
-      <div class="detail-block">
-        <h4>User message</h4>
-        <pre id="detailUserMessage">-</pre>
-      </div>
-      <div class="detail-block">
-        <h4>Bot reply</h4>
-        <pre id="detailBotReply">-</pre>
-      </div>
-    </div>
-  </div>
 </body>
 </html>
