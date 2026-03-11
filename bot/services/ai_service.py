@@ -12,7 +12,11 @@ from typing import Any, Literal
 import aiohttp
 import edge_tts
 
-from bot.security import SAFE_INTERNAL_DETAILS_REFUSAL, SAFE_SERVICE_UNAVAILABLE_MESSAGE, contains_internal_detail_request
+from bot.security import (
+    SAFE_INTERNAL_DETAILS_REFUSAL,
+    SAFE_SERVICE_UNAVAILABLE_MESSAGE,
+    guardrail_response_for_user_query,
+)
 
 
 class AIServiceError(RuntimeError):
@@ -22,9 +26,11 @@ class AIServiceError(RuntimeError):
 NVIDIA_BASE_URL = "https://integrate.api.nvidia.com/v1"
 NVIDIA_IMAGE_BASE_URL = "https://ai.api.nvidia.com/v1"
 NVIDIA_TTS_BASE_URL = "https://api.ngc.nvidia.com"
+GEMINI_BASE_URL = "https://generativelanguage.googleapis.com/v1beta"
 DEFAULT_CHAT_MODEL = "meta/llama-3.1-8b-instruct"
 FALLBACK_CHAT_MODEL = "meta/llama-3.1-8b-instruct"
 DEFAULT_IMAGE_MODEL = "black-forest-labs/flux.1-dev"
+DEFAULT_GEMINI_MODEL = "gemini-2.0-flash"
 DEFAULT_TTS_FUNCTION_ID = "bc45d9e9-7c78-4d56-9737-e27011962ba8"
 DEFAULT_RETRY_COUNT = 1
 DEFAULT_RETRY_BACKOFF_SECONDS = 0.6
@@ -82,8 +88,9 @@ class ChatService:
         api_key_override: str | None = None,
         thinking: bool = False,
     ) -> str:
-        if contains_internal_detail_request(user_message):
-            return SAFE_INTERNAL_DETAILS_REFUSAL
+        guardrail_response = guardrail_response_for_user_query(user_message)
+        if guardrail_response:
+            return guardrail_response
 
         effective_api_key = (api_key_override or self.api_key or "").strip() or None
         if not effective_api_key:
@@ -140,8 +147,9 @@ class ChatService:
         api_key_override: str | None = None,
         thinking: bool = False,
     ) -> str:
-        if contains_internal_detail_request(user_message):
-            return SAFE_INTERNAL_DETAILS_REFUSAL
+        guardrail_response = guardrail_response_for_user_query(user_message)
+        if guardrail_response:
+            return guardrail_response
 
         effective_api_key = (api_key_override or self.api_key or "").strip() or None
         if not effective_api_key:
@@ -197,6 +205,74 @@ class ChatService:
 
 
 @dataclass
+class GeminiChatService:
+    api_key: str | None = None
+    model: str = DEFAULT_GEMINI_MODEL
+    base_url: str = GEMINI_BASE_URL
+
+    async def generate_reply(self, user_message: str) -> str:
+        guardrail_response = guardrail_response_for_user_query(user_message)
+        if guardrail_response:
+            return guardrail_response
+
+        effective_api_key = (self.api_key or "").strip()
+        if not effective_api_key:
+            raise AIServiceError(SAFE_SERVICE_UNAVAILABLE_MESSAGE)
+
+        selected_model = (self.model or DEFAULT_GEMINI_MODEL).strip()
+        request_url = (
+            f"{self.base_url.rstrip('/')}/models/{selected_model}:generateContent"
+            f"?key={effective_api_key}"
+        )
+        payload = {
+            "contents": [
+                {
+                    "role": "user",
+                    "parts": [{"text": _enhance_user_prompt("chat", user_message)}],
+                }
+            ],
+            "generationConfig": {
+                "temperature": 0.6,
+                "topP": 0.95,
+                "maxOutputTokens": 3072,
+            },
+        }
+        timeout = aiohttp.ClientTimeout(total=45)
+        headers = {"Content-Type": "application/json"}
+
+        last_error: str = SAFE_SERVICE_UNAVAILABLE_MESSAGE
+        for attempt in range(DEFAULT_RETRY_COUNT + 1):
+            try:
+                async with aiohttp.ClientSession(timeout=timeout) as session:
+                    async with session.post(request_url, headers=headers, json=payload) as response:
+                        body_text = await response.text()
+                if response.status >= 400:
+                    last_error = _extract_api_error(body_text)
+                    if attempt < DEFAULT_RETRY_COUNT and response.status in RETRYABLE_HTTP_STATUSES:
+                        await asyncio.sleep(DEFAULT_RETRY_BACKOFF_SECONDS * (attempt + 1))
+                        continue
+                    raise AIServiceError(SAFE_SERVICE_UNAVAILABLE_MESSAGE)
+                parsed = _safe_json(body_text)
+                extracted = _extract_gemini_text(parsed)
+                if extracted:
+                    return extracted
+                last_error = "Gemini response was empty."
+            except AIServiceError:
+                raise
+            except (aiohttp.ClientError, asyncio.TimeoutError) as exc:
+                last_error = str(exc) or SAFE_SERVICE_UNAVAILABLE_MESSAGE
+                if attempt < DEFAULT_RETRY_COUNT:
+                    await asyncio.sleep(DEFAULT_RETRY_BACKOFF_SECONDS * (attempt + 1))
+                    continue
+            except Exception as exc:
+                last_error = str(exc) or SAFE_SERVICE_UNAVAILABLE_MESSAGE
+                break
+
+        logger.warning("Gemini generation failed: %s", last_error)
+        raise AIServiceError(SAFE_SERVICE_UNAVAILABLE_MESSAGE)
+
+
+@dataclass
 class ImageGenerationService:
     api_key: str | None = None
     model: str = DEFAULT_IMAGE_MODEL
@@ -208,8 +284,9 @@ class ImageGenerationService:
         size: str = "1024x1024",
         ratio: Literal["1:1", "16:9", "9:16"] = "1:1",
     ) -> "GeneratedImageResult":
-        if contains_internal_detail_request(prompt):
-            raise AIServiceError(SAFE_INTERNAL_DETAILS_REFUSAL)
+        guardrail_response = guardrail_response_for_user_query(prompt)
+        if guardrail_response:
+            raise AIServiceError(guardrail_response)
         if not self.api_key:
             raise AIServiceError(SAFE_SERVICE_UNAVAILABLE_MESSAGE)
 
@@ -341,8 +418,9 @@ class TextToSpeechService:
         voice: str = "female",
         emotion: str = "neutral",
     ) -> GeneratedAudioResult:
-        if contains_internal_detail_request(text):
-            raise AIServiceError(SAFE_INTERNAL_DETAILS_REFUSAL)
+        guardrail_response = guardrail_response_for_user_query(text)
+        if guardrail_response:
+            raise AIServiceError(guardrail_response)
 
         normalized_text = (text or "").strip()
         if not normalized_text:
@@ -595,6 +673,43 @@ def _extract_api_error(raw_text: str) -> str:
         if isinstance(detail, str) and detail.strip():
             return detail.strip()
     return raw_text[:300] or "Unknown error."
+
+
+def _safe_json(raw_text: str) -> dict[str, object]:
+    try:
+        parsed = json.loads(raw_text)
+    except json.JSONDecodeError:
+        return {}
+    if isinstance(parsed, dict):
+        return parsed
+    return {}
+
+
+def _extract_gemini_text(payload: dict[str, object]) -> str:
+    if not isinstance(payload, dict):
+        return ""
+    candidates = payload.get("candidates")
+    if not isinstance(candidates, list):
+        return ""
+
+    parts_text: list[str] = []
+    for candidate in candidates:
+        if not isinstance(candidate, dict):
+            continue
+        content = candidate.get("content")
+        if not isinstance(content, dict):
+            continue
+        parts = content.get("parts")
+        if not isinstance(parts, list):
+            continue
+        for part in parts:
+            if isinstance(part, dict):
+                text = part.get("text")
+                if isinstance(text, str) and text.strip():
+                    parts_text.append(text.strip())
+        if parts_text:
+            break
+    return "\n".join(parts_text).strip()
 
 
 def _extract_image_data(data: dict[str, object]) -> tuple[str | None, str | None]:

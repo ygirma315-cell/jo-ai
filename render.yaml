@@ -20,6 +20,8 @@ services:
         value: deepseek-ai/deepseek-v3.2
       - key: KIMI_MODEL
         value: moonshotai/kimi-k2.5
+      - key: GEMINI_MODEL
+        value: gemini-2.0-flash
       - key: TTS_FUNCTION_ID
         value: bc45d9e9-7c78-4d56-9737-e27011962ba8
       # Manual check: keep this aligned with the final GitHub Pages URL for ygirma315-cell/jo-ai.
@@ -31,6 +33,8 @@ services:
         sync: false
       - key: SUPABASE_ANON_KEY
         sync: false
+      - key: SUPABASE_ALLOW_ANON_FALLBACK
+        value: "false"
       - key: SUPABASE_DB_URL
         sync: false
       - key: SUPABASE_USERS_TABLE
@@ -47,9 +51,41 @@ services:
         sync: false
       - key: KIMI_API_KEY
         sync: false
+      - key: GEMINI_API_KEY
+        sync: false
       - key: TTS_API_KEY
         sync: false
       - key: PUBLIC_BASE_URL
         sync: false
       - key: TELEGRAM_WEBHOOK_SECRET
         generateValue: true
+      - key: ADMIN_DASHBOARD_TOKEN
+        sync: false
+      - key: ADMIN_DASHBOARD_OWNER_TELEGRAM_ID
+        value: "7799059248"
+      - key: ADMIN_DASHBOARD_ALLOWLIST_TELEGRAM_IDS
+        value: "7799059248"
+      - key: ADMIN_DASHBOARD_TELEGRAM_BOT_TOKEN
+        sync: false
+      - key: ENGAGEMENT_ENABLED
+        value: "true"
+      - key: ENGAGEMENT_MESSAGE_TEMPLATE
+        value: What do you want to do with your chat bot today?
+      - key: ENGAGEMENT_INACTIVITY_MINUTES
+        value: "240"
+      - key: ENGAGEMENT_COOLDOWN_MINUTES
+        value: "720"
+      - key: ENGAGEMENT_BATCH_SIZE
+        value: "30"
+      - key: KEEPALIVE_SELF_PING_ENABLED
+        value: "true"
+      - key: KEEPALIVE_PING_INTERVAL_MINUTES
+        value: "5"
+      - key: KEEPALIVE_HEARTBEAT_ENABLED
+        value: "false"
+      - key: KEEPALIVE_HEARTBEAT_INTERVAL_MINUTES
+        value: "10"
+      - key: KEEPALIVE_HEARTBEAT_TELEGRAM_ID
+        value: "7799059248"
+      - key: KEEPALIVE_HEARTBEAT_MESSAGE
+        value: I'm making your bot active automatically.

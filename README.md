@@ -72,6 +72,7 @@ Local URLs:
 - Backend/API: `http://127.0.0.1:8000`
 - Mini app: `http://127.0.0.1:5500`
 - Health: `http://127.0.0.1:8000/api/health`
+- Admin dashboard: `http://127.0.0.1:8000/admin`
 
 For local mini app testing, either:
 
@@ -114,6 +115,7 @@ Optional:
 - `SUPABASE_URL`
 - `SUPABASE_SERVICE_ROLE_KEY` (recommended for backend tracking writes)
 - `SUPABASE_ANON_KEY` (fallback only; can be blocked by RLS)
+- `SUPABASE_ALLOW_ANON_FALLBACK` (default `false`; keep disabled in production)
 - `SUPABASE_DB_URL` (recommended; direct Postgres tracking backend)
 - `SUPABASE_USERS_TABLE` (default: `users`)
 - `SUPABASE_HISTORY_TABLE` (default: `history`)
@@ -123,6 +125,9 @@ Optional:
 - `ALLOWED_ORIGINS`
 - `TELEGRAM_WEBHOOK_URL`
 - `TELEGRAM_WEBHOOK_SECRET`
+- `ADMIN_DASHBOARD_TOKEN` (required to unlock `/admin` and `/api/admin/*`)
+- `ADMIN_DASHBOARD_OWNER_TELEGRAM_ID` (optional Telegram mini app one-tap admin login)
+- `ADMIN_DASHBOARD_TELEGRAM_BOT_TOKEN` (optional; use when admin mini app login comes from a different bot token)
 
 Defaults:
 

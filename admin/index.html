@@ -1,0 +1,206 @@
+﻿<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+  <title>JO AI Admin</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Sans:wght@400;500;600;700&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="/admin/static/style.css?v=2.0.0">
+  <script src="/admin/static/app.js?v=2.0.0" defer></script>
+</head>
+<body>
+  <div id="loginOverlay" class="login-overlay">
+    <div class="login-card">
+      <h1>JO AI Admin</h1>
+      <p>Secure access for approved admins only.</p>
+      <form id="loginForm" class="login-form">
+        <label for="loginToken">Admin token</label>
+        <input id="loginToken" type="password" placeholder="ADMIN_DASHBOARD_TOKEN">
+        <button type="submit" class="btn btn-primary">Sign in with token</button>
+      </form>
+      <button id="telegramLoginBtn" type="button" class="btn">Sign in with Telegram</button>
+      <p id="loginError" class="error" hidden></p>
+    </div>
+  </div>
+
+  <div id="shell" class="shell" hidden>
+    <aside id="sidebar" class="sidebar">
+      <div class="brand">
+        <strong>JO AI Admin</strong>
+        <span id="authChip" class="chip">Locked</span>
+      </div>
+      <nav class="nav" id="nav">
+        <button class="nav-btn active" data-section="overview">Overview</button>
+        <button class="nav-btn" data-section="users">Users</button>
+        <button class="nav-btn" data-section="conversations">Conversations</button>
+        <button class="nav-btn" data-section="media">Media</button>
+        <button class="nav-btn" data-section="referrals">Referrals</button>
+        <button class="nav-btn" data-section="engagement">Broadcast / Engagement</button>
+        <button class="nav-btn" data-section="bot-status">Bot Status</button>
+        <button class="nav-btn" data-section="settings">Settings</button>
+        <button class="nav-btn" data-section="logs">Logs / Errors</button>
+      </nav>
+    </aside>
+
+    <main class="workspace">
+      <header class="topbar">
+        <button id="menuToggle" class="btn btn-ghost">Menu</button>
+        <h2 id="pageTitle">Overview</h2>
+        <div class="top-actions">
+          <button id="refreshBtn" class="btn">Refresh</button>
+          <button id="logoutBtn" class="btn btn-danger">Logout</button>
+        </div>
+      </header>
+
+      <section id="section-overview" class="section active">
+        <div class="card-grid" id="overviewSummary"></div>
+        <article class="card">
+          <h3>Recent Activity</h3>
+          <div id="overviewRecent" class="list"></div>
+        </article>
+      </section>
+
+      <section id="section-users" class="section">
+        <div class="toolbar">
+          <input id="usersSearch" type="search" placeholder="Search username or Telegram ID">
+          <select id="usersActiveWindow">
+            <option value="1">Active in 1 day</option>
+            <option value="7" selected>Active in 7 days</option>
+            <option value="30">Active in 30 days</option>
+          </select>
+          <button id="usersApply" class="btn">Apply</button>
+        </div>
+        <div id="usersList" class="list"></div>
+        <div class="pager">
+          <button id="usersPrev" class="btn">Prev</button>
+          <span id="usersPageInfo"></span>
+          <button id="usersNext" class="btn">Next</button>
+        </div>
+      </section>
+
+      <section id="section-conversations" class="section">
+        <div class="toolbar wrap">
+          <input id="convSearch" type="search" placeholder="Search user">
+          <select id="convType">
+            <option value="all">All features</option>
+            <option value="chat">Chat</option>
+            <option value="gemini">Gemini</option>
+            <option value="code">Code</option>
+            <option value="research">Research</option>
+            <option value="prompt">Prompt</option>
+            <option value="image">Image</option>
+            <option value="vision">Vision</option>
+            <option value="tts">TTS</option>
+            <option value="deep_analysis">Deep Analysis</option>
+          </select>
+          <select id="convFrontend">
+            <option value="all">All frontends</option>
+            <option value="telegram_bot">Telegram Bot</option>
+            <option value="website">Website</option>
+            <option value="mini_app">Mini App</option>
+            <option value="api">API</option>
+          </select>
+          <input id="convDateFrom" type="date">
+          <input id="convDateTo" type="date">
+          <button id="convApply" class="btn">Apply</button>
+        </div>
+        <div id="conversationsList" class="list"></div>
+        <div class="pager">
+          <button id="convPrev" class="btn">Prev</button>
+          <span id="convPageInfo"></span>
+          <button id="convNext" class="btn">Next</button>
+        </div>
+      </section>
+
+      <section id="section-media" class="section">
+        <div class="toolbar">
+          <input id="mediaSearch" type="search" placeholder="Search user">
+          <button id="mediaApply" class="btn">Apply</button>
+        </div>
+        <div class="card-grid" id="mediaSummary"></div>
+        <div id="mediaList" class="list"></div>
+        <div class="pager">
+          <button id="mediaPrev" class="btn">Prev</button>
+          <span id="mediaPageInfo"></span>
+          <button id="mediaNext" class="btn">Next</button>
+        </div>
+      </section>
+
+      <section id="section-referrals" class="section">
+        <div class="toolbar">
+          <input id="refSearch" type="search" placeholder="Search code or user ID">
+          <button id="refApply" class="btn">Apply</button>
+        </div>
+        <div class="card-grid" id="refSummary"></div>
+        <div id="refList" class="list"></div>
+        <div class="pager">
+          <button id="refPrev" class="btn">Prev</button>
+          <span id="refPageInfo"></span>
+          <button id="refNext" class="btn">Next</button>
+        </div>
+      </section>
+
+      <section id="section-engagement" class="section">
+        <article class="card">
+          <h3>Re-engagement Settings</h3>
+          <div class="form-grid">
+            <label><input id="engEnabled" type="checkbox"> Enable engagement</label>
+            <label>Inactivity minutes <input id="engInactivity" type="number" min="30" max="10080"></label>
+            <label>Cooldown minutes <input id="engCooldown" type="number" min="30" max="43200"></label>
+            <label>Batch size <input id="engBatch" type="number" min="1" max="500"></label>
+          </div>
+          <label>Message template</label>
+          <textarea id="engMessage" rows="4"></textarea>
+          <div class="toolbar">
+            <button id="engSave" class="btn btn-primary">Save settings</button>
+            <span id="engUpdated" class="muted"></span>
+          </div>
+        </article>
+      </section>
+
+      <section id="section-bot-status" class="section">
+        <article class="card">
+          <div class="toolbar">
+            <h3>Runtime Status</h3>
+            <button id="botStatusRefresh" class="btn">Refresh</button>
+          </div>
+          <div id="botStatusGrid" class="card-grid"></div>
+          <div id="botWarnings" class="list"></div>
+        </article>
+      </section>
+
+      <section id="section-settings" class="section">
+        <article class="card">
+          <h3>Admin Settings</h3>
+          <p id="statusInfo" class="muted">Loading...</p>
+          <div class="toolbar">
+            <input id="settingsToken" type="password" placeholder="Admin token (session only)">
+            <button id="settingsTokenSave" class="btn">Save session token</button>
+            <button id="settingsTokenTest" class="btn">Test token</button>
+          </div>
+          <button id="settingsLogout" class="btn btn-danger">Logout session</button>
+        </article>
+      </section>
+
+      <section id="section-logs" class="section">
+        <div class="toolbar wrap">
+          <select id="logsLevel">
+            <option value="">All levels</option>
+            <option value="ERROR">ERROR</option>
+            <option value="WARNING">WARNING</option>
+            <option value="INFO">INFO</option>
+          </select>
+          <input id="logsSearch" type="search" placeholder="Search logs">
+          <input id="logsLimit" type="number" min="20" max="1000" value="200">
+          <button id="logsApply" class="btn">Load logs</button>
+        </div>
+        <pre id="logsOutput" class="logs-box"></pre>
+      </section>
+    </main>
+  </div>
+
+  <div id="toast" class="toast" hidden></div>
+</body>
+</html>

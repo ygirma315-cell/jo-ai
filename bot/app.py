@@ -21,8 +21,15 @@ from bot.handlers.jo_ai import router as jo_ai_router
 from bot.middlewares.logging import UserActionLoggingMiddleware
 from bot.runtime_info import build_runtime_info
 from version import WEB_VERSION, latest_release, latest_release_lines
-from bot.services.ai_service import ChatService, ImageGenerationService, TextToSpeechService, VideoGenerationService
+from bot.services.ai_service import (
+    ChatService,
+    GeminiChatService,
+    ImageGenerationService,
+    TextToSpeechService,
+    VideoGenerationService,
+)
 from bot.services.session_manager import SessionManager
+from bot.services.tracking_service import SupabaseTrackingService
 from bot.telegram_formatting import run_markdown_sanity_checks
 from version import VERSION
 
@@ -148,19 +155,26 @@ async def _configure_chat_menu_button(runtime: BotRuntime) -> bool:
 async def _notify_known_users_on_restart(runtime: BotRuntime) -> bool:
     sent_count = 0
     failed_count = 0
+    tracking_service = runtime.dispatcher.get("tracking_service")
     for user_id in runtime.session_manager.known_user_ids:
         try:
             await runtime.bot.send_message(chat_id=user_id, text=RESTART_BROADCAST_TEXT)
             sent_count += 1
+            if isinstance(tracking_service, SupabaseTrackingService):
+                await tracking_service.mark_delivery_success(user_id)
         except (TelegramNetworkError, ClientConnectorError, asyncio.TimeoutError) as exc:
             runtime.last_startup_error = f"Restart broadcast failed: {exc}"
             logger.warning("Telegram network unavailable while sending restart notifications: %s", exc)
             return False
         except (TelegramForbiddenError, TelegramBadRequest):
             failed_count += 1
+            if isinstance(tracking_service, SupabaseTrackingService):
+                await tracking_service.mark_delivery_failure(user_id, "restart_broadcast_forbidden", blocked=True)
         except Exception:
             failed_count += 1
             logger.warning("Could not send restart notification to user id=%s.", user_id, exc_info=True)
+            if isinstance(tracking_service, SupabaseTrackingService):
+                await tracking_service.mark_delivery_failure(user_id, "restart_broadcast_failed", blocked=False)
 
     if sent_count or failed_count:
         logger.info(
@@ -243,6 +257,10 @@ async def create_bot_runtime() -> BotRuntime:
         model=settings.nvidia_chat_model,
         base_url=settings.ai_base_url,
     )
+    dispatcher["gemini_service"] = GeminiChatService(
+        api_key=settings.gemini_api_key,
+        model=settings.gemini_model,
+    )
     dispatcher["image_generation_service"] = ImageGenerationService(
         api_key=settings.image_api_key or settings.nvidia_api_key or settings.ai_api_key,
         model=settings.image_model,
@@ -253,6 +271,14 @@ async def create_bot_runtime() -> BotRuntime:
         function_id=settings.tts_function_id,
     )
     dispatcher["video_generation_service"] = VideoGenerationService(api_key=settings.nvidia_api_key)
+    tracking_service = SupabaseTrackingService(settings)
+    dispatcher["tracking_service"] = tracking_service
+    logger.info(
+        "TELEGRAM TRACKING CONFIG | enabled=%s backend=%s disabled_reason=%s",
+        tracking_service.enabled,
+        tracking_service.backend,
+        tracking_service.disabled_reason,
+    )
     dispatcher["deepseek_api_key"] = settings.deepseek_api_key
     dispatcher["deepseek_model"] = settings.deepseek_model
     dispatcher["kimi_api_key"] = settings.kimi_api_key

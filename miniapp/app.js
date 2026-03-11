@@ -7,7 +7,10 @@
   const STORAGE_VERSION_KEY = "jo_frontend_version";
   const HOME_ENTRY_STORAGE_KEY = "jo_home_entered";
   const HISTORY_PREFIX = "jo_history_";
-  const FRONTEND_VERSION = "v1.5.0";
+  const REFERRAL_STORAGE_KEY = "jo_referral_code";
+  const REFERRAL_CLAIMED_PREFIX = "jo_referral_claimed_";
+  const CONVERSATION_STORAGE_PREFIX = "jo_conversation_";
+  const FRONTEND_VERSION = "v1.6.0";
   const SITE_BASE_URL = "https://ygirma315-cell.github.io/jo-ai/";
   const MAX_HISTORY_ITEMS = 18;
   const MAX_UPLOAD_BYTES = 8 * 1024 * 1024;
@@ -23,6 +26,24 @@
   ];
 
   const STATIC_RELEASES = [
+    {
+      version: "v1.6.0",
+      title: "Mobile stability + referral + Gemini update",
+      items: [
+        "Added Gemini chat mode in the same JO AI interface with server-side provider routing.",
+        "Referral section now loads your personal invite links and tracks referral claims safely.",
+        "Mini app now sends frontend source, conversation ID, and referral headers for cleaner analytics across admin and backend.",
+      ],
+    },
+    {
+      version: "v1.5.1",
+      title: "Stability and readability hardening",
+      items: [
+        "Chat text colors now use explicit high-contrast fallbacks to prevent washed-out or invisible text on mixed Telegram themes.",
+        "Request flow now reports clearer network, timeout, and backend errors instead of one generic failure message.",
+        "Frontend request diagnostics and backend request IDs are surfaced to make cross-client failures easier to debug.",
+      ],
+    },
     {
       version: "v1.5.0",
       title: "Major mini app and bot organization update",
@@ -92,6 +113,19 @@
       historyTitle: "Conversation",
       emptyTitle: "Ask Joe AI chatbot",
       emptyCopy: "Fast help for ideas, questions, and tasks.",
+    },
+    gemini: {
+      title: "Gemini Chat",
+      description: "Gemini-powered chat routed through JO AI branding and guardrails.",
+      lead: "Ask anything and get Gemini capability in the same JO AI interface.",
+      example: "Give me a concise plan to improve my study schedule this week.",
+      label: "Ask Gemini via JO AI",
+      placeholder: "Ask Gemini via JO AI",
+      rows: 1,
+      maxComposerHeight: 152,
+      historyTitle: "Gemini conversation",
+      emptyTitle: "Ask Gemini via JO AI",
+      emptyCopy: "Gemini responses appear here with JO AI guardrails.",
     },
     code: {
       title: "Code Generator",
@@ -228,6 +262,7 @@
     scrollLockY: 0,
     bodyLockStyles: null,
     runtimeInfo: null,
+    referralCode: "",
   };
 
   const sensitiveTargetsPattern =
@@ -238,7 +273,7 @@
     /\b(ignore|bypass|override|forget|disregard)\b[\s\S]{0,80}\b(instructions|rules|system|developer|policy|guardrails?)\b/i;
   const selfContextPattern =
     /\b(you|your|jo\s+ai|this\s+bot|the\s+bot|the\s+website|the\s+mini\s+app|the\s+backend)\b/i;
-  const providerNamesPattern = /\b(nvidia|openai|anthropic|moonshot|deepseek|render|onrender|llama|flux|kimi)\b/i;
+  const providerNamesPattern = /\b(nvidia|openai|anthropic|moonshot|deepseek|render|onrender|llama|flux|kimi|google|gemini|meta)\b/i;
 
   function byId(id) {
     return document.getElementById(id);
@@ -425,6 +460,13 @@
       updatesClose: byId("updatesClose"),
       comingSoonModal: byId("comingSoonModal"),
       comingSoonClose: byId("comingSoonClose"),
+      referralCard: byId("referralCard"),
+      referralCode: byId("referralCode"),
+      referralTelegramLink: byId("referralTelegramLink"),
+      referralMiniappLink: byId("referralMiniappLink"),
+      referralStatus: byId("referralStatus"),
+      copyReferralCodeBtn: byId("copyReferralCodeBtn"),
+      copyReferralLinkBtn: byId("copyReferralLinkBtn"),
       toast: byId("toast"),
     };
   }
@@ -658,11 +700,11 @@
 
   function buildTrackingPayloadFields() {
     const user = getTelegramWebAppUser();
+    const tracking = { frontend_source: "mini_app" };
     if (!user) {
-      return {};
+      return tracking;
     }
 
-    const tracking = {};
     const rawId = user.id;
     const parsedId = Number.parseInt(String(rawId), 10);
     if (Number.isFinite(parsedId) && parsedId > 0) {
@@ -680,8 +722,67 @@
     return tracking;
   }
 
+  function sanitizeReferralCode(rawValue) {
+    const raw = String(rawValue || "").trim().toLowerCase();
+    if (!raw) {
+      return "";
+    }
+    const normalized = raw.startsWith("ref_") || raw.startsWith("ref-") ? raw.slice(4) : raw;
+    const cleaned = normalized.replace(/[^a-z0-9_-]/g, "");
+    return cleaned.slice(0, 64);
+  }
+
+  function resolveReferralCode() {
+    if (state.referralCode) {
+      return state.referralCode;
+    }
+
+    const fromUrl = sanitizeReferralCode(
+      getQueryParam("ref") ||
+      getQueryParam("referral") ||
+      getQueryParam("referral_code") ||
+      getQueryParam("startapp") ||
+      getQueryParam("start")
+    );
+    const local = getLocalStorage();
+    const stored = sanitizeReferralCode(safeStorageGet(local, REFERRAL_STORAGE_KEY));
+    const selected = fromUrl || stored;
+    if (!selected) {
+      return "";
+    }
+    state.referralCode = selected;
+    safeStorageSet(local, REFERRAL_STORAGE_KEY, selected);
+    return selected;
+  }
+
+  function conversationStorageKey() {
+    const tracking = buildTrackingPayloadFields();
+    const tool = getToolId() || getPage() || "home";
+    const userPart = tracking.telegram_id ? String(tracking.telegram_id) : "anon";
+    return `${CONVERSATION_STORAGE_PREFIX}${tool}_${userPart}`;
+  }
+
+  function resolveConversationId() {
+    const session = getSessionStorage();
+    const key = conversationStorageKey();
+    const existing = safeStorageGet(session, key).trim();
+    if (existing) {
+      return existing;
+    }
+
+    const tool = getToolId() || getPage() || "home";
+    const tracking = buildTrackingPayloadFields();
+    const userPart = tracking.telegram_id ? String(tracking.telegram_id) : "anon";
+    const generated = `${userPart}:${tool}:${Date.now().toString(36)}`;
+    safeStorageSet(session, key, generated);
+    return generated;
+  }
+
   function buildTrackingHeaders() {
     const headers = { "Content-Type": "application/json" };
+    headers["X-Frontend-Source"] = "mini_app";
+    headers["X-Conversation-ID"] = resolveConversationId();
+
     const initData = tg && typeof tg.initData === "string" ? tg.initData.trim() : "";
     if (initData) {
       headers["X-Telegram-Init-Data"] = initData;
@@ -699,6 +800,10 @@
     }
     if (tracking.last_name) {
       headers["X-Telegram-Last-Name"] = tracking.last_name;
+    }
+    const referralCode = resolveReferralCode();
+    if (referralCode) {
+      headers["X-Referral-Code"] = referralCode;
     }
     return headers;
   }
@@ -1284,6 +1389,36 @@
       elements.comingSoonModal.addEventListener("click", (event) => {
         if (event.target === elements.comingSoonModal) {
           closeComingSoonModal();
+        }
+      });
+    }
+    if (elements.copyReferralCodeBtn) {
+      elements.copyReferralCodeBtn.addEventListener("click", async () => {
+        const code = elements.referralCode ? String(elements.referralCode.textContent || "").trim() : "";
+        if (!code || code === "-") {
+          showToast("Referral code is not ready yet.", "error");
+          return;
+        }
+        try {
+          await copyText(code);
+          showToast("Referral code copied.");
+        } catch (error) {
+          showToast(error instanceof Error ? error.message : "Copy failed.", "error");
+        }
+      });
+    }
+    if (elements.copyReferralLinkBtn) {
+      elements.copyReferralLinkBtn.addEventListener("click", async () => {
+        const link = elements.referralMiniappLink ? String(elements.referralMiniappLink.textContent || "").trim() : "";
+        if (!link || link === "-") {
+          showToast("Referral link is not ready yet.", "error");
+          return;
+        }
+        try {
+          await copyText(link);
+          showToast("Referral link copied.");
+        } catch (error) {
+          showToast(error instanceof Error ? error.message : "Copy failed.", "error");
         }
       });
     }
@@ -2001,10 +2136,62 @@
     syncOutputButtons();
     scrollHistoryToBottom(true);
   }
+  function delay(ms) {
+    const waitMs = Math.max(0, Number(ms) || 0);
+    return new Promise((resolve) => {
+      setTimeout(resolve, waitMs);
+    });
+  }
+
+  function isTimeoutMessage(message) {
+    return /longer than expected|timed out|timeout/i.test(String(message || ""));
+  }
+
+  function isLikelyNetworkMessage(message) {
+    return /failed to fetch|network|load failed|internet|connection|disconnected/i.test(String(message || ""));
+  }
+
+  function extractBackendErrorMessage(data, statusCode) {
+    const fallback = `Request failed with status ${statusCode}.`;
+    if (!data || typeof data !== "object") {
+      return fallback;
+    }
+
+    const candidates = [data.error, data.message, data.reason, data.detail, data.warning];
+    for (const candidate of candidates) {
+      if (typeof candidate === "string" && candidate.trim()) {
+        const requestId = typeof data.request_id === "string" ? data.request_id.trim() : "";
+        return requestId ? `${candidate.trim()} (request ${requestId})` : candidate.trim();
+      }
+    }
+
+    if (Array.isArray(data.detail) && data.detail.length) {
+      const first = data.detail[0];
+      if (first && typeof first.msg === "string" && first.msg.trim()) {
+        return first.msg.trim();
+      }
+    }
+    return fallback;
+  }
+
+  function summarizePayloadForLog(payload) {
+    const message = typeof payload.message === "string" ? payload.message : "";
+    return {
+      keys: Object.keys(payload || {}),
+      message_length: message.length,
+      has_code_file: Boolean(payload && payload.code_file_base64),
+      has_image: Boolean(payload && payload.image_base64),
+    };
+  }
+
   async function fetchJsonWithTimeout(url, options, timeoutMs = 60000) {
     if (typeof fetch !== "function") {
       throw new Error("This Telegram webview cannot make network requests.");
     }
+
+    const method = (options && options.method) || "GET";
+    const startedAt = Date.now();
+    console.info("[JO AI Mini App] request.dispatch", { method, url, timeout_ms: timeoutMs });
 
     const controller = typeof AbortController === "function" ? new AbortController() : null;
     let timer = 0;
@@ -2021,16 +2208,39 @@
               timer = setTimeout(() => reject(new Error("The assistant is taking longer than expected.")), timeoutMs);
             }),
           ]);
-      const raw = await response.text();
+      const requestId = response && response.headers && typeof response.headers.get === "function"
+        ? String(response.headers.get("x-request-id") || "").trim()
+        : "";
+      const rawText = await response.text();
       let data = {};
-      if (raw) {
+      if (rawText) {
         try {
-          data = JSON.parse(raw);
+          data = JSON.parse(rawText);
         } catch (_error) {
-          throw new Error("The assistant returned an unexpected response.");
+          console.warn("[JO AI Mini App] request.non_json_response", {
+            method,
+            url,
+            status: response.status,
+            request_id: requestId || undefined,
+            body_preview: rawText.slice(0, 180),
+          });
+          if (response.ok) {
+            throw new Error(
+              requestId
+                ? `The backend returned an unexpected response format (request ${requestId}).`
+                : "The backend returned an unexpected response format."
+            );
+          }
         }
       }
-      return { response, data };
+      console.info("[JO AI Mini App] request.response", {
+        method,
+        url,
+        status: response.status,
+        request_id: requestId || undefined,
+        duration_ms: Date.now() - startedAt,
+      });
+      return { response, data, rawText, requestId };
     } catch (error) {
       if (error && error.name === "AbortError") {
         throw new Error("The assistant is taking longer than expected.");
@@ -2110,10 +2320,133 @@
     return state.apiBase;
   }
 
+  function referralClaimStorageKey(tracking) {
+    const userPart = tracking && tracking.telegram_id ? String(tracking.telegram_id) : "anon";
+    return `${REFERRAL_CLAIMED_PREFIX}${userPart}`;
+  }
+
+  function ownReferralCodeForUser(tracking) {
+    if (!tracking || !tracking.telegram_id) {
+      return "";
+    }
+    const numericId = Number.parseInt(String(tracking.telegram_id), 10);
+    if (!Number.isFinite(numericId) || numericId <= 0) {
+      return "";
+    }
+    return `jo${numericId.toString(16)}`;
+  }
+
+  function setReferralStatus(text, isError = false) {
+    if (!elements.referralStatus) {
+      return;
+    }
+    elements.referralStatus.textContent = String(text || "");
+    elements.referralStatus.style.color = isError ? "#b42318" : "";
+  }
+
+  async function claimReferralIfNeeded(apiBase) {
+    const referralCode = resolveReferralCode();
+    if (!apiBase || !referralCode) {
+      return;
+    }
+
+    const tracking = buildTrackingPayloadFields();
+    if (!tracking.telegram_id) {
+      return;
+    }
+
+    const ownCode = sanitizeReferralCode(ownReferralCodeForUser(tracking));
+    if (ownCode && ownCode === sanitizeReferralCode(referralCode)) {
+      return;
+    }
+
+    const local = getLocalStorage();
+    const claimKey = referralClaimStorageKey(tracking);
+    const alreadyClaimed = sanitizeReferralCode(safeStorageGet(local, claimKey));
+    if (alreadyClaimed === sanitizeReferralCode(referralCode)) {
+      return;
+    }
+
+    try {
+      const { response } = await fetchJsonWithTimeout(
+        `${apiBase}/api/referral/claim`,
+        {
+          method: "POST",
+          headers: buildTrackingHeaders(),
+          body: JSON.stringify({
+            ...tracking,
+            frontend_source: "mini_app",
+            referral_code: referralCode,
+          }),
+        },
+        8000
+      );
+      if (response && response.ok) {
+        safeStorageSet(local, claimKey, referralCode);
+      }
+    } catch (_error) {
+      // Non-blocking: do not break page load if referral claim fails.
+    }
+  }
+
+  async function loadReferralCard(apiBase) {
+    if (!elements.referralCard) {
+      return;
+    }
+    elements.referralCard.hidden = false;
+
+    const tracking = buildTrackingPayloadFields();
+    if (!tracking.telegram_id) {
+      setReferralStatus("Open from Telegram to load your personal referral links.");
+      return;
+    }
+
+    if (!apiBase) {
+      setReferralStatus("Referral links are unavailable while the backend is waking up.");
+      return;
+    }
+
+    try {
+      await claimReferralIfNeeded(apiBase);
+      const { response, data } = await fetchJsonWithTimeout(
+        `${apiBase}/api/referral/me`,
+        {
+          method: "GET",
+          headers: buildTrackingHeaders(),
+        },
+        8000
+      );
+      if (!response || !response.ok || !data || data.ok !== true) {
+        throw new Error("Referral API unavailable");
+      }
+
+      const code = sanitizeReferralCode(data.referral_code);
+      state.referralCode = code || state.referralCode;
+      if (code) {
+        safeStorageSet(getLocalStorage(), REFERRAL_STORAGE_KEY, code);
+      }
+
+      if (elements.referralCode) {
+        elements.referralCode.textContent = code || "-";
+      }
+      if (elements.referralTelegramLink) {
+        elements.referralTelegramLink.textContent = data.telegram_link || "-";
+        elements.referralTelegramLink.href = data.telegram_link || "#";
+      }
+      if (elements.referralMiniappLink) {
+        elements.referralMiniappLink.textContent = data.miniapp_link || "-";
+        elements.referralMiniappLink.href = data.miniapp_link || "#";
+      }
+      setReferralStatus("Referral links ready.");
+    } catch (_error) {
+      setReferralStatus("Could not load referral links right now.", true);
+    }
+  }
+
   function endpointAttempts(mode, payload) {
     const basePayload = { ...payload };
     const trackingFields = {};
-    for (const key of ["telegram_id", "username", "first_name", "last_name"]) {
+    for (const key of ["telegram_id", "username", "first_name", "last_name", "frontend_source"]) {
       if (Object.prototype.hasOwnProperty.call(basePayload, key) && basePayload[key] !== undefined) {
         trackingFields[key] = basePayload[key];
       }
@@ -2126,6 +2459,12 @@
           payload: { ...trackingFields, mode: "chat", message: basePayload.message },
         },
         { path: "/api/chat", payload: basePayload },
+      ];
+    }
+    if (mode === "gemini") {
+      return [
+        { path: "/api/gemini", payload: basePayload },
+        { path: "/gemini", payload: basePayload },
       ];
     }
     if (mode === "code") {
@@ -2220,6 +2559,9 @@
     if (mode === "image") {
       return 120000;
     }
+    if (mode === "gemini") {
+      return 90000;
+    }
     if (mode === "code" || mode === "research" || mode === "deepseek") {
       return 110000;
     }
@@ -2239,38 +2581,159 @@
     }
 
     let timedOut = false;
+    let sawNetworkIssue = false;
+    let lastServerMessage = "";
+    let lastRequestId = "";
+    const diagnostics = [];
     const trackingHeaders = buildTrackingHeaders();
+    const shouldTryMinimalHeaders = Object.keys(trackingHeaders).length > 1;
+    const attempts = endpointAttempts(mode, payload);
+    const timeoutMs = requestTimeoutMsForMode(mode);
+    const payloadSummary = summarizePayloadForLog(payload);
+    console.info("[JO AI Mini App] request.start", {
+      mode,
+      api_base: apiBase,
+      attempt_count: attempts.length,
+      payload: payloadSummary,
+      header_keys: Object.keys(trackingHeaders),
+    });
 
-    for (const attempt of endpointAttempts(mode, payload)) {
-      try {
-        const { response, data } = await fetchJsonWithTimeout(
-          `${apiBase}${attempt.path}`,
-          {
-            method: "POST",
-            headers: { ...trackingHeaders },
-            body: JSON.stringify(attempt.payload),
-          },
-          requestTimeoutMsForMode(mode)
-        );
+    for (const attempt of attempts) {
+      const targetUrl = `${apiBase}${attempt.path}`;
+      const headerVariants = shouldTryMinimalHeaders
+        ? [
+            { name: "tracking", headers: { ...trackingHeaders } },
+            { name: "minimal", headers: { "Content-Type": "application/json" } },
+          ]
+        : [{ name: "tracking", headers: { ...trackingHeaders } }];
 
-        if (response.ok) {
-          return data || {};
+      let skipToNextEndpoint = false;
+      for (const variant of headerVariants) {
+        if (skipToNextEndpoint) {
+          break;
         }
 
-        if ([404, 405, 501].includes(response.status) || response.status >= 500) {
-          continue;
+        for (let tryIndex = 0; tryIndex < 2; tryIndex += 1) {
+          const startedAt = Date.now();
+          try {
+            const { response, data, requestId } = await fetchJsonWithTimeout(
+              targetUrl,
+              {
+                method: "POST",
+                headers: { ...variant.headers },
+                body: JSON.stringify(attempt.payload),
+              },
+              timeoutMs
+            );
+
+            const elapsedMs = Date.now() - startedAt;
+            const backendMessage = extractBackendErrorMessage(data, response.status);
+            diagnostics.push({
+              path: attempt.path,
+              header_variant: variant.name,
+              try_index: tryIndex,
+              status: response.status,
+              request_id: requestId || "",
+              duration_ms: elapsedMs,
+              message: backendMessage,
+            });
+
+            if (response.ok) {
+              console.info("[JO AI Mini App] request.success", {
+                mode,
+                path: attempt.path,
+                header_variant: variant.name,
+                request_id: requestId || undefined,
+                duration_ms: elapsedMs,
+              });
+              const payloadData = data && typeof data === "object" ? data : {};
+              return {
+                ...payloadData,
+                _request_id: requestId || (typeof payloadData.request_id === "string" ? payloadData.request_id : ""),
+                _endpoint: attempt.path,
+              };
+            }
+
+            if (requestId) {
+              lastRequestId = requestId;
+            }
+            if (backendMessage) {
+              lastServerMessage = backendMessage;
+            }
+
+            console.warn("[JO AI Mini App] request.http_error", {
+              mode,
+              path: attempt.path,
+              status: response.status,
+              request_id: requestId || undefined,
+              header_variant: variant.name,
+              message: backendMessage,
+            });
+
+            if ([404, 405, 501].includes(response.status)) {
+              skipToNextEndpoint = true;
+              break;
+            }
+
+            if (response.status >= 500 || response.status === 408 || response.status === 429) {
+              break;
+            }
+
+            throw new Error(backendMessage || `Request failed with status ${response.status}.`);
+          } catch (error) {
+            const message = error instanceof Error ? error.message : String(error);
+            const timeoutHit = isTimeoutMessage(message);
+            const networkHit = isLikelyNetworkMessage(message);
+            timedOut = timedOut || timeoutHit;
+            sawNetworkIssue = sawNetworkIssue || networkHit;
+
+            diagnostics.push({
+              path: attempt.path,
+              header_variant: variant.name,
+              try_index: tryIndex,
+              status: "request_error",
+              request_id: "",
+              duration_ms: Date.now() - startedAt,
+              message,
+            });
+
+            console.error("[JO AI Mini App] request.error", {
+              mode,
+              path: attempt.path,
+              header_variant: variant.name,
+              try_index: tryIndex,
+              message,
+            });
+
+            const retryable = tryIndex === 0 && (timeoutHit || networkHit);
+            if (retryable) {
+              await delay(220);
+              continue;
+            }
+            break;
+          }
         }
-      } catch (error) {
-        const message = error instanceof Error ? error.message : String(error);
-        timedOut = timedOut || /longer than expected|timed out/i.test(message);
-        continue;
       }
     }
 
+    let userMessage = "";
     if (timedOut) {
-      throw new Error("The assistant is taking longer than expected. Please try again.");
+      userMessage = "The assistant is taking longer than expected. Please try again.";
+    } else if (sawNetworkIssue) {
+      userMessage =
+        "Could not reach the JO AI backend from this Telegram client. Check your connection and reopen the mini app.";
+    } else if (lastServerMessage) {
+      userMessage = lastServerMessage;
+    } else {
+      userMessage = "The assistant could not complete this request right now.";
     }
-    throw new Error("The assistant could not complete this request right now.");
+    if (lastRequestId && !userMessage.includes("request ")) {
+      userMessage = `${userMessage} (request ${lastRequestId})`;
+    }
+
+    const finalError = new Error(userMessage);
+    finalError.details = diagnostics;
+    throw finalError;
   }
   function applyToolConfig() {
     const config = currentTool();
@@ -2601,6 +3064,11 @@
       return;
     }
 
+    console.info("[JO AI Mini App] submit.start", {
+      mode: getToolId(),
+      payload: summarizePayloadForLog(payload),
+    });
+
     pushHistory(buildUserEntry(payload));
     if (elements.aiInput) {
       elements.aiInput.value = "";
@@ -2700,10 +3168,24 @@
         timestamp: Date.now(),
       });
 
+      console.info("[JO AI Mini App] submit.success", {
+        mode: getToolId(),
+        endpoint: data && typeof data._endpoint === "string" ? data._endpoint : "",
+        request_id: data && typeof data._request_id === "string" ? data._request_id : "",
+        has_image: Boolean(imageDataUrl),
+        has_audio: Boolean(audioDataUrl),
+        has_code_file: Boolean(codeFileDataUrl),
+      });
+
       setApiState("ready", "success");
       showToast("Response ready.");
     } catch (error) {
       const message = error instanceof Error ? error.message : "The assistant could not complete this request.";
+      console.error("[JO AI Mini App] submit.failed", {
+        mode: getToolId(),
+        message,
+        details: error && typeof error === "object" && "details" in error ? error.details : [],
+      });
       replacePendingMessage({
         id: createId(),
         role: "assistant",
@@ -2901,7 +3383,8 @@
       initHomePage();
       markStartupComplete();
       runAfterFirstPaint(async () => {
-        await resolveApiBase();
+        const apiBase = await resolveApiBase();
+        await loadReferralCard(apiBase);
       });
       return;
     }
@@ -2916,7 +3399,8 @@
       initToolPage();
       markStartupComplete();
       runAfterFirstPaint(async () => {
-        await resolveApiBase();
+        const apiBase = await resolveApiBase();
+        await claimReferralIfNeeded(apiBase);
       });
       return;
     }

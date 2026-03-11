@@ -56,15 +56,11 @@ class SessionManager:
     async def switch_feature(self, user_id: int, new_feature: Feature) -> TransitionResult:
         async with self.lock(user_id) as session:
             previous = session.active_feature
-            notice: str | None = None
-
             if previous != new_feature:
-                if previous != Feature.NONE:
-                    notice = self._transition_notice(previous, new_feature)
                 self._clear_all_feature_state(session)
                 session.active_feature = new_feature
 
-            return TransitionResult(previous=previous, current=session.active_feature, notice=notice)
+            return TransitionResult(previous=previous, current=session.active_feature, notice=None)
 
     async def reset_to_menu(self, user_id: int) -> TransitionResult:
         return await self.switch_feature(user_id, Feature.NONE)

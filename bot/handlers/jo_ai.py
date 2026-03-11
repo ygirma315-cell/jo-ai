@@ -4,7 +4,6 @@ import asyncio
 from dataclasses import dataclass
 import html
 import logging
-import random
 import re
 from contextlib import suppress
 from typing import Literal
@@ -19,6 +18,7 @@ from bot.constants import (
     MENU_AI_CHAT,
     MENU_AI_CODE,
     MENU_AI_DEEPSEEK,
+    MENU_AI_GEMINI,
     MENU_AI_IMAGE,
     MENU_AI_KIMI,
     MENU_AI_PROMPT,
@@ -47,27 +47,29 @@ from bot.security import (
     DEVELOPER_HANDLE,
     SAFE_INTERNAL_DETAILS_REFUSAL,
     SAFE_SERVICE_UNAVAILABLE_MESSAGE,
-    contains_internal_detail_request,
+    guardrail_response_for_user_query,
 )
-from bot.services.ai_service import AIServiceError, ChatService, ImageGenerationService, TextToSpeechService
+from bot.services.ai_service import AIServiceError, ChatService, GeminiChatService, ImageGenerationService, TextToSpeechService
 from bot.services.session_manager import SessionManager
+from bot.services.tracking_service import SupabaseTrackingService, TrackingIdentity, TrackingMedia
 from bot.telegram_formatting import TelegramMessageFormatter
 
 router = Router(name="jo_ai")
 logger = logging.getLogger(__name__)
 
 JO_AI_MENU_TEXT = (
-    "🤖 <b>JO AI Tools</b>\n\n"
-    "Pick a mode and let's build something useful:\n"
-    "• 💬 JO AI Chat\n"
-    "• ⚡ Code Generator\n"
-    "• 🔍 Research\n"
-    "• ✨ Prompt Generator\n"
-    "• 🎨 Image Generator\n"
-    "• 🖼️ JO AI Vision\n"
-    "• 🧠 Deep Analysis\n"
-    "• 🔊 Text-to-Speech\n\n"
-    "💡 Tip: Use /help any time for guidance."
+    "<b>JO AI Tools</b>\n\n"
+    "Choose a mode:\n"
+    "- JO AI Chat\n"
+    "- Gemini Chat\n"
+    "- Code Generator\n"
+    "- Research\n"
+    "- Deep Analysis\n"
+    "- Prompt Generator\n"
+    "- Image Generator\n"
+    "- JO AI Vision\n"
+    "- Text-to-Speech\n\n"
+    "Tip: use /help any time for guidance."
 )
 
 IMAGE_TYPE_LABELS = {
@@ -146,18 +148,18 @@ TTS_STYLE_PRESETS: dict[str, dict[str, dict[str, str]]] = {
 }
 
 ENGAGEMENT_LINES = (
-    "🤖 Thinking...",
-    "🧠 Analyzing your request...",
-    "⚡ Optimizing the response...",
-    "✨ Crafting a clean answer...",
+    "Thinking...",
+    "Analyzing your request...",
+    "Optimizing the response...",
+    "Crafting a clean answer...",
 )
 
 MODE_PROGRESS_TEXT = {
-    "chat": "🤖 Thinking about your message...",
-    "code": "⚡ Generating code...",
-    "research": "🔍 Researching your topic...",
-    "prompt": "✨ Building your prompt...",
-    "image_prompt": "🧠 Optimizing image prompt...",
+    "chat": "Thinking about your message...",
+    "code": "Generating code...",
+    "research": "Researching your topic...",
+    "prompt": "Building your prompt...",
+    "image_prompt": "Optimizing image prompt...",
 }
 
 MODE_RESULT_TITLE = {
@@ -174,6 +176,7 @@ CHAT_HISTORY_ENTRY_MAX_CHARS = 1800
 LONG_CODE_ATTACHMENT_THRESHOLD = 2800
 EXTREME_CODE_LENGTH_THRESHOLD = 16000
 MAX_CODE_UPLOAD_BYTES = 1_500_000
+TELEGRAM_TRACKING_TIMEOUT_SECONDS = 4.0
 DEBUG_INTENT_PATTERN = re.compile(
     r"\b(debug|fix|error|exception|traceback|bug|issue|crash|failing|failure|broken|not working)\b",
     flags=re.IGNORECASE,
@@ -209,6 +212,161 @@ def _deep_analysis_mode_options(deepseek_api_key: str | None, deepseek_model: st
         mode_options["api_key_override"] = deepseek_api_key
         mode_options["model_override"] = deepseek_model
     return mode_options
+
+
+def _tracking_identity_from_message(message: Message) -> TrackingIdentity | None:
+    user = message.from_user
+    if user is None or int(user.id) <= 0:
+        return None
+    return TrackingIdentity(
+        telegram_id=int(user.id),
+        username=(user.username or "").strip() or None,
+        first_name=(user.first_name or "").strip() or None,
+        last_name=(user.last_name or "").strip() or None,
+    )
+
+
+def _tracking_text_from_message(message: Message, fallback: str) -> str:
+    text = (message.text or message.caption or "").strip()
+    if text:
+        return text
+    if message.document:
+        name = (message.document.file_name or "").strip() or "document"
+        return f"[document:{name}]"
+    if message.photo:
+        return "[photo]"
+    return fallback
+
+
+def _chat_model_used(chat_service: ChatService, mode_options: dict[str, object]) -> str | None:
+    model_override = str(mode_options.get("model_override") or "").strip()
+    if model_override:
+        return model_override
+    default_model = str(chat_service.model or "").strip()
+    return default_model or None
+
+
+async def _track_telegram_action(
+    *,
+    tracking_service: SupabaseTrackingService | None,
+    message: Message,
+    message_type: str,
+    user_message: str,
+    bot_reply: str | None,
+    model_used: str | None,
+    success: bool,
+    message_increment: int = 0,
+    image_increment: int = 0,
+    frontend_source: str = "telegram_bot",
+    feature_used: str | None = None,
+    conversation_id: str | None = None,
+    text_content: str | None = None,
+    media: TrackingMedia | None = None,
+    mark_started: bool = False,
+    started_via_referral: str | None = None,
+) -> None:
+    identity = _tracking_identity_from_message(message)
+    user_for_logs: int | str = identity.telegram_id if identity is not None else "unknown"
+    logger.info("TELEGRAM TRACKING START user=%s message_type=%s", user_for_logs, message_type)
+
+    if identity is None:
+        logger.warning(
+            "TELEGRAM TRACKING FAILED user=unknown message_type=%s error=missing telegram identity",
+            message_type,
+        )
+        return
+    if tracking_service is None:
+        logger.warning(
+            "TELEGRAM TRACKING FAILED user=%s message_type=%s error=tracking service unavailable",
+            identity.telegram_id,
+            message_type,
+        )
+        return
+    if not tracking_service.enabled:
+        logger.warning(
+            "TELEGRAM TRACKING FAILED user=%s message_type=%s error=tracking disabled reason=%s",
+            identity.telegram_id,
+            message_type,
+            tracking_service.disabled_reason or "unknown",
+        )
+        return
+
+    effective_feature_used = (feature_used or message_type or "unknown").strip().lower()
+    effective_media = media
+    if effective_media is None and message.photo:
+        largest = message.photo[-1]
+        effective_media = TrackingMedia(
+            media_type="image",
+            storage_path=f"telegram_file:{largest.file_id}",
+            mime_type="image/jpeg",
+            provider_source="telegram",
+            media_origin="upload",
+            media_status="available",
+        )
+    if effective_media is None and message.document and str(message.document.mime_type or "").lower().startswith("image/"):
+        effective_media = TrackingMedia(
+            media_type="image",
+            storage_path=f"telegram_file:{message.document.file_id}",
+            mime_type=(message.document.mime_type or "").strip() or None,
+            provider_source="telegram",
+            media_origin="upload",
+            media_status="available",
+        )
+
+    try:
+        users_upserted, history_inserted = await asyncio.wait_for(
+            tracking_service.track_action(
+                identity=identity,
+                message_type=message_type,
+                user_message=user_message,
+                bot_reply=bot_reply,
+                model_used=model_used,
+                success=success,
+                message_increment=message_increment,
+                image_increment=image_increment,
+                frontend_source=frontend_source,
+                feature_used=effective_feature_used,
+                conversation_id=conversation_id or f"{identity.telegram_id}:{message.chat.id}",
+                text_content=text_content or bot_reply or user_message,
+                media=effective_media,
+                mark_started=mark_started,
+                started_via_referral=started_via_referral,
+            ),
+            timeout=TELEGRAM_TRACKING_TIMEOUT_SECONDS,
+        )
+    except asyncio.TimeoutError:
+        logger.warning(
+            "TELEGRAM TRACKING FAILED user=%s message_type=%s error=timeout_after_%ss",
+            identity.telegram_id,
+            message_type,
+            TELEGRAM_TRACKING_TIMEOUT_SECONDS,
+        )
+        return
+    except Exception as exc:
+        logger.exception(
+            "TELEGRAM TRACKING FAILED user=%s message_type=%s error=%s",
+            identity.telegram_id,
+            message_type,
+            exc,
+        )
+        return
+
+    if users_upserted > 0:
+        logger.info("TELEGRAM USERS UPSERT SUCCESS user=%s rows=%s", identity.telegram_id, users_upserted)
+    else:
+        logger.warning(
+            "TELEGRAM TRACKING FAILED user=%s message_type=%s error=users upsert returned zero rows",
+            identity.telegram_id,
+            message_type,
+        )
+    if history_inserted > 0:
+        logger.info("TELEGRAM HISTORY INSERT SUCCESS user=%s rows=%s", identity.telegram_id, history_inserted)
+    else:
+        logger.warning(
+            "TELEGRAM TRACKING FAILED user=%s message_type=%s error=history insert returned zero rows",
+            identity.telegram_id,
+            message_type,
+        )
 
 
 def _tts_style_choices(voice: str) -> list[tuple[str, str]]:
@@ -280,26 +438,34 @@ def _tts_text_reply_keyboard() -> InlineKeyboardMarkup:
 
 async def _send_chat_intro(message: Message) -> None:
     await message.answer(
-        "💬 <b>JO AI Chat is active</b>\n\n"
-        "Ask naturally and I'll answer cleanly.\n"
-        "Need a reset? Use Back for the JO AI tools hub or Main Menu to leave the flow.",
+        "<b>Step 1: JO AI Chat is active</b>\n\n"
+        "Send your message and I will reply clearly.\n"
+        "Use Back for AI tools, or Main Menu to leave this flow.",
+        reply_markup=jo_chat_keyboard("joai:menu"),
+    )
+
+
+async def _send_gemini_intro(message: Message) -> None:
+    await message.answer(
+        "<b>Step 1: Gemini Chat is active</b>\n\n"
+        "This mode uses Gemini capabilities with JO AI branding.\n"
+        "Use Back for AI tools, or Main Menu to leave this flow.",
         reply_markup=jo_chat_keyboard("joai:menu"),
     )
 
 
 async def _send_code_intro(message: Message) -> None:
     await message.answer(
-        "⚡ <b>Code Generator is active</b>\n\n"
-        "Send a feature, product idea, bug, or full build request.\n"
-        "📌 Example: \"Build a food delivery app with customer accounts, live order tracking, admin dashboard, tests, and deploy setup.\"\n\n"
-        "🛠 For debug or fix work, upload the file first.",
+        "<b>Step 1: Code Generator is active</b>\n\n"
+        "Send a feature request, bug, or full build task.\n"
+        "For debug/fix requests, upload the code file first.",
         reply_markup=jo_chat_keyboard("joai:menu"),
     )
 
 
 async def _send_research_intro(message: Message) -> None:
     await message.answer(
-        "🔍 <b>Research mode is active</b>\n\n"
+        "<b>Step 1: Research mode is active</b>\n\n"
         "Send a topic or question and I'll return a clean breakdown with practical next steps.",
         reply_markup=jo_chat_keyboard("joai:menu"),
     )
@@ -307,7 +473,7 @@ async def _send_research_intro(message: Message) -> None:
 
 async def _send_deep_analysis_intro(message: Message) -> None:
     await message.answer(
-        "🧠 <b>Deep Analysis is active</b>\n\n"
+        "<b>Step 1: Deep Analysis is active</b>\n\n"
         "Send your question and I'll slow down, compare tradeoffs, and reason through it carefully.",
         reply_markup=jo_chat_keyboard("joai:menu"),
     )
@@ -315,32 +481,32 @@ async def _send_deep_analysis_intro(message: Message) -> None:
 
 async def _send_prompt_type_step(message: Message) -> None:
     await message.answer(
-        "✨ <b>Prompt Generator is active</b>\n\n"
+        "<b>Prompt Generator is active</b>\n\n"
         "Step 1/2: Tell me the prompt type.\n"
-        "📌 Examples: ad copy, YouTube script, study guide, image prompt.",
+        "Examples: ad copy, YouTube script, study guide, image prompt.",
         reply_markup=_prompt_type_reply_keyboard(),
     )
 
 
 async def _send_prompt_details_step(message: Message) -> None:
     await message.answer(
-        "✅ Prompt type saved.\n\n"
+        "Prompt type saved.\n\n"
         "Step 2/2: Describe what you want for that prompt type.\n"
-        "🎯 Include audience, tone, goal, and constraints if possible.",
+        "Include audience, tone, goal, and constraints if possible.",
         reply_markup=_prompt_details_reply_keyboard(),
     )
 
 
 async def _send_image_style_step(message: Message) -> None:
     await message.answer(
-        "🎨 <b>Image Generator is active</b>\n\n"
+        "<b>Image Generator is active</b>\n\n"
         "Step 1/3: Choose an image style below.",
         reply_markup=image_type_keyboard(),
     )
 
 
 async def _send_image_ratio_step(message: Message, style_label: str | None = None) -> None:
-    intro = f"✅ <b>{html.escape(style_label)}</b> selected.\n\n" if style_label else ""
+    intro = f"<b>{html.escape(style_label)}</b> selected.\n\n" if style_label else ""
     await message.answer(
         f"{intro}Step 2/3: Choose an aspect ratio.\n"
         "Available ratios: 1:1, 16:9, 9:16.",
@@ -350,16 +516,16 @@ async def _send_image_ratio_step(message: Message, style_label: str | None = Non
 
 async def _send_image_prompt_step(message: Message, style_label: str, ratio_label: str) -> None:
     await message.answer(
-        f"✅ Style <b>{html.escape(style_label)}</b> | Ratio <b>{html.escape(ratio_label)}</b>\n\n"
+        f"Style <b>{html.escape(style_label)}</b> | Ratio <b>{html.escape(ratio_label)}</b>\n\n"
         "Step 3/3: Describe the image you want me to create.\n"
-        "🎯 Be specific about subject, mood, lighting, and setting.",
+        "Be specific about subject, mood, lighting, and setting.",
         reply_markup=_image_prompt_reply_keyboard(),
     )
 
 
 async def _send_tts_language_step(message: Message) -> None:
     await message.answer(
-        "🔊 <b>Text-to-Speech is active</b>\n\n"
+        "<b>Text-to-Speech is active</b>\n\n"
         "Step 1/4: Choose a language.\n"
         "After male or female, you'll get several voice-style choices.\n"
         "Voice cloning is not supported in this release yet.",
@@ -368,7 +534,7 @@ async def _send_tts_language_step(message: Message) -> None:
 
 
 async def _send_tts_voice_step(message: Message, language_label: str | None = None) -> None:
-    intro = f"✅ <b>{html.escape(language_label)}</b> selected.\n\n" if language_label else ""
+    intro = f"<b>{html.escape(language_label)}</b> selected.\n\n" if language_label else ""
     await message.answer(
         f"{intro}Step 2/4: Choose male or female.",
         reply_markup=tts_voice_keyboard(),
@@ -376,7 +542,7 @@ async def _send_tts_voice_step(message: Message, language_label: str | None = No
 
 
 async def _send_tts_style_step(message: Message, voice: str, voice_label: str | None = None) -> None:
-    intro = f"🎙️ Voice <b>{html.escape(voice_label)}</b> selected.\n\n" if voice_label else ""
+    intro = f"Voice <b>{html.escape(voice_label)}</b> selected.\n\n" if voice_label else ""
     await message.answer(
         f"{intro}Step 3/4: Choose a voice style.",
         reply_markup=tts_style_keyboard(_tts_style_choices(voice)),
@@ -385,7 +551,7 @@ async def _send_tts_style_step(message: Message, voice: str, voice_label: str | 
 
 async def _send_tts_text_step(message: Message, style_label: str) -> None:
     await message.answer(
-        f"✨ Style <b>{html.escape(style_label)}</b> selected.\n\n"
+        f"Style <b>{html.escape(style_label)}</b> selected.\n\n"
         "Step 4/4: Send the text you want me to convert to speech.",
         reply_markup=_tts_text_reply_keyboard(),
     )
@@ -393,7 +559,7 @@ async def _send_tts_text_step(message: Message, style_label: str) -> None:
 
 async def _send_vision_intro(message: Message) -> None:
     await message.answer(
-        "🖼️ <b>JO AI Vision is active</b>\n\n"
+        "<b>JO AI Vision is active</b>\n\n"
         "Send an image and I'll describe what I see.\n"
         "You can also include a short instruction with the photo.",
         reply_markup=jo_chat_keyboard("joai:menu"),
@@ -432,7 +598,7 @@ async def _switch_to_jo_ai_mode(user_id: int, mode: JoAIMode, session_manager: S
     async with session_manager.lock(user_id) as session:
         if session.active_feature == Feature.JO_AI:
             session.jo_ai_mode = mode
-            if mode != JoAIMode.CHAT:
+            if mode not in {JoAIMode.CHAT, JoAIMode.GEMINI}:
                 session.jo_ai_chat_history.clear()
             if mode != JoAIMode.PROMPT:
                 session.jo_ai_prompt_type = None
@@ -468,6 +634,9 @@ async def _activate_mode(
     if mode == JoAIMode.CHAT:
         await _send_chat_intro(message)
         return
+    if mode == JoAIMode.GEMINI:
+        await _send_gemini_intro(message)
+        return
     if mode == JoAIMode.CODE:
         await _send_code_intro(message)
         return
@@ -490,12 +659,12 @@ async def _activate_mode(
         await _send_vision_intro(message)
         return
 
-    await message.answer("🤖 Select a JO AI mode to continue.", reply_markup=jo_ai_menu_keyboard())
+    await message.answer("Select a JO AI mode to continue.", reply_markup=jo_ai_menu_keyboard())
 
 
 async def _maybe_send_engagement(message: Message) -> None:
-    if random.random() < 0.35:
-        await message.answer(random.choice(ENGAGEMENT_LINES))
+    _ = message
+    return
 
 
 def _is_kimi_unclear_result(error_text: str) -> bool:
@@ -658,7 +827,7 @@ def _parse_code_reply(reply_text: str, fallback_title: str) -> ParsedCodeReply:
 
 def _friendly_error_text(title: str, exc: Exception | None = None) -> str:
     message = (
-        f"⚠️ <b>{title}</b>\n"
+        f"Warning: <b>{title}</b>\n"
         f"{BRANDING_LINE}\n"
         "Please try again in a moment.\n"
         f"For JO API access, contact {DEVELOPER_HANDLE}."
@@ -672,7 +841,9 @@ def _is_internal_rule_block(text: str | None) -> bool:
     normalized = str(text or "").strip()
     if not normalized:
         return False
-    return normalized == SAFE_INTERNAL_DETAILS_REFUSAL
+    if normalized == SAFE_INTERNAL_DETAILS_REFUSAL:
+        return True
+    return "can't share internal backend or api details" in normalized.lower()
 
 
 def _is_service_unavailable_error(exc: Exception | None) -> bool:
@@ -720,7 +891,7 @@ def _build_local_image_prompt(
 
 def _image_request_blocked_text() -> str:
     return (
-        "âš ï¸ <b>Image request blocked by rules.</b>\n"
+        "Warning: <b>Image request blocked by rules.</b>\n"
         "This prompt asks for internal or backend details, so I did not send it to the image generator.\n"
         "Rewrite it as a visual description only and send it again."
     )
@@ -738,7 +909,7 @@ def _image_generation_failed_text(
         else "I kept the optimized prompt below so you can retry without losing the request."
     )
     return (
-        f"âš ï¸ <b>{title}</b>\n"
+        f"Warning: <b>{title}</b>\n"
         f"{detail}\n\n"
         "Optimized prompt:\n"
         f"<code>{html.escape(prompt[:900])}</code>"
@@ -897,7 +1068,7 @@ async def _send_code_generator_reply(
         await message.bot.send_document(
             chat_id=message.chat.id,
             document=code_file,
-            caption=f"📎 Full code file attached: {file_name}",
+            caption=f"Full code file attached: {file_name}",
         )
 
 
@@ -958,6 +1129,7 @@ async def _send_formatted_ai_reply(
 @router.message(Command("image"))
 @router.message(Command("deepseek"))
 @router.message(Command("analysis"))
+@router.message(Command("gemini"))
 @router.message(Command("kimi"))
 @router.message(Command("vision"))
 @router.message(Command("tts"))
@@ -972,6 +1144,7 @@ async def _send_formatted_ai_reply(
 @router.message(F.text == MENU_AI_IMAGE)
 @router.message(F.text == "Image Generator")
 @router.message(F.text == MENU_AI_DEEPSEEK)
+@router.message(F.text == MENU_AI_GEMINI)
 @router.message(F.text == MENU_AI_KIMI)
 @router.message(F.text == MENU_AI_TTS)
 @router.message(F.text == "Text-to-Speech")
@@ -986,6 +1159,9 @@ async def open_jo_ai_menu(message: Message, session_manager: SessionManager, min
     text = (message.text or "").strip().lower()
     if text in {"/chat", MENU_AI_CHAT.lower()}:
         await _activate_mode(message, message.from_user.id, JoAIMode.CHAT, session_manager, miniapp_url)
+        return
+    if text in {"/gemini", MENU_AI_GEMINI.lower()}:
+        await _activate_mode(message, message.from_user.id, JoAIMode.GEMINI, session_manager, miniapp_url)
         return
     if text in {"/code", MENU_AI_CODE.lower()}:
         await _activate_mode(message, message.from_user.id, JoAIMode.CODE, session_manager, miniapp_url)
@@ -1022,7 +1198,7 @@ async def exit_chat_command(message: Message, session_manager: SessionManager, m
     transition = await session_manager.switch_feature(message.from_user.id, Feature.AI_TOOLS_MENU)
     if transition.notice:
         await message.answer(transition.notice, reply_markup=main_menu_keyboard(miniapp_url))
-    await message.answer("↩️ Exited current mode. Returning to AI tools menu.")
+    await message.answer("Exited current mode. Returning to AI tools menu.")
     await _show_jo_ai_menu(message)
 
 
@@ -1051,6 +1227,16 @@ async def enable_jo_chat(query: CallbackQuery, session_manager: SessionManager, 
     await query.answer()
     if isinstance(query.message, Message):
         await _activate_mode(query.message, query.from_user.id, JoAIMode.CHAT, session_manager, miniapp_url)
+
+
+@router.callback_query(F.data == "joai:gemini")
+async def enable_gemini_mode(query: CallbackQuery, session_manager: SessionManager, miniapp_url: str | None) -> None:
+    if not query.from_user:
+        await query.answer()
+        return
+    await query.answer()
+    if isinstance(query.message, Message):
+        await _activate_mode(query.message, query.from_user.id, JoAIMode.GEMINI, session_manager, miniapp_url)
 
 
 @router.callback_query(F.data == "joai:code")
@@ -1312,22 +1498,22 @@ async def choose_image_type(query: CallbackQuery, session_manager: SessionManage
     raw = query.data or ""
     parts = raw.split(":")
     if len(parts) != 3:
-        await query.answer("⚠️ Invalid image style.", show_alert=True)
+        await query.answer("Invalid image style.", show_alert=True)
         return
     image_type = parts[2]
     label = IMAGE_TYPE_LABELS.get(image_type)
     if not label:
-        await query.answer("⚠️ Unknown image style.", show_alert=True)
+        await query.answer("Unknown image style.", show_alert=True)
         return
 
     async with session_manager.lock(query.from_user.id) as session:
         if session.active_feature != Feature.JO_AI or session.jo_ai_mode != JoAIMode.IMAGE:
-            await query.answer("⏳ Image session expired. Send /image again.", show_alert=True)
+            await query.answer("Image session expired. Send /image again.", show_alert=True)
             return
         session.jo_ai_image_type = image_type
         session.jo_ai_image_ratio = None
 
-    await query.answer(f"✅ {label} selected.")
+    await query.answer(f"{label} selected.")
     if isinstance(query.message, Message):
         await _send_image_ratio_step(query.message, label)
 
@@ -1361,17 +1547,17 @@ async def choose_image_ratio(query: CallbackQuery, session_manager: SessionManag
     raw = query.data or ""
     parts = raw.split(":")
     if len(parts) != 3:
-        await query.answer("⚠️ Invalid ratio option.", show_alert=True)
+        await query.answer("Invalid ratio option.", show_alert=True)
         return
     ratio = IMAGE_RATIO_TOKEN_MAP.get(parts[2])
     if not ratio:
-        await query.answer("⚠️ Unsupported ratio.", show_alert=True)
+        await query.answer("Unsupported ratio.", show_alert=True)
         return
 
     style_label: str | None = None
     async with session_manager.lock(query.from_user.id) as session:
         if session.active_feature != Feature.JO_AI or session.jo_ai_mode != JoAIMode.IMAGE:
-            await query.answer("⏳ Image session expired. Send /image again.", show_alert=True)
+            await query.answer("Image session expired. Send /image again.", show_alert=True)
             return
         if not session.jo_ai_image_type:
             await query.answer("Pick an image style first.", show_alert=True)
@@ -1379,7 +1565,7 @@ async def choose_image_ratio(query: CallbackQuery, session_manager: SessionManag
         session.jo_ai_image_ratio = ratio
         style_label = IMAGE_TYPE_LABELS.get(session.jo_ai_image_type, session.jo_ai_image_type)
 
-    await query.answer(f"✅ Ratio {ratio} selected.")
+    await query.answer(f"Ratio {ratio} selected.")
     if isinstance(query.message, Message):
         await _send_image_prompt_step(query.message, style_label or "Selected style", ratio)
 
@@ -1392,7 +1578,7 @@ async def handle_jo_ai_action(query: CallbackQuery) -> None:
     await query.answer()
     if isinstance(query.message, Message):
         await query.message.answer(
-            "⚠️ Unknown AI action.\nPlease use the buttons below.",
+            "Unknown AI action.\nPlease use the buttons below.",
             reply_markup=jo_ai_menu_keyboard(),
         )
 
@@ -1407,16 +1593,29 @@ async def handle_jo_ai_text(
     message: Message,
     session_manager: SessionManager,
     chat_service: ChatService,
+    gemini_service: GeminiChatService,
     image_generation_service: ImageGenerationService,
     tts_service: TextToSpeechService,
     deepseek_api_key: str | None,
     deepseek_model: str,
+    tracking_service: SupabaseTrackingService | None = None,
 ) -> None:
     if not message.from_user:
         return
     text = (message.text or "").strip()
     if not text:
-        await message.answer("✍️ Please send a text message to continue.")
+        reply_text = "Please send a text message to continue."
+        await message.answer(reply_text)
+        await _track_telegram_action(
+            tracking_service=tracking_service,
+            message=message,
+            message_type="chat",
+            user_message="",
+            bot_reply=reply_text,
+            model_used=None,
+            success=False,
+            message_increment=1,
+        )
         return
 
     async with session_manager.lock(message.from_user.id) as session:
@@ -1445,6 +1644,19 @@ async def handle_jo_ai_text(
             "chat",
             mode_options,
             reply_markup=_chat_reply_keyboard(),
+            tracking_service=tracking_service,
+            tracking_message_type="chat",
+            tracking_user_message=text,
+        )
+        return
+
+    if mode == JoAIMode.GEMINI:
+        await _process_gemini_message(
+            message=message,
+            user_text=user_text,
+            session_manager=session_manager,
+            gemini_service=gemini_service,
+            tracking_service=tracking_service,
         )
         return
 
@@ -1453,10 +1665,20 @@ async def handle_jo_ai_text(
         if debug_request and not code_file_content:
             async with session_manager.lock(message.from_user.id) as session:
                 session.jo_ai_code_waiting_file = True
-            await message.answer(
-                "🛠 To debug or fix code, upload the file first in Code Generator mode.\n"
-                "Then send your debug request.",
-                reply_markup=_code_reply_keyboard(),
+            reply_text = (
+                "To debug or fix code, upload the file first in Code Generator mode.\n"
+                "Then send your debug request."
+            )
+            await message.answer(reply_text, reply_markup=_code_reply_keyboard())
+            await _track_telegram_action(
+                tracking_service=tracking_service,
+                message=message,
+                message_type="code",
+                user_message=text,
+                bot_reply=reply_text,
+                model_used=_chat_model_used(chat_service, mode_options),
+                success=False,
+                message_increment=1,
             )
             return
 
@@ -1478,6 +1700,9 @@ async def handle_jo_ai_text(
             "code",
             mode_options,
             reply_markup=_code_reply_keyboard(),
+            tracking_service=tracking_service,
+            tracking_message_type="code",
+            tracking_user_message=text,
         )
         return
 
@@ -1491,6 +1716,9 @@ async def handle_jo_ai_text(
             "research",
             mode_options,
             reply_markup=_research_reply_keyboard(),
+            tracking_service=tracking_service,
+            tracking_message_type="research",
+            tracking_user_message=text,
         )
         return
     if mode == JoAIMode.DEEP_ANALYSIS:
@@ -1506,11 +1734,22 @@ async def handle_jo_ai_text(
             "research",
             mode_options,
             reply_markup=_deep_analysis_reply_keyboard(),
+            tracking_service=tracking_service,
+            tracking_message_type="deep_analysis",
+            tracking_user_message=text,
         )
         return
 
     if mode == JoAIMode.PROMPT:
-        await _process_prompt_message(message, user_text, session_manager, chat_service, prompt_type, mode_options)
+        await _process_prompt_message(
+            message,
+            user_text,
+            session_manager,
+            chat_service,
+            prompt_type,
+            mode_options,
+            tracking_service,
+        )
         return
     if mode == JoAIMode.IMAGE:
         await _process_image_message(
@@ -1522,6 +1761,7 @@ async def handle_jo_ai_text(
             image_type,
             image_ratio,
             mode_options,
+            tracking_service,
         )
         return
     if mode == JoAIMode.TEXT_TO_SPEECH:
@@ -1533,19 +1773,35 @@ async def handle_jo_ai_text(
             tts_voice,
             tts_style,
             tts_emotion,
+            tracking_service,
         )
         return
     if mode == JoAIMode.KIMI_IMAGE_DESCRIBER:
-        await message.answer(
-            "🖼️ Send an image and I will describe it.\n"
-            "💡 You can also include a short instruction.",
-            reply_markup=_vision_reply_keyboard(),
+        reply_text = "Send an image and I will describe it.\nYou can also include a short instruction."
+        await message.answer(reply_text, reply_markup=_vision_reply_keyboard())
+        await _track_telegram_action(
+            tracking_service=tracking_service,
+            message=message,
+            message_type="vision",
+            user_message=text,
+            bot_reply=reply_text,
+            model_used=None,
+            success=True,
+            message_increment=1,
         )
         return
 
-    await message.answer(
-        "🤖 Pick an AI mode first from the menu below.",
-        reply_markup=jo_ai_menu_keyboard(),
+    fallback_reply = "Pick an AI mode first from the menu below."
+    await message.answer(fallback_reply, reply_markup=jo_ai_menu_keyboard())
+    await _track_telegram_action(
+        tracking_service=tracking_service,
+        message=message,
+        message_type="menu",
+        user_message=text,
+        bot_reply=fallback_reply,
+        model_used=None,
+        success=False,
+        message_increment=1,
     )
 
 
@@ -1554,6 +1810,7 @@ async def handle_code_document_upload(
     message: Message,
     session_manager: SessionManager,
     chat_service: ChatService,
+    tracking_service: SupabaseTrackingService | None = None,
 ) -> None:
     if not message.from_user or not message.document:
         return
@@ -1567,34 +1824,77 @@ async def handle_code_document_upload(
             document.file_id,
             (message.caption or "").strip(),
         )
+        await _track_telegram_action(
+            tracking_service=tracking_service,
+            message=message,
+            message_type="vision",
+            user_message=_tracking_text_from_message(message, "[image document]"),
+            bot_reply="Image upload received. Waiting for describe confirmation.",
+            model_used=None,
+            success=True,
+            message_increment=1,
+            feature_used="image_vision",
+            media=TrackingMedia(
+                media_type="image",
+                storage_path=f"telegram_file:{document.file_id}",
+                mime_type=(document.mime_type or "").strip() or None,
+                provider_source="telegram",
+                media_origin="upload",
+                media_status="available",
+            ),
+        )
         return
 
     async with session_manager.lock(message.from_user.id) as session:
         mode = session.jo_ai_mode if session.active_feature == Feature.JO_AI else JoAIMode.MENU
 
     if mode != JoAIMode.CODE:
-        await message.answer(
-            "📎 File upload analysis is available only in <b>Code Generator</b> mode.",
-            reply_markup=jo_chat_keyboard("joai:menu"),
+        reply_text = "File upload analysis is available only in <b>Code Generator</b> mode."
+        await message.answer(reply_text, reply_markup=jo_chat_keyboard("joai:menu"))
+        await _track_telegram_action(
+            tracking_service=tracking_service,
+            message=message,
+            message_type="code",
+            user_message=_tracking_text_from_message(message, "[document]"),
+            bot_reply=reply_text,
+            model_used=None,
+            success=False,
+            message_increment=1,
         )
         return
 
     file_name = document.file_name or "uploaded_code.txt"
     file_size = int(document.file_size or 0)
     if file_size > MAX_CODE_UPLOAD_BYTES:
-        await message.answer(
-            "⚠️ File is too large for code analysis here.\nPlease upload a file smaller than 1.5MB.",
-            reply_markup=_code_reply_keyboard(),
+        reply_text = "File is too large for code analysis here.\nPlease upload a file smaller than 1.5MB."
+        await message.answer(reply_text, reply_markup=_code_reply_keyboard())
+        await _track_telegram_action(
+            tracking_service=tracking_service,
+            message=message,
+            message_type="code",
+            user_message=_tracking_text_from_message(message, f"[document:{file_name}]"),
+            bot_reply=reply_text,
+            model_used=None,
+            success=False,
+            message_increment=1,
         )
         return
     if not _file_is_code_like(file_name):
-        await message.answer(
-            "⚠️ Please upload a source-code or text file for debugging.",
-            reply_markup=_code_reply_keyboard(),
+        reply_text = "Please upload a source-code or text file for debugging."
+        await message.answer(reply_text, reply_markup=_code_reply_keyboard())
+        await _track_telegram_action(
+            tracking_service=tracking_service,
+            message=message,
+            message_type="code",
+            user_message=_tracking_text_from_message(message, f"[document:{file_name}]"),
+            bot_reply=reply_text,
+            model_used=None,
+            success=False,
+            message_increment=1,
         )
         return
 
-    progress_message = await _send_progress_message(message, "📥 Reading uploaded code file...")
+    progress_message = await _send_progress_message(message, "Reading uploaded code file...")
     try:
         file = await message.bot.get_file(document.file_id)
         downloaded = await message.bot.download_file(file.file_path)
@@ -1602,22 +1902,52 @@ async def handle_code_document_upload(
     except Exception:
         await _clear_progress_message(progress_message)
         logger.exception("Failed to download uploaded code file.")
-        await message.answer("⚠️ I could not read that file. Please upload it again.")
+        reply_text = "I could not read that file. Please upload it again."
+        await message.answer(reply_text)
+        await _track_telegram_action(
+            tracking_service=tracking_service,
+            message=message,
+            message_type="code",
+            user_message=_tracking_text_from_message(message, f"[document:{file_name}]"),
+            bot_reply=reply_text,
+            model_used=None,
+            success=False,
+            message_increment=1,
+        )
         return
 
     decoded = _decode_uploaded_code_file(raw_bytes)
     if not decoded:
         await _clear_progress_message(progress_message)
-        await message.answer(
-            "⚠️ I couldn't decode that file as text code.\nUpload a plain text source file.",
-            reply_markup=_code_reply_keyboard(),
+        reply_text = "I couldn't decode that file as text code.\nUpload a plain text source file."
+        await message.answer(reply_text, reply_markup=_code_reply_keyboard())
+        await _track_telegram_action(
+            tracking_service=tracking_service,
+            message=message,
+            message_type="code",
+            user_message=_tracking_text_from_message(message, f"[document:{file_name}]"),
+            bot_reply=reply_text,
+            model_used=None,
+            success=False,
+            message_increment=1,
         )
         return
 
     async with session_manager.lock(message.from_user.id) as session:
         if session.active_feature != Feature.JO_AI or session.jo_ai_mode != JoAIMode.CODE:
             await _clear_progress_message(progress_message)
-            await message.answer("⏳ Code session expired. Send /code and try again.")
+            reply_text = "Code session expired. Send /code and try again."
+            await message.answer(reply_text)
+            await _track_telegram_action(
+                tracking_service=tracking_service,
+                message=message,
+                message_type="code",
+                user_message=_tracking_text_from_message(message, f"[document:{file_name}]"),
+                bot_reply=reply_text,
+                model_used=None,
+                success=False,
+                message_increment=1,
+            )
             return
         session.jo_ai_code_file_name = file_name
         session.jo_ai_code_file_content = decoded
@@ -1636,13 +1966,31 @@ async def handle_code_document_upload(
                 f"User request: {caption_text}\n\n"
                 f"```text\n{decoded}\n```"
             )
-        await _process_chat_message(message, user_text, session_manager, chat_service, [], "code", mode_options)
+        await _process_chat_message(
+            message,
+            user_text,
+            session_manager,
+            chat_service,
+            [],
+            "code",
+            mode_options,
+            tracking_service=tracking_service,
+            tracking_message_type="code",
+            tracking_user_message=caption_text,
+        )
         return
 
-    await message.answer(
-        f"✅ File received: <b>{html.escape(file_name)}</b>\n"
-        "Now send what you want me to debug or fix.",
-        reply_markup=_code_reply_keyboard(),
+    reply_text = f"File received: <b>{html.escape(file_name)}</b>\nNow send what you want me to debug or fix."
+    await message.answer(reply_text, reply_markup=_code_reply_keyboard())
+    await _track_telegram_action(
+        tracking_service=tracking_service,
+        message=message,
+        message_type="code",
+        user_message=_tracking_text_from_message(message, f"[document:{file_name}]"),
+        bot_reply=reply_text,
+        model_used=None,
+        success=True,
+        message_increment=1,
     )
 
 
@@ -1672,6 +2020,7 @@ async def handle_kimi_photo(
     chat_service: ChatService,
     kimi_api_key: str | None,
     kimi_model: str,
+    tracking_service: SupabaseTrackingService | None = None,
 ) -> None:
     if not message.from_user or not message.photo:
         return
@@ -1688,6 +2037,25 @@ async def handle_kimi_photo(
 
     if mode != JoAIMode.KIMI_IMAGE_DESCRIBER:
         await _prompt_uploaded_image_action(message, session_manager, largest.file_id, prompt_text)
+        await _track_telegram_action(
+            tracking_service=tracking_service,
+            message=message,
+            message_type="vision",
+            user_message=prompt_text or "[photo]",
+            bot_reply="Image upload received. Waiting for describe confirmation.",
+            model_used=kimi_model,
+            success=True,
+            message_increment=1,
+            feature_used="image_vision",
+            media=TrackingMedia(
+                media_type="image",
+                storage_path=f"telegram_file:{largest.file_id}",
+                mime_type="image/jpeg",
+                provider_source="telegram",
+                media_origin="upload",
+                media_status="available",
+            ),
+        )
         return
 
     progress_message = await _send_progress_message(message, "Analyzing your image...")
@@ -1706,37 +2074,90 @@ async def handle_kimi_photo(
     except AIServiceError as exc:
         await _clear_progress_message(progress_message)
         if _is_kimi_unclear_result(str(exc)):
-            await message.answer(
-                "I could not clearly understand this image. Try another image with better lighting or clarity.",
-                reply_markup=kimi_result_keyboard(),
+            reply_text = "I could not clearly understand this image. Try another image with better lighting or clarity."
+            await message.answer(reply_text, reply_markup=kimi_result_keyboard())
+            await _track_telegram_action(
+                tracking_service=tracking_service,
+                message=message,
+                message_type="vision",
+                user_message=prompt_text or "[photo]",
+                bot_reply=reply_text,
+                model_used=kimi_model,
+                success=False,
+                message_increment=1,
             )
             return
         if "timed out" in str(exc).lower() or "timeout" in str(exc).lower():
-            await message.answer(
-                "I could not describe this image in time. Please try again.",
-                reply_markup=kimi_result_keyboard(),
+            reply_text = "I could not describe this image in time. Please try again."
+            await message.answer(reply_text, reply_markup=kimi_result_keyboard())
+            await _track_telegram_action(
+                tracking_service=tracking_service,
+                message=message,
+                message_type="vision",
+                user_message=prompt_text or "[photo]",
+                bot_reply=reply_text,
+                model_used=kimi_model,
+                success=False,
+                message_increment=1,
             )
             return
-        await message.answer(
-            _friendly_error_text("JO AI Vision is temporarily unavailable", exc),
-            reply_markup=kimi_result_keyboard(),
+        reply_text = _friendly_error_text("JO AI Vision is temporarily unavailable", exc)
+        await message.answer(reply_text, reply_markup=kimi_result_keyboard())
+        await _track_telegram_action(
+            tracking_service=tracking_service,
+            message=message,
+            message_type="vision",
+            user_message=prompt_text or "[photo]",
+            bot_reply=reply_text,
+            model_used=kimi_model,
+            success=False,
+            message_increment=1,
         )
         return
     except Exception:
         await _clear_progress_message(progress_message)
         logger.exception("Failed to download user image.")
-        await message.answer("I could not read that image file. Please send another one.")
+        reply_text = "I could not read that image file. Please send another one."
+        await message.answer(reply_text)
+        await _track_telegram_action(
+            tracking_service=tracking_service,
+            message=message,
+            message_type="vision",
+            user_message=prompt_text or "[photo]",
+            bot_reply=reply_text,
+            model_used=kimi_model,
+            success=False,
+            message_increment=1,
+        )
         return
 
     await _clear_progress_message(progress_message)
     if not description.strip():
-        await message.answer(
-            "I could not clearly understand this image. Please try another image.",
-            reply_markup=kimi_result_keyboard(),
+        reply_text = "I could not clearly understand this image. Please try another image."
+        await message.answer(reply_text, reply_markup=kimi_result_keyboard())
+        await _track_telegram_action(
+            tracking_service=tracking_service,
+            message=message,
+            message_type="vision",
+            user_message=prompt_text or "[photo]",
+            bot_reply=reply_text,
+            model_used=kimi_model,
+            success=False,
+            message_increment=1,
         )
         return
 
     await _send_formatted_ai_reply(message, "chat", description, kimi_result_keyboard())
+    await _track_telegram_action(
+        tracking_service=tracking_service,
+        message=message,
+        message_type="vision",
+        user_message=prompt_text or "[photo]",
+        bot_reply=description,
+        model_used=kimi_model,
+        success=True,
+        message_increment=1,
+    )
 
 
 @router.callback_query(F.data == "joai:kimi_describe_last")
@@ -1832,12 +2253,12 @@ async def kimi_retry_same_image(
         mode = session.jo_ai_mode if session.active_feature == Feature.JO_AI else JoAIMode.MENU
 
     if mode != JoAIMode.KIMI_IMAGE_DESCRIBER or not last_file_id:
-        await query.answer("⚠️ No image to retry. Send a new image first.", show_alert=True)
+        await query.answer("No image to retry. Send a new image first.", show_alert=True)
         return
 
-    await query.answer("🔁 Retrying same image...")
+    await query.answer("Retrying same image...")
     if isinstance(query.message, Message):
-        progress_message = await _send_progress_message(query.message, "🖼️ Re-analyzing the same image...")
+        progress_message = await _send_progress_message(query.message, "Re-analyzing the same image...")
         try:
             description = await _run_kimi_with_progress(
                 query.message,
@@ -1854,12 +2275,12 @@ async def kimi_retry_same_image(
             await _clear_progress_message(progress_message)
             if _is_kimi_unclear_result(str(exc)):
                 await query.message.answer(
-                    "🤔 I still couldn't clearly understand this image.\nTry a clearer image.",
+                    "I still couldn't clearly understand this image.\nTry a clearer image.",
                     reply_markup=kimi_result_keyboard(),
                 )
             elif "timed out" in str(exc).lower() or "timeout" in str(exc).lower():
                 await query.message.answer(
-                    "⏳ I couldn't describe this image in time.\nPlease try again.",
+                    "I couldn't describe this image in time.\nPlease try again.",
                     reply_markup=kimi_result_keyboard(),
                 )
             else:
@@ -1872,7 +2293,7 @@ async def kimi_retry_same_image(
             await _clear_progress_message(progress_message)
             logger.exception("Unexpected vision retry callback error.")
             await query.message.answer(
-                "⚠️ I couldn't process that image right now.\nPlease try again shortly.",
+                "I couldn't process that image right now.\nPlease try again shortly.",
                 reply_markup=kimi_result_keyboard(),
             )
             return
@@ -1880,7 +2301,7 @@ async def kimi_retry_same_image(
         await _clear_progress_message(progress_message)
         if not description.strip():
             await query.message.answer(
-                "🤔 I still couldn't clearly understand this image.\nTry another image.",
+                "I still couldn't clearly understand this image.\nTry another image.",
                 reply_markup=kimi_result_keyboard(),
             )
             return
@@ -1929,7 +2350,7 @@ async def _run_kimi_with_progress(message: Message, work_coro) -> str:
         return await asyncio.wait_for(asyncio.shield(task), timeout=25)
     except asyncio.TimeoutError:
         await message.answer(
-            "⏳ Still working on it...\n"
+            "? Still working on it...\n"
             "I'm retrying once to extract the image details."
         )
         try:
@@ -1941,6 +2362,90 @@ async def _run_kimi_with_progress(message: Message, work_coro) -> str:
             raise AIServiceError("Vision request timed out.") from exc
 
 
+async def _process_gemini_message(
+    *,
+    message: Message,
+    user_text: str,
+    session_manager: SessionManager,
+    gemini_service: GeminiChatService,
+    tracking_service: SupabaseTrackingService | None,
+) -> None:
+    reply_markup = jo_chat_keyboard("joai:menu")
+    guardrail_reply = guardrail_response_for_user_query(user_text)
+    if guardrail_reply:
+        await _send_formatted_ai_reply(message, "chat", guardrail_reply, reply_markup)
+        await _track_telegram_action(
+            tracking_service=tracking_service,
+            message=message,
+            message_type="gemini",
+            user_message=user_text,
+            bot_reply=guardrail_reply,
+            model_used=gemini_service.model,
+            success=not _is_internal_rule_block(guardrail_reply),
+            message_increment=1,
+            feature_used="gemini_chat",
+        )
+        return
+
+    progress_message = await _send_progress_message(message, "Generating Gemini response...")
+    try:
+        async with ChatActionSender.typing(bot=message.bot, chat_id=message.chat.id):
+            reply_text = await gemini_service.generate_reply(user_text)
+    except AIServiceError as exc:
+        await _clear_progress_message(progress_message)
+        error_text = _friendly_error_text("Gemini mode is temporarily unavailable", exc)
+        await message.answer(error_text, reply_markup=reply_markup)
+        await _track_telegram_action(
+            tracking_service=tracking_service,
+            message=message,
+            message_type="gemini",
+            user_message=user_text,
+            bot_reply=error_text,
+            model_used=gemini_service.model,
+            success=False,
+            message_increment=1,
+            feature_used="gemini_chat",
+        )
+        return
+    except Exception:
+        await _clear_progress_message(progress_message)
+        logger.exception("Unexpected Gemini generation error.")
+        error_text = _friendly_error_text("Unexpected Gemini error")
+        await message.answer(error_text, reply_markup=reply_markup)
+        await _track_telegram_action(
+            tracking_service=tracking_service,
+            message=message,
+            message_type="gemini",
+            user_message=user_text,
+            bot_reply=error_text,
+            model_used=gemini_service.model,
+            success=False,
+            message_increment=1,
+            feature_used="gemini_chat",
+        )
+        return
+
+    await _clear_progress_message(progress_message)
+    if message.from_user:
+        async with session_manager.lock(message.from_user.id) as session:
+            if session.active_feature == Feature.JO_AI and session.jo_ai_mode == JoAIMode.GEMINI:
+                session.jo_ai_chat_history.append(("user", _compact_history_entry(user_text)))
+                session.jo_ai_chat_history.append(("assistant", _compact_history_entry(reply_text)))
+
+    await _send_formatted_ai_reply(message, "chat", reply_text, reply_markup)
+    await _track_telegram_action(
+        tracking_service=tracking_service,
+        message=message,
+        message_type="gemini",
+        user_message=user_text,
+        bot_reply=reply_text,
+        model_used=gemini_service.model,
+        success=True,
+        message_increment=1,
+        feature_used="gemini_chat",
+    )
+
+
 async def _process_chat_message(
     message: Message,
     user_text: str,
@@ -1950,14 +2455,37 @@ async def _process_chat_message(
     mode: Literal["chat", "code", "research", "prompt", "image_prompt"],
     mode_options: dict[str, object],
     reply_markup: InlineKeyboardMarkup | None = None,
+    tracking_service: SupabaseTrackingService | None = None,
+    tracking_message_type: str | None = None,
+    tracking_user_message: str | None = None,
 ) -> None:
     keyboard = reply_markup or jo_chat_keyboard()
+    effective_message_type = (tracking_message_type or mode).strip() or mode
+    tracked_user_message = (tracking_user_message or "").strip() or user_text
+    if not tracked_user_message.strip():
+        tracked_user_message = _tracking_text_from_message(message, "[message]")
+    model_used = _chat_model_used(chat_service, mode_options)
+    guardrail_reply = guardrail_response_for_user_query(user_text, tracked_user_message)
+    if guardrail_reply:
+        await _send_formatted_ai_reply(message, "chat", guardrail_reply, keyboard)
+        await _track_telegram_action(
+            tracking_service=tracking_service,
+            message=message,
+            message_type=effective_message_type,
+            user_message=tracked_user_message,
+            bot_reply=guardrail_reply,
+            model_used=model_used,
+            success=not _is_internal_rule_block(guardrail_reply),
+            message_increment=1,
+        )
+        return
+
     show_progress_message = mode not in {"chat", "code"}
     if show_progress_message:
         await _maybe_send_engagement(message)
     progress_message: Message | None = None
     if show_progress_message:
-        progress_text = MODE_PROGRESS_TEXT.get(mode, "🤖 Working on it...")
+        progress_text = MODE_PROGRESS_TEXT.get(mode, "Working on it...")
         progress_message = await _send_progress_message(message, progress_text)
     try:
         async with ChatActionSender.typing(bot=message.bot, chat_id=message.chat.id):
@@ -1971,12 +2499,34 @@ async def _process_chat_message(
             )
     except AIServiceError as exc:
         await _clear_progress_message(progress_message)
-        await message.answer(_friendly_error_text("AI is unavailable right now", exc), reply_markup=keyboard)
+        reply_text = _friendly_error_text("AI is unavailable right now", exc)
+        await message.answer(reply_text, reply_markup=keyboard)
+        await _track_telegram_action(
+            tracking_service=tracking_service,
+            message=message,
+            message_type=effective_message_type,
+            user_message=tracked_user_message,
+            bot_reply=reply_text,
+            model_used=model_used,
+            success=False,
+            message_increment=1,
+        )
         return
     except Exception:
         await _clear_progress_message(progress_message)
         logger.exception("Unexpected JO AI error.")
-        await message.answer(_friendly_error_text("Unexpected AI failure"), reply_markup=keyboard)
+        reply_text = _friendly_error_text("Unexpected AI failure")
+        await message.answer(reply_text, reply_markup=keyboard)
+        await _track_telegram_action(
+            tracking_service=tracking_service,
+            message=message,
+            message_type=effective_message_type,
+            user_message=tracked_user_message,
+            bot_reply=reply_text,
+            model_used=model_used,
+            success=False,
+            message_increment=1,
+        )
         return
 
     await _clear_progress_message(progress_message)
@@ -1986,6 +2536,16 @@ async def _process_chat_message(
                 session.jo_ai_chat_history.append(("user", _compact_history_entry(user_text)))
                 session.jo_ai_chat_history.append(("assistant", _compact_history_entry(reply)))
     await _send_formatted_ai_reply(message, mode, reply, keyboard)
+    await _track_telegram_action(
+        tracking_service=tracking_service,
+        message=message,
+        message_type=effective_message_type,
+        user_message=tracked_user_message,
+        bot_reply=reply,
+        model_used=model_used,
+        success=True,
+        message_increment=1,
+    )
 
 
 def _tts_extension_for_mime_type(mime_type: str) -> str:
@@ -2009,29 +2569,55 @@ async def _process_tts_message(
     voice: str | None,
     style: str | None,
     emotion: str | None,
+    tracking_service: SupabaseTrackingService | None,
 ) -> None:
+    model_used = (tts_service.function_id or "").strip() or None
     selected_language = (language or "").strip().lower()
     if selected_language not in TTS_LANGUAGE_LABELS:
-        await message.answer(
-            "Step 1/4: Choose a language first.",
-            reply_markup=tts_language_keyboard(),
+        reply_text = "Step 1/4: Choose a language first."
+        await message.answer(reply_text, reply_markup=tts_language_keyboard())
+        await _track_telegram_action(
+            tracking_service=tracking_service,
+            message=message,
+            message_type="tts",
+            user_message=user_text,
+            bot_reply=reply_text,
+            model_used=model_used,
+            success=False,
+            message_increment=1,
         )
         return
 
     selected_voice = (voice or "").strip().lower()
     if selected_voice not in TTS_VOICE_LABELS:
-        await message.answer(
-            "Step 2/4: Choose male or female first.",
-            reply_markup=tts_voice_keyboard(),
+        reply_text = "Step 2/4: Choose male or female first."
+        await message.answer(reply_text, reply_markup=tts_voice_keyboard())
+        await _track_telegram_action(
+            tracking_service=tracking_service,
+            message=message,
+            message_type="tts",
+            user_message=user_text,
+            bot_reply=reply_text,
+            model_used=model_used,
+            success=False,
+            message_increment=1,
         )
         return
 
     selected_style = (style or "").strip().lower()
     selected_emotion = (emotion or "").strip().lower()
     if not selected_style or selected_emotion not in TTS_EMOTION_LABELS:
-        await message.answer(
-            "Step 3/4: Choose a voice style first.",
-            reply_markup=tts_style_keyboard(_tts_style_choices(selected_voice)),
+        reply_text = "Step 3/4: Choose a voice style first."
+        await message.answer(reply_text, reply_markup=tts_style_keyboard(_tts_style_choices(selected_voice)))
+        await _track_telegram_action(
+            tracking_service=tracking_service,
+            message=message,
+            message_type="tts",
+            user_message=user_text,
+            bot_reply=reply_text,
+            model_used=model_used,
+            success=False,
+            message_increment=1,
         )
         return
 
@@ -2046,17 +2632,33 @@ async def _process_tts_message(
             )
     except AIServiceError as exc:
         await _clear_progress_message(progress_message)
-        await message.answer(
-            _friendly_error_text("Text-to-Speech is temporarily unavailable", exc),
-            reply_markup=_tts_text_reply_keyboard(),
+        reply_text = _friendly_error_text("Text-to-Speech is temporarily unavailable", exc)
+        await message.answer(reply_text, reply_markup=_tts_text_reply_keyboard())
+        await _track_telegram_action(
+            tracking_service=tracking_service,
+            message=message,
+            message_type="tts",
+            user_message=user_text,
+            bot_reply=reply_text,
+            model_used=model_used,
+            success=False,
+            message_increment=1,
         )
         return
     except Exception:
         await _clear_progress_message(progress_message)
         logger.exception("Unexpected TTS generation error.")
-        await message.answer(
-            _friendly_error_text("Unexpected Text-to-Speech error"),
-            reply_markup=_tts_text_reply_keyboard(),
+        reply_text = _friendly_error_text("Unexpected Text-to-Speech error")
+        await message.answer(reply_text, reply_markup=_tts_text_reply_keyboard())
+        await _track_telegram_action(
+            tracking_service=tracking_service,
+            message=message,
+            message_type="tts",
+            user_message=user_text,
+            bot_reply=reply_text,
+            model_used=model_used,
+            success=False,
+            message_increment=1,
         )
         return
 
@@ -2076,6 +2678,16 @@ async def _process_tts_message(
         ),
         reply_markup=_tts_text_reply_keyboard(),
     )
+    await _track_telegram_action(
+        tracking_service=tracking_service,
+        message=message,
+        message_type="tts",
+        user_message=user_text,
+        bot_reply="Speech is ready",
+        model_used=model_used,
+        success=True,
+        message_increment=1,
+    )
 
 
 async def _process_prompt_message(
@@ -2085,21 +2697,44 @@ async def _process_prompt_message(
     chat_service: ChatService,
     current_prompt_type: str | None,
     mode_options: dict[str, object],
+    tracking_service: SupabaseTrackingService | None,
 ) -> None:
+    model_used = _chat_model_used(chat_service, mode_options)
     if not message.from_user:
         return
     if not current_prompt_type:
         async with session_manager.lock(message.from_user.id) as session:
             if session.active_feature != Feature.JO_AI or session.jo_ai_mode != JoAIMode.PROMPT:
-                await message.answer("⏳ Prompt session expired. Send /prompt to start again.")
+                reply_text = "Prompt session expired. Send /prompt to start again."
+                await message.answer(reply_text)
+                await _track_telegram_action(
+                    tracking_service=tracking_service,
+                    message=message,
+                    message_type="prompt",
+                    user_message=user_text,
+                    bot_reply=reply_text,
+                    model_used=model_used,
+                    success=False,
+                    message_increment=1,
+                )
                 return
             session.jo_ai_prompt_type = user_text
         await _send_prompt_details_step(message)
+        await _track_telegram_action(
+            tracking_service=tracking_service,
+            message=message,
+            message_type="prompt_setup",
+            user_message=user_text,
+            bot_reply="Prompt type saved. Waiting for details.",
+            model_used=model_used,
+            success=True,
+            message_increment=1,
+        )
         return
 
     await _maybe_send_engagement(message)
     prompt_request = f"Prompt type: {current_prompt_type}\nUser goal/details: {user_text}\nGenerate one optimized prompt."
-    progress_message = await _send_progress_message(message, "✨ Generating your optimized prompt...")
+    progress_message = await _send_progress_message(message, "Generating your optimized prompt...")
     try:
         prompt_output = await chat_service.generate_reply(
             prompt_request,
@@ -2111,18 +2746,47 @@ async def _process_prompt_message(
         )
     except AIServiceError as exc:
         await _clear_progress_message(progress_message)
-        await message.answer(_friendly_error_text("Prompt generation failed", exc), reply_markup=_prompt_details_reply_keyboard())
+        reply_text = _friendly_error_text("Prompt generation failed", exc)
+        await message.answer(reply_text, reply_markup=_prompt_details_reply_keyboard())
+        await _track_telegram_action(
+            tracking_service=tracking_service,
+            message=message,
+            message_type="prompt",
+            user_message=user_text,
+            bot_reply=reply_text,
+            model_used=model_used,
+            success=False,
+            message_increment=1,
+        )
         return
     except Exception:
         await _clear_progress_message(progress_message)
         logger.exception("Unexpected prompt generation error.")
-        await message.answer(
-            _friendly_error_text("Unexpected prompt generation error"),
-            reply_markup=_prompt_details_reply_keyboard(),
+        reply_text = _friendly_error_text("Unexpected prompt generation error")
+        await message.answer(reply_text, reply_markup=_prompt_details_reply_keyboard())
+        await _track_telegram_action(
+            tracking_service=tracking_service,
+            message=message,
+            message_type="prompt",
+            user_message=user_text,
+            bot_reply=reply_text,
+            model_used=model_used,
+            success=False,
+            message_increment=1,
         )
         return
     await _clear_progress_message(progress_message)
     await _send_formatted_ai_reply(message, "prompt", prompt_output, _prompt_details_reply_keyboard())
+    await _track_telegram_action(
+        tracking_service=tracking_service,
+        message=message,
+        message_type="prompt",
+        user_message=user_text,
+        bot_reply=prompt_output,
+        model_used=model_used,
+        success=True,
+        message_increment=1,
+    )
 
 
 def _image_request_blocked_text() -> str:
@@ -2161,19 +2825,37 @@ async def _process_image_message(
     current_image_type: str | None,
     current_image_ratio: str | None,
     mode_options: dict[str, object],
+    tracking_service: SupabaseTrackingService | None,
 ) -> None:
     _ = session_manager
+    model_used = (image_generation_service.model or "").strip() or None
 
     if not current_image_type:
-        await message.answer(
-            "Step 1/3: Choose an image style first.",
-            reply_markup=image_type_keyboard(),
+        reply_text = "Step 1/3: Choose an image style first."
+        await message.answer(reply_text, reply_markup=image_type_keyboard())
+        await _track_telegram_action(
+            tracking_service=tracking_service,
+            message=message,
+            message_type="image",
+            user_message=user_text,
+            bot_reply=reply_text,
+            model_used=model_used,
+            success=False,
+            image_increment=1,
         )
         return
     if current_image_ratio not in IMAGE_RATIO_TO_SIZE:
-        await message.answer(
-            "Step 2/3: Choose an aspect ratio first.",
-            reply_markup=image_ratio_keyboard(),
+        reply_text = "Step 2/3: Choose an aspect ratio first."
+        await message.answer(reply_text, reply_markup=image_ratio_keyboard())
+        await _track_telegram_action(
+            tracking_service=tracking_service,
+            message=message,
+            message_type="image",
+            user_message=user_text,
+            bot_reply=reply_text,
+            model_used=model_used,
+            success=False,
+            image_increment=1,
         )
         return
 
@@ -2182,8 +2864,20 @@ async def _process_image_message(
     image_size = IMAGE_RATIO_TO_SIZE.get(current_image_ratio, IMAGE_RATIO_TO_SIZE["1:1"])
     style_hint = IMAGE_TYPE_STYLE_HINTS.get(current_image_type, "high quality image")
 
-    if contains_internal_detail_request(user_text, style_label, ratio_label):
-        await message.answer(_image_request_blocked_text(), reply_markup=_image_prompt_reply_keyboard())
+    guardrail_reply = guardrail_response_for_user_query(user_text, style_label, ratio_label)
+    if guardrail_reply:
+        reply_text = guardrail_reply if not _is_internal_rule_block(guardrail_reply) else _image_request_blocked_text()
+        await message.answer(reply_text, reply_markup=_image_prompt_reply_keyboard())
+        await _track_telegram_action(
+            tracking_service=tracking_service,
+            message=message,
+            message_type="image",
+            user_message=user_text,
+            bot_reply=reply_text,
+            model_used=model_used,
+            success=False,
+            image_increment=1,
+        )
         return
 
     await _maybe_send_engagement(message)
@@ -2239,68 +2933,189 @@ async def _process_image_message(
     except AIServiceError as exc:
         await _clear_progress_message(progress_message)
         if _is_internal_rule_block(str(exc)):
-            await message.answer(_image_request_blocked_text(), reply_markup=_image_prompt_reply_keyboard())
+            reply_text = _image_request_blocked_text()
+            await message.answer(reply_text, reply_markup=_image_prompt_reply_keyboard())
+            await _track_telegram_action(
+                tracking_service=tracking_service,
+                message=message,
+                message_type="image",
+                user_message=user_text,
+                bot_reply=reply_text,
+                model_used=model_used,
+                success=False,
+                image_increment=1,
+                feature_used="image_generation",
+                media=TrackingMedia(
+                    media_type="image",
+                    provider_source="nvidia",
+                    media_origin="generated",
+                    media_status="failed",
+                    media_error_reason=reply_text,
+                ),
+            )
             return
-        await message.answer(
-            _image_generation_failed_text(
-                prompt=cleaned_prompt,
-                confirmed_unavailable=_is_service_unavailable_error(exc) or not bool(image_generation_service.api_key),
+        reply_text = _image_generation_failed_text(
+            prompt=cleaned_prompt,
+            confirmed_unavailable=_is_service_unavailable_error(exc) or not bool(image_generation_service.api_key),
+        )
+        await message.answer(reply_text, reply_markup=_image_prompt_reply_keyboard())
+        await _track_telegram_action(
+            tracking_service=tracking_service,
+            message=message,
+            message_type="image",
+            user_message=user_text,
+            bot_reply=reply_text,
+            model_used=model_used,
+            success=False,
+            image_increment=1,
+            feature_used="image_generation",
+            media=TrackingMedia(
+                media_type="image",
+                provider_source="nvidia",
+                media_origin="generated",
+                media_status="failed",
+                media_error_reason=reply_text,
             ),
-            reply_markup=_image_prompt_reply_keyboard(),
         )
         return
     except Exception:
         await _clear_progress_message(progress_message)
         logger.exception("Unexpected image generation error.")
-        await message.answer(
-            _image_generation_failed_text(prompt=cleaned_prompt, confirmed_unavailable=False),
-            reply_markup=_image_prompt_reply_keyboard(),
+        reply_text = _image_generation_failed_text(prompt=cleaned_prompt, confirmed_unavailable=False)
+        await message.answer(reply_text, reply_markup=_image_prompt_reply_keyboard())
+        await _track_telegram_action(
+            tracking_service=tracking_service,
+            message=message,
+            message_type="image",
+            user_message=user_text,
+            bot_reply=reply_text,
+            model_used=model_used,
+            success=False,
+            image_increment=1,
+            feature_used="image_generation",
+            media=TrackingMedia(
+                media_type="image",
+                provider_source="nvidia",
+                media_origin="generated",
+                media_status="failed",
+                media_error_reason=reply_text,
+            ),
         )
         return
 
     await _clear_progress_message(progress_message)
+    success_caption = (
+        "<b>Your image is ready</b>\n\n"
+        f"Style: <b>{html.escape(style_label)}</b>\n"
+        f"Ratio: <b>{html.escape(ratio_label)}</b>\n"
+        "Prompt used:\n"
+        f"<code>{html.escape(cleaned_prompt[:900])}</code>"
+    )
     if generated.image_bytes:
         image_file = BufferedInputFile(generated.image_bytes, filename="jo_ai_generated.png")
-        await message.answer_photo(
+        sent = await message.answer_photo(
             photo=image_file,
-            caption=(
-                "<b>Your image is ready</b>\n\n"
-                f"Style: <b>{html.escape(style_label)}</b>\n"
-                f"Ratio: <b>{html.escape(ratio_label)}</b>\n"
-                "Prompt used:\n"
-                f"<code>{html.escape(cleaned_prompt[:900])}</code>"
-            ),
+            caption=success_caption,
             reply_markup=_image_prompt_reply_keyboard(),
+        )
+        storage_path = None
+        if sent.photo:
+            storage_path = f"telegram_file:{sent.photo[-1].file_id}"
+        await _track_telegram_action(
+            tracking_service=tracking_service,
+            message=message,
+            message_type="image",
+            user_message=user_text,
+            bot_reply="Image generated successfully.",
+            model_used=model_used,
+            success=True,
+            image_increment=1,
+            feature_used="image_generation",
+            media=TrackingMedia(
+                media_type="image",
+                media_url=generated.image_url,
+                storage_path=storage_path,
+                mime_type="image/png",
+                provider_source="nvidia",
+                media_origin="generated",
+                media_status="available",
+            ),
         )
         return
 
     if generated.image_url:
-        await message.answer_photo(
+        sent = await message.answer_photo(
             photo=generated.image_url,
-            caption=(
-                "<b>Your image is ready</b>\n\n"
-                f"Style: <b>{html.escape(style_label)}</b>\n"
-                f"Ratio: <b>{html.escape(ratio_label)}</b>\n"
-                "Prompt used:\n"
-                f"<code>{html.escape(cleaned_prompt[:900])}</code>"
-            ),
+            caption=success_caption,
             reply_markup=_image_prompt_reply_keyboard(),
+        )
+        storage_path = None
+        if sent.photo:
+            storage_path = f"telegram_file:{sent.photo[-1].file_id}"
+        await _track_telegram_action(
+            tracking_service=tracking_service,
+            message=message,
+            message_type="image",
+            user_message=user_text,
+            bot_reply="Image generated successfully.",
+            model_used=model_used,
+            success=True,
+            image_increment=1,
+            feature_used="image_generation",
+            media=TrackingMedia(
+                media_type="image",
+                media_url=generated.image_url,
+                storage_path=storage_path,
+                provider_source="nvidia",
+                media_origin="generated",
+                media_status="available",
+            ),
         )
         return
 
-    await message.answer(
-        _image_generation_failed_text(prompt=cleaned_prompt, confirmed_unavailable=True),
-        reply_markup=_image_prompt_reply_keyboard(),
+    reply_text = _image_generation_failed_text(prompt=cleaned_prompt, confirmed_unavailable=True)
+    await message.answer(reply_text, reply_markup=_image_prompt_reply_keyboard())
+    await _track_telegram_action(
+        tracking_service=tracking_service,
+        message=message,
+        message_type="image",
+        user_message=user_text,
+        bot_reply=reply_text,
+        model_used=model_used,
+        success=False,
+        image_increment=1,
+        feature_used="image_generation",
+        media=TrackingMedia(
+            media_type="image",
+            provider_source="nvidia",
+            media_origin="generated",
+            media_status="missing",
+            media_error_reason="image payload missing",
+        ),
     )
 
 
 @router.message(ActiveFeatureFilter(Feature.JO_AI))
-async def jo_ai_unexpected_input(message: Message) -> None:
-    await message.answer(
-        "📩 Send text in the current JO AI mode.\n"
-        "📎 In Code Generator mode, you can upload a code file for debug/fix.\n"
-        "🖼️ In Vision mode, send an image.\n"
-        "🔊 In Text-to-Speech mode, choose language, voice, and style first.\n"
-        "💡 You can switch mode anytime.",
-        reply_markup=jo_ai_menu_keyboard(),
+async def jo_ai_unexpected_input(
+    message: Message,
+    tracking_service: SupabaseTrackingService | None = None,
+) -> None:
+    reply_text = (
+        "Send text in the current JO AI mode.\n"
+        "In Code Generator mode, you can upload a code file for debug/fix.\n"
+        "In Vision mode, send an image.\n"
+        "In Text-to-Speech mode, choose language, voice, and style first.\n"
+        "You can switch mode anytime."
     )
+    await message.answer(reply_text, reply_markup=jo_ai_menu_keyboard())
+    await _track_telegram_action(
+        tracking_service=tracking_service,
+        message=message,
+        message_type="jo_ai_unexpected",
+        user_message=_tracking_text_from_message(message, "[unexpected input]"),
+        bot_reply=reply_text,
+        model_used=None,
+        success=False,
+        message_increment=1,
+    )
+
