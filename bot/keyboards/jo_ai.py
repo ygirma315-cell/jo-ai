@@ -14,7 +14,7 @@ def jo_ai_menu_keyboard() -> InlineKeyboardMarkup:
     builder.button(text="💬 JO AI Chat", callback_data="joai:chat")
     builder.button(text="⚡ Code Generator", callback_data="joai:code")
     builder.button(text="🔍 Research", callback_data="joai:research")
-    builder.button(text="🧠 Deep Analysis", callback_data="joai:deep_analysis")
+    builder.button(text="🧠 DeepSeek", callback_data="joai:deep_analysis")
     builder.button(text="💠 Gemini Chat", callback_data="joai:gemini")
     builder.button(text="✨ Prompt Generator", callback_data="joai:prompt")
     builder.button(text="🎨 Image Generator", callback_data="joai:image")
@@ -29,6 +29,17 @@ def jo_chat_keyboard(back_callback: str = "joai:menu", back_text: str = "⬅️ 
     builder = InlineKeyboardBuilder()
     _append_back_main(builder, back_callback, back_text)
     builder.adjust(2)
+    return builder.as_markup()
+
+
+def gemini_mode_keyboard() -> InlineKeyboardMarkup:
+    builder = InlineKeyboardBuilder()
+    builder.button(text="💬 Chat", callback_data="joaigem:mode:chat")
+    builder.button(text="🎨 Image", callback_data="joaigem:mode:image")
+    builder.button(text="🔊 Voice", callback_data="joaigem:mode:voice")
+    builder.button(text="🎬 Video", callback_data="joaigem:mode:video")
+    _append_back_main(builder, "joai:menu")
+    builder.adjust(2, 2, 2)
     return builder.as_markup()
 
 

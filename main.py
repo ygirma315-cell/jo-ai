@@ -62,6 +62,7 @@ from version import VERSION, WEB_VERSION
 
 PROJECT_ROOT = Path(__file__).resolve().parent
 ADMIN_FRONTEND_DIR = PROJECT_ROOT / "admin"
+MEDIA_ASSETS_DIR = PROJECT_ROOT / "media_assets"
 DEFAULT_GITHUB_PAGES_URL = "https://ygirma315-cell.github.io/jo-ai/"
 DEFAULT_LOCAL_ORIGINS = (
     "http://127.0.0.1:8000",
@@ -72,6 +73,7 @@ DEFAULT_LOCAL_ORIGINS = (
 load_dotenv(dotenv_path=PROJECT_ROOT / ".env")
 logger = logging.getLogger(__name__)
 TextMode = Literal["chat", "code", "research", "prompt", "deep_analysis"]
+GeminiMode = Literal["chat", "image", "video", "voice"]
 CODE_FENCE_PATTERN = re.compile(r"```(?P<lang>[a-zA-Z0-9_+#.-]*)\n(?P<code>[\s\S]*?)```", re.MULTILINE)
 DEBUG_INTENT_PATTERN = re.compile(
     r"\b(debug|fix|error|exception|traceback|bug|issue|crash|failing|failure|broken|not working)\b",
@@ -267,6 +269,73 @@ class TTSRequest(TrackingRequestBase):
 
 class GeminiRequest(TrackingRequestBase):
     message: str = Field(min_length=1, max_length=32000)
+    mode: GeminiMode | None = None
+    model: str | None = Field(default=None, max_length=120)
+    image_type: str | None = Field(default=None, max_length=60)
+    ratio: Literal["1:1", "16:9", "9:16"] | None = Field(default=None)
+    size: str | None = Field(default=None, pattern=r"^\d+x\d+$")
+    language: str | None = Field(default=None, max_length=16)
+    voice: str | None = Field(default=None, max_length=32)
+    emotion: str | None = Field(default=None, max_length=32)
+
+    @property
+    def effective_mode(self) -> GeminiMode:
+        value = str(self.mode or "").strip().lower()
+        if value in {"chat", "image", "video", "voice"}:
+            return value  # type: ignore[return-value]
+        return "chat"
+
+    @property
+    def effective_ratio(self) -> Literal["1:1", "16:9", "9:16"]:
+        if self.ratio in IMAGE_RATIO_TO_SIZE:
+            return self.ratio
+        inferred = IMAGE_SIZE_TO_RATIO.get((self.size or "").strip())
+        if inferred in IMAGE_RATIO_TO_SIZE:
+            return inferred  # type: ignore[return-value]
+        return "1:1"
+
+    @property
+    def effective_size(self) -> str:
+        return IMAGE_RATIO_TO_SIZE[self.effective_ratio]
+
+    @property
+    def effective_language(self) -> str:
+        value = (self.language or "en").strip().lower()
+        if value in {"en", "en-us", "english"}:
+            return "en"
+        if value in {"es", "es-es", "spanish"}:
+            return "es"
+        if value in {"fr", "fr-fr", "french"}:
+            return "fr"
+        return "en"
+
+    @property
+    def effective_voice(self) -> str:
+        value = (self.voice or "female").strip().lower()
+        if value in {"male", "man"}:
+            return "male"
+        return "female"
+
+    @property
+    def effective_emotion(self) -> str:
+        value = (self.emotion or "neutral").strip().lower()
+        aliases = {
+            "natural": "neutral",
+            "friendly": "neutral",
+            "happy": "cheerful",
+            "excited": "cheerful",
+            "bright": "cheerful",
+            "energetic": "cheerful",
+            "relaxed": "calm",
+            "soft": "calm",
+            "warm": "calm",
+            "formal": "serious",
+            "focused": "serious",
+            "deep": "serious",
+            "narrator": "serious",
+        }
+        value = aliases.get(value, value)
+        return value if value in {"neutral", "cheerful", "calm", "serious"} else "neutral"
 
 
 class ReferralClaimRequest(TrackingRequestBase):
@@ -335,6 +404,19 @@ def get_settings():
 
 def _safe_service_error(status_code: int = 502) -> BackendError:
     return BackendError(SAFE_SERVICE_UNAVAILABLE_MESSAGE, status_code=status_code)
+
+
+def _status_code_for_ai_error(message: str) -> int:
+    lower = str(message or "").strip().lower()
+    if not lower:
+        return 503
+    if "quota" in lower or "rate-limit" in lower or "rate limit" in lower:
+        return 429
+    if "invalid" in lower and "api key" in lower:
+        return 401
+    if "model is not available" in lower:
+        return 400
+    return 503
 
 
 def _safe_guardrail_response(message: str) -> JSONResponse:
@@ -595,6 +677,7 @@ def _gemini_service() -> GeminiChatService:
     return GeminiChatService(
         api_key=settings.gemini_api_key,
         model=settings.gemini_model,
+        fallback_models=settings.gemini_fallback_models,
     )
 
 
@@ -631,6 +714,34 @@ def _decode_base64_image(raw_image: str) -> bytes:
         return base64.b64decode(compact, validate=True)
     except (binascii.Error, ValueError) as exc:
         raise BackendError("Invalid base64 image payload.", status_code=400) from exc
+
+
+def _image_extension_for_mime(mime_type: str | None) -> str:
+    normalized = str(mime_type or "").strip().lower()
+    if normalized == "image/jpeg" or normalized == "image/jpg":
+        return "jpg"
+    if normalized == "image/webp":
+        return "webp"
+    if normalized == "image/gif":
+        return "gif"
+    return "png"
+
+
+def _persist_image_bytes_to_local_asset(
+    image_bytes: bytes,
+    *,
+    prefix: str,
+    mime_type: str | None = None,
+) -> tuple[str, str]:
+    if not image_bytes:
+        raise BackendError("Image payload is empty.", status_code=400)
+    MEDIA_ASSETS_DIR.mkdir(parents=True, exist_ok=True)
+    digest = hashlib.sha256(image_bytes).hexdigest()[:16]
+    extension = _image_extension_for_mime(mime_type)
+    filename = f"{prefix}_{int(time.time())}_{digest}.{extension}"
+    asset_path = MEDIA_ASSETS_DIR / filename
+    asset_path.write_bytes(image_bytes)
+    return f"/media/{filename}", f"local_file:{filename}"
 
 
 def _decode_base64_text_file(raw_file: str) -> str:
@@ -745,6 +856,41 @@ def _build_code_attachment_payload(output: str) -> dict[str, str] | None:
     }
 
 
+def _extract_gemini_mode_and_message(payload: GeminiRequest) -> tuple[GeminiMode, str]:
+    raw_message = str(payload.message or "").strip()
+    explicit_mode = payload.effective_mode
+    command_match = re.match(r"^/(chat|image|img|video|voice|audio)\b\s*(.*)$", raw_message, flags=re.IGNORECASE)
+    if command_match:
+        command = command_match.group(1).strip().lower()
+        mapped_mode: GeminiMode = (
+            "image"
+            if command in {"image", "img"}
+            else "voice"
+            if command in {"voice", "audio"}
+            else "video"
+            if command == "video"
+            else "chat"
+        )
+        command_message = command_match.group(2).strip()
+        effective_message = command_message or raw_message
+        return mapped_mode, effective_message
+
+    if explicit_mode == "image" and not raw_message:
+        return "image", "Generate an image."
+    if explicit_mode == "voice" and not raw_message:
+        return "voice", "Generate speech."
+    if explicit_mode == "video" and not raw_message:
+        return "video", "Generate a short video concept."
+    return explicit_mode, raw_message
+
+
+def _gemini_video_unavailable_message() -> str:
+    return (
+        "Gemini video mode is not configured on this backend yet. "
+        "Use `/image your prompt` for image generation or `/voice your text` for audio."
+    )
+
+
 async def _run_text_mode_completion(
     message: str,
     mode: TextMode,
@@ -811,15 +957,16 @@ async def _run_text_mode_completion(
         raise _safe_service_error() from exc
 
 
-async def _run_gemini_completion(message: str) -> str:
+async def _run_gemini_completion(message: str, model_override: str | None = None) -> str:
     service = _gemini_service()
     if not str(service.api_key or "").strip():
         raise _safe_service_error(status_code=503)
     try:
-        return await service.generate_reply(message)
+        return await service.generate_reply(message, model_override=model_override)
     except AIServiceError as exc:
         logger.warning("Gemini completion failed.", exc_info=True)
-        raise _safe_service_error() from exc
+        safe_message = str(exc).strip() or SAFE_SERVICE_UNAVAILABLE_MESSAGE
+        raise BackendError(safe_message, status_code=_status_code_for_ai_error(safe_message)) from exc
 
 
 async def _describe_image_with_vision(message: str, image_base64: str) -> str:
@@ -1174,6 +1321,9 @@ if ADMIN_FRONTEND_DIR.exists():
     app.mount("/admin/static", StaticFiles(directory=str(ADMIN_FRONTEND_DIR)), name="admin-static")
 else:
     logger.warning("ADMIN FRONTEND MISSING | expected_dir=%s", ADMIN_FRONTEND_DIR)
+
+MEDIA_ASSETS_DIR.mkdir(parents=True, exist_ok=True)
+app.mount("/media", StaticFiles(directory=str(MEDIA_ASSETS_DIR)), name="media-assets")
 
 app.add_middleware(
     CORSMiddleware,
@@ -2442,10 +2592,11 @@ async def gemini_endpoint(request: Request, payload: GeminiRequest) -> JSONRespo
     user_id = identity.telegram_id if identity else "unknown"
     settings = get_settings()
     frontend_source = _resolve_frontend_source(request)
-    feature_used = "gemini_chat"
-    conversation_id = _extract_conversation_id(request, identity, feature_used)
     referral_code = _extract_referral_code(request)
-    user_message = payload.message
+    gemini_mode, user_message = _extract_gemini_mode_and_message(payload)
+    feature_used = f"gemini_{gemini_mode}"
+    conversation_id = _extract_conversation_id(request, identity, feature_used)
+    tracking_model = str(payload.model or settings.gemini_model).strip() or settings.gemini_model
 
     refusal = _maybe_block_sensitive_request(user_message)
     if refusal:
@@ -2454,7 +2605,7 @@ async def gemini_endpoint(request: Request, payload: GeminiRequest) -> JSONRespo
             message_type="gemini",
             user_message=user_message,
             bot_reply=SAFE_INTERNAL_DETAILS_REFUSAL,
-            model_used=settings.gemini_model,
+            model_used=tracking_model,
             success=False,
             message_increment=1,
             frontend_source=frontend_source,
@@ -2467,13 +2618,125 @@ async def gemini_endpoint(request: Request, payload: GeminiRequest) -> JSONRespo
         return refusal
 
     try:
-        output = await _run_gemini_completion(user_message)
+        if gemini_mode == "image":
+            result_payload = await _generate_image(
+                prompt=user_message,
+                size=payload.effective_size,
+                ratio=payload.effective_ratio,
+            )
+            response_payload: dict[str, Any] = {
+                "output": "Gemini image request completed.",
+                "mode": "gemini_image",
+                "ratio": payload.effective_ratio,
+            }
+            response_payload.update(result_payload)
+            persisted_storage_path: str | None = None
+            if not str(response_payload.get("image_url") or "").strip() and str(response_payload.get("image_base64") or "").strip():
+                try:
+                    generated_bytes = _decode_base64_image(str(response_payload.get("image_base64") or ""))
+                    persisted_media_url, persisted_storage_path = _persist_image_bytes_to_local_asset(
+                        generated_bytes,
+                        prefix="gemini_generated",
+                        mime_type="image/png",
+                    )
+                    response_payload["image_url"] = persisted_media_url
+                except BackendError as exc:
+                    logger.warning("Gemini image local persistence failed: %s", exc.message)
+            await _track_api_action(
+                identity=identity,
+                message_type="gemini",
+                user_message=user_message,
+                bot_reply=str(response_payload.get("output", "Gemini image request completed.")),
+                model_used=tracking_model,
+                success=True,
+                image_increment=1,
+                frontend_source=frontend_source,
+                feature_used=feature_used,
+                conversation_id=conversation_id,
+                text_content=str(response_payload.get("output", "Gemini image request completed.")),
+                media=TrackingMedia(
+                    media_type="image",
+                    media_url=str(response_payload.get("image_url") or "").strip() or None,
+                    storage_path=(
+                        persisted_storage_path
+                        or (None if str(response_payload.get("image_url") or "").strip() else "inline_base64:response")
+                    ),
+                    mime_type="image/png" if "image_base64" in response_payload else None,
+                    provider_source="gemini",
+                    media_origin="generated",
+                    media_status="available" if ("image_url" in response_payload or "image_base64" in response_payload) else "missing",
+                    media_error_reason=None if ("image_url" in response_payload or "image_base64" in response_payload) else "missing_image_payload",
+                ),
+                mark_started=bool(identity),
+                referral_code=referral_code,
+            )
+            return JSONResponse(status_code=200, content=response_payload)
+
+        if gemini_mode == "voice":
+            generated = await _generate_tts(
+                text=user_message,
+                language=payload.effective_language,
+                voice=payload.effective_voice,
+                emotion=payload.effective_emotion,
+            )
+            response_payload: dict[str, Any] = {
+                "output": "Gemini voice request completed.",
+                "mode": "gemini_voice",
+                "language": payload.effective_language,
+                "voice": payload.effective_voice,
+                "emotion": payload.effective_emotion,
+            }
+            response_payload.update(generated)
+            await _track_api_action(
+                identity=identity,
+                message_type="gemini",
+                user_message=user_message,
+                bot_reply=str(response_payload.get("output", "Gemini voice request completed.")),
+                model_used=tracking_model,
+                success=True,
+                message_increment=1,
+                frontend_source=frontend_source,
+                feature_used=feature_used,
+                conversation_id=conversation_id,
+                text_content=str(response_payload.get("output", "Gemini voice request completed.")),
+                media=TrackingMedia(
+                    media_type="audio",
+                    mime_type=str(response_payload.get("audio_mime_type") or "audio/mpeg"),
+                    provider_source="gemini",
+                    media_origin="generated",
+                    media_status="available",
+                ),
+                mark_started=bool(identity),
+                referral_code=referral_code,
+            )
+            return JSONResponse(status_code=200, content=response_payload)
+
+        if gemini_mode == "video":
+            output = _gemini_video_unavailable_message()
+            await _track_api_action(
+                identity=identity,
+                message_type="gemini",
+                user_message=user_message,
+                bot_reply=output,
+                model_used=tracking_model,
+                success=False,
+                message_increment=1,
+                frontend_source=frontend_source,
+                feature_used=feature_used,
+                conversation_id=conversation_id,
+                text_content=output,
+                mark_started=bool(identity),
+                referral_code=referral_code,
+            )
+            return JSONResponse(status_code=200, content={"output": output, "mode": "gemini_video"})
+
+        output = await _run_gemini_completion(user_message, model_override=payload.model)
         await _track_api_action(
             identity=identity,
             message_type="gemini",
             user_message=user_message,
             bot_reply=output,
-            model_used=settings.gemini_model,
+            model_used=tracking_model,
             success=True,
             message_increment=1,
             frontend_source=frontend_source,
@@ -2483,14 +2746,14 @@ async def gemini_endpoint(request: Request, payload: GeminiRequest) -> JSONRespo
             mark_started=bool(identity),
             referral_code=referral_code,
         )
-        return JSONResponse(status_code=200, content={"output": output, "mode": "gemini"})
+        return JSONResponse(status_code=200, content={"output": output, "mode": "gemini_chat"})
     except BackendError as exc:
         await _track_api_action(
             identity=identity,
             message_type="gemini",
             user_message=user_message,
             bot_reply=exc.message,
-            model_used=settings.gemini_model,
+            model_used=tracking_model,
             success=False,
             message_increment=1,
             frontend_source=frontend_source,
@@ -2598,6 +2861,18 @@ async def image_endpoint(request: Request, payload: ImageRequest) -> JSONRespons
             "ratio": payload.effective_ratio,
         }
         response_payload.update(result_payload)
+        persisted_storage_path: str | None = None
+        if not str(response_payload.get("image_url") or "").strip() and str(response_payload.get("image_base64") or "").strip():
+            try:
+                generated_bytes = _decode_base64_image(str(response_payload.get("image_base64") or ""))
+                persisted_media_url, persisted_storage_path = _persist_image_bytes_to_local_asset(
+                    generated_bytes,
+                    prefix="generated",
+                    mime_type="image/png",
+                )
+                response_payload["image_url"] = persisted_media_url
+            except BackendError as exc:
+                logger.warning("Generated image local persistence failed: %s", exc.message)
         await _track_api_action(
             identity=identity,
             message_type="image",
@@ -2613,7 +2888,10 @@ async def image_endpoint(request: Request, payload: ImageRequest) -> JSONRespons
             media=TrackingMedia(
                 media_type="image",
                 media_url=str(response_payload.get("image_url") or "").strip() or None,
-                storage_path=None if str(response_payload.get("image_url") or "").strip() else "inline_base64:response",
+                storage_path=(
+                    persisted_storage_path
+                    or (None if str(response_payload.get("image_url") or "").strip() else "inline_base64:response")
+                ),
                 mime_type="image/png" if "image_base64" in response_payload else None,
                 provider_source="nvidia",
                 media_origin="generated",
@@ -2693,6 +2971,19 @@ async def vision_endpoint(request: Request, payload: VisionDescribeRequest) -> J
         if compact_image_base64 and len(compact_image_base64) <= 23_000
         else None
     )
+    uploaded_media_url: str | None = None
+    uploaded_storage_path: str | None = None
+    upload_media_error: str | None = None
+    if compact_image_base64:
+        try:
+            upload_bytes = _decode_base64_image(compact_image_base64)
+            uploaded_media_url, uploaded_storage_path = _persist_image_bytes_to_local_asset(
+                upload_bytes,
+                prefix="upload",
+                mime_type="image/jpeg",
+            )
+        except BackendError as exc:
+            upload_media_error = exc.message
     user_message = payload.effective_message
     logger.info(
         "API VISION START | request_id=%s user=%s message_len=%s image_base64_len=%s",
@@ -2717,13 +3008,16 @@ async def vision_endpoint(request: Request, payload: VisionDescribeRequest) -> J
             text_content=user_message,
             media=TrackingMedia(
                 media_type="image",
-                media_url=inline_image_url,
-                storage_path=None if inline_image_url else "inline_upload:truncated",
+                media_url=uploaded_media_url or inline_image_url,
+                storage_path=uploaded_storage_path or (None if inline_image_url else "inline_upload:truncated"),
                 mime_type="image/jpeg",
                 provider_source="user",
                 media_origin="upload",
-                media_status="available" if inline_image_url else "missing",
-                media_error_reason=None if inline_image_url else "image_too_large_for_inline_preview",
+                media_status="available" if (uploaded_media_url or inline_image_url) else "missing",
+                media_error_reason=(
+                    upload_media_error
+                    or (None if (uploaded_media_url or inline_image_url) else "image_too_large_for_inline_preview")
+                ),
             ),
             mark_started=bool(identity),
             referral_code=referral_code,
@@ -2750,13 +3044,16 @@ async def vision_endpoint(request: Request, payload: VisionDescribeRequest) -> J
             text_content=output,
             media=TrackingMedia(
                 media_type="image",
-                media_url=inline_image_url,
-                storage_path=None if inline_image_url else "inline_upload:truncated",
+                media_url=uploaded_media_url or inline_image_url,
+                storage_path=uploaded_storage_path or (None if inline_image_url else "inline_upload:truncated"),
                 mime_type="image/jpeg",
                 provider_source="user",
                 media_origin="upload",
-                media_status="available" if inline_image_url else "missing",
-                media_error_reason=None if inline_image_url else "image_too_large_for_inline_preview",
+                media_status="available" if (uploaded_media_url or inline_image_url) else "missing",
+                media_error_reason=(
+                    upload_media_error
+                    or (None if (uploaded_media_url or inline_image_url) else "image_too_large_for_inline_preview")
+                ),
             ),
             mark_started=bool(identity),
             referral_code=referral_code,
@@ -2783,13 +3080,13 @@ async def vision_endpoint(request: Request, payload: VisionDescribeRequest) -> J
             text_content=user_message,
             media=TrackingMedia(
                 media_type="image",
-                media_url=inline_image_url,
-                storage_path=None if inline_image_url else "inline_upload:truncated",
+                media_url=uploaded_media_url or inline_image_url,
+                storage_path=uploaded_storage_path or (None if inline_image_url else "inline_upload:truncated"),
                 mime_type="image/jpeg",
                 provider_source="user",
                 media_origin="upload",
                 media_status="failed",
-                media_error_reason=exc.message,
+                media_error_reason=upload_media_error or exc.message,
             ),
             mark_started=bool(identity),
             referral_code=referral_code,

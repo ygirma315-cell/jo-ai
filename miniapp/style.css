@@ -3172,7 +3172,7 @@ body[data-theme-mode] .code-block {
   border-color: rgba(102, 119, 136, 0.36) !important;
 }
 
-/* v1.6.0 reliability-first overrides */
+/* v1.6.1 reliability-first overrides */
 body,
 body[data-page="home"],
 body.tool-page {

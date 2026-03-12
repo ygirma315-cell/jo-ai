@@ -30,6 +30,7 @@ from bot.constants import (
 )
 from bot.filters.feature_filter import ActiveFeatureFilter
 from bot.keyboards.jo_ai import (
+    gemini_mode_keyboard,
     image_ratio_keyboard,
     image_type_keyboard,
     jo_ai_menu_keyboard,
@@ -64,7 +65,7 @@ JO_AI_MENU_TEXT = (
     "- Gemini Chat\n"
     "- Code Generator\n"
     "- Research\n"
-    "- Deep Analysis\n"
+    "- DeepSeek\n"
     "- Prompt Generator\n"
     "- Image Generator\n"
     "- JO AI Vision\n"
@@ -447,10 +448,35 @@ async def _send_chat_intro(message: Message) -> None:
 
 async def _send_gemini_intro(message: Message) -> None:
     await message.answer(
-        "<b>Step 1: Gemini Chat is active</b>\n\n"
-        "This mode uses Gemini capabilities with JO AI branding.\n"
-        "Use Back for AI tools, or Main Menu to leave this flow.",
-        reply_markup=jo_chat_keyboard("joai:menu"),
+        "<b>Step 1: Gemini mode is active</b>\n\n"
+        "Step 2: Choose Chat, Image, Voice, or Video below.\n"
+        "You can also type /image, /voice, or /video directly.",
+        reply_markup=gemini_mode_keyboard(),
+    )
+
+
+def _gemini_mode_hint(mode: str) -> str:
+    if mode == "image":
+        return (
+            "<b>Gemini image mode selected</b>\n\n"
+            "Step 3: Send your prompt with <code>/image your prompt</code>.\n"
+            "Example: <code>/image futuristic city skyline at sunset</code>"
+        )
+    if mode == "voice":
+        return (
+            "<b>Gemini voice mode selected</b>\n\n"
+            "Step 3: Send text with <code>/voice your text</code>.\n"
+            "Example: <code>/voice Welcome to JO AI Chat</code>"
+        )
+    if mode == "video":
+        return (
+            "<b>Gemini video mode selected</b>\n\n"
+            "Step 3: Send your prompt with <code>/video your prompt</code>.\n"
+            "Video replies depend on backend availability."
+        )
+    return (
+        "<b>Gemini chat mode selected</b>\n\n"
+        "Step 3: Send a normal chat message, or use /image, /voice, /video."
     )
 
 
@@ -473,7 +499,7 @@ async def _send_research_intro(message: Message) -> None:
 
 async def _send_deep_analysis_intro(message: Message) -> None:
     await message.answer(
-        "<b>Step 1: Deep Analysis is active</b>\n\n"
+        "<b>Step 1: DeepSeek is active</b>\n\n"
         "Send your question and I'll slow down, compare tradeoffs, and reason through it carefully.",
         reply_markup=jo_chat_keyboard("joai:menu"),
     )
@@ -826,10 +852,16 @@ def _parse_code_reply(reply_text: str, fallback_title: str) -> ParsedCodeReply:
 
 
 def _friendly_error_text(title: str, exc: Exception | None = None) -> str:
+    detail = ""
+    if exc is not None:
+        safe_detail = str(exc).strip()
+        if safe_detail and safe_detail != SAFE_SERVICE_UNAVAILABLE_MESSAGE:
+            detail = f"\nReason: {html.escape(safe_detail[:220])}"
     message = (
         f"Warning: <b>{title}</b>\n"
         f"{BRANDING_LINE}\n"
-        "Please try again in a moment.\n"
+        "Please try again in a moment."
+        f"{detail}\n"
         f"For JO API access, contact {DEVELOPER_HANDLE}."
     )
     if exc is not None:
@@ -1237,6 +1269,30 @@ async def enable_gemini_mode(query: CallbackQuery, session_manager: SessionManag
     await query.answer()
     if isinstance(query.message, Message):
         await _activate_mode(query.message, query.from_user.id, JoAIMode.GEMINI, session_manager, miniapp_url)
+
+
+@router.callback_query(F.data.startswith("joaigem:mode:"))
+async def select_gemini_mode(query: CallbackQuery, session_manager: SessionManager, miniapp_url: str | None) -> None:
+    if not query.from_user:
+        await query.answer()
+        return
+
+    mode_token = str(query.data or "").split(":")[-1].strip().lower()
+    if mode_token not in {"chat", "image", "voice", "video"}:
+        await query.answer()
+        return
+
+    transition = await session_manager.switch_feature(query.from_user.id, Feature.JO_AI)
+    await _switch_to_jo_ai_mode(query.from_user.id, JoAIMode.GEMINI, session_manager)
+    await query.answer(f"Gemini {mode_token} selected")
+
+    if isinstance(query.message, Message):
+        if transition.notice:
+            await query.message.answer(transition.notice, reply_markup=main_menu_keyboard(miniapp_url))
+        await query.message.answer(
+            _gemini_mode_hint(mode_token),
+            reply_markup=gemini_mode_keyboard(),
+        )
 
 
 @router.callback_query(F.data == "joai:code")
@@ -1656,6 +1712,8 @@ async def handle_jo_ai_text(
             user_text=user_text,
             session_manager=session_manager,
             gemini_service=gemini_service,
+            image_generation_service=image_generation_service,
+            tts_service=tts_service,
             tracking_service=tracking_service,
         )
         return
@@ -2362,35 +2420,274 @@ async def _run_kimi_with_progress(message: Message, work_coro) -> str:
             raise AIServiceError("Vision request timed out.") from exc
 
 
+def _extract_gemini_command(user_text: str) -> tuple[Literal["chat", "image", "voice", "video"], str]:
+    normalized = str(user_text or "").strip()
+    if not normalized:
+        return "chat", ""
+    match = re.match(r"^/(chat|image|img|voice|audio|video)\b\s*(.*)$", normalized, flags=re.IGNORECASE)
+    if not match:
+        return "chat", normalized
+    command = match.group(1).strip().lower()
+    payload = match.group(2).strip()
+    mode: Literal["chat", "image", "voice", "video"] = (
+        "image"
+        if command in {"image", "img"}
+        else "voice"
+        if command in {"voice", "audio"}
+        else "video"
+        if command == "video"
+        else "chat"
+    )
+    if payload:
+        return mode, payload
+    if mode == "image":
+        return mode, "Generate a high-quality image."
+    if mode == "voice":
+        return mode, "Generate clear speech."
+    if mode == "video":
+        return mode, "Generate a short cinematic video."
+    return mode, normalized
+
+
 async def _process_gemini_message(
     *,
     message: Message,
     user_text: str,
     session_manager: SessionManager,
     gemini_service: GeminiChatService,
+    image_generation_service: ImageGenerationService,
+    tts_service: TextToSpeechService,
     tracking_service: SupabaseTrackingService | None,
 ) -> None:
     reply_markup = jo_chat_keyboard("joai:menu")
-    guardrail_reply = guardrail_response_for_user_query(user_text)
+    gemini_mode, effective_text = _extract_gemini_command(user_text)
+    feature_used = f"gemini_{gemini_mode}"
+    guardrail_reply = guardrail_response_for_user_query(effective_text)
     if guardrail_reply:
         await _send_formatted_ai_reply(message, "chat", guardrail_reply, reply_markup)
         await _track_telegram_action(
             tracking_service=tracking_service,
             message=message,
             message_type="gemini",
-            user_message=user_text,
+            user_message=effective_text,
             bot_reply=guardrail_reply,
             model_used=gemini_service.model,
             success=not _is_internal_rule_block(guardrail_reply),
             message_increment=1,
-            feature_used="gemini_chat",
+            feature_used=feature_used,
+        )
+        return
+
+    if gemini_mode == "video":
+        reply_text = (
+            "Gemini video mode is not configured on this backend yet.\n"
+            "Use /image <prompt> for images or /voice <text> for speech."
+        )
+        await message.answer(reply_text, reply_markup=reply_markup)
+        await _track_telegram_action(
+            tracking_service=tracking_service,
+            message=message,
+            message_type="gemini",
+            user_message=effective_text,
+            bot_reply=reply_text,
+            model_used=gemini_service.model,
+            success=False,
+            message_increment=1,
+            feature_used=feature_used,
+        )
+        return
+
+    if gemini_mode == "image":
+        progress_message = await _send_progress_message(message, "Generating Gemini image...")
+        try:
+            async with ChatActionSender.upload_photo(bot=message.bot, chat_id=message.chat.id):
+                generated = await image_generation_service.generate_image(
+                    effective_text,
+                    size=IMAGE_RATIO_TO_SIZE["1:1"],
+                    ratio="1:1",
+                )
+        except AIServiceError as exc:
+            await _clear_progress_message(progress_message)
+            reply_text = _friendly_error_text("Gemini image mode is temporarily unavailable", exc)
+            await message.answer(reply_text, reply_markup=reply_markup)
+            await _track_telegram_action(
+                tracking_service=tracking_service,
+                message=message,
+                message_type="gemini",
+                user_message=effective_text,
+                bot_reply=reply_text,
+                model_used=gemini_service.model,
+                success=False,
+                image_increment=1,
+                feature_used=feature_used,
+            )
+            return
+        except Exception:
+            await _clear_progress_message(progress_message)
+            logger.exception("Unexpected Gemini image generation error.")
+            reply_text = _friendly_error_text("Unexpected Gemini image error")
+            await message.answer(reply_text, reply_markup=reply_markup)
+            await _track_telegram_action(
+                tracking_service=tracking_service,
+                message=message,
+                message_type="gemini",
+                user_message=effective_text,
+                bot_reply=reply_text,
+                model_used=gemini_service.model,
+                success=False,
+                image_increment=1,
+                feature_used=feature_used,
+            )
+            return
+
+        await _clear_progress_message(progress_message)
+        if generated.image_bytes:
+            image_file = BufferedInputFile(generated.image_bytes, filename="gemini_generated.png")
+            sent = await message.answer_photo(
+                photo=image_file,
+                caption="<b>Gemini image is ready.</b>",
+                reply_markup=reply_markup,
+            )
+            storage_path = f"telegram_file:{sent.photo[-1].file_id}" if sent.photo else None
+            await _track_telegram_action(
+                tracking_service=tracking_service,
+                message=message,
+                message_type="gemini",
+                user_message=effective_text,
+                bot_reply="Gemini image is ready.",
+                model_used=gemini_service.model,
+                success=True,
+                image_increment=1,
+                feature_used=feature_used,
+                media=TrackingMedia(
+                    media_type="image",
+                    media_url=generated.image_url,
+                    storage_path=storage_path,
+                    mime_type="image/png",
+                    provider_source="gemini",
+                    media_origin="generated",
+                    media_status="available",
+                ),
+            )
+            return
+        if generated.image_url:
+            sent = await message.answer_photo(
+                photo=generated.image_url,
+                caption="<b>Gemini image is ready.</b>",
+                reply_markup=reply_markup,
+            )
+            storage_path = f"telegram_file:{sent.photo[-1].file_id}" if sent.photo else None
+            await _track_telegram_action(
+                tracking_service=tracking_service,
+                message=message,
+                message_type="gemini",
+                user_message=effective_text,
+                bot_reply="Gemini image is ready.",
+                model_used=gemini_service.model,
+                success=True,
+                image_increment=1,
+                feature_used=feature_used,
+                media=TrackingMedia(
+                    media_type="image",
+                    media_url=generated.image_url,
+                    storage_path=storage_path,
+                    provider_source="gemini",
+                    media_origin="generated",
+                    media_status="available",
+                ),
+            )
+            return
+        reply_text = "Gemini image mode did not return an image payload."
+        await message.answer(reply_text, reply_markup=reply_markup)
+        await _track_telegram_action(
+            tracking_service=tracking_service,
+            message=message,
+            message_type="gemini",
+            user_message=effective_text,
+            bot_reply=reply_text,
+            model_used=gemini_service.model,
+            success=False,
+            image_increment=1,
+            feature_used=feature_used,
+        )
+        return
+
+    if gemini_mode == "voice":
+        progress_message = await _send_progress_message(message, "Generating Gemini voice...")
+        try:
+            async with ChatActionSender.typing(bot=message.bot, chat_id=message.chat.id):
+                generated = await tts_service.generate_speech(
+                    text=effective_text,
+                    language="en",
+                    voice="female",
+                    emotion="neutral",
+                )
+        except AIServiceError as exc:
+            await _clear_progress_message(progress_message)
+            reply_text = _friendly_error_text("Gemini voice mode is temporarily unavailable", exc)
+            await message.answer(reply_text, reply_markup=reply_markup)
+            await _track_telegram_action(
+                tracking_service=tracking_service,
+                message=message,
+                message_type="gemini",
+                user_message=effective_text,
+                bot_reply=reply_text,
+                model_used=gemini_service.model,
+                success=False,
+                message_increment=1,
+                feature_used=feature_used,
+            )
+            return
+        except Exception:
+            await _clear_progress_message(progress_message)
+            logger.exception("Unexpected Gemini voice generation error.")
+            reply_text = _friendly_error_text("Unexpected Gemini voice error")
+            await message.answer(reply_text, reply_markup=reply_markup)
+            await _track_telegram_action(
+                tracking_service=tracking_service,
+                message=message,
+                message_type="gemini",
+                user_message=effective_text,
+                bot_reply=reply_text,
+                model_used=gemini_service.model,
+                success=False,
+                message_increment=1,
+                feature_used=feature_used,
+            )
+            return
+
+        await _clear_progress_message(progress_message)
+        extension = _tts_extension_for_mime_type(generated.mime_type)
+        audio_file = BufferedInputFile(generated.audio_bytes, filename=f"gemini_voice.{extension}")
+        await message.answer_audio(
+            audio=audio_file,
+            caption="<b>Gemini voice is ready.</b>",
+            reply_markup=reply_markup,
+        )
+        await _track_telegram_action(
+            tracking_service=tracking_service,
+            message=message,
+            message_type="gemini",
+            user_message=effective_text,
+            bot_reply="Gemini voice is ready.",
+            model_used=gemini_service.model,
+            success=True,
+            message_increment=1,
+            feature_used=feature_used,
+            media=TrackingMedia(
+                media_type="audio",
+                mime_type=generated.mime_type,
+                provider_source="gemini",
+                media_origin="generated",
+                media_status="available",
+            ),
         )
         return
 
     progress_message = await _send_progress_message(message, "Generating Gemini response...")
     try:
         async with ChatActionSender.typing(bot=message.bot, chat_id=message.chat.id):
-            reply_text = await gemini_service.generate_reply(user_text)
+            reply_text = await gemini_service.generate_reply(effective_text)
     except AIServiceError as exc:
         await _clear_progress_message(progress_message)
         error_text = _friendly_error_text("Gemini mode is temporarily unavailable", exc)
@@ -2399,12 +2696,12 @@ async def _process_gemini_message(
             tracking_service=tracking_service,
             message=message,
             message_type="gemini",
-            user_message=user_text,
+            user_message=effective_text,
             bot_reply=error_text,
             model_used=gemini_service.model,
             success=False,
             message_increment=1,
-            feature_used="gemini_chat",
+            feature_used=feature_used,
         )
         return
     except Exception:
@@ -2416,12 +2713,12 @@ async def _process_gemini_message(
             tracking_service=tracking_service,
             message=message,
             message_type="gemini",
-            user_message=user_text,
+            user_message=effective_text,
             bot_reply=error_text,
             model_used=gemini_service.model,
             success=False,
             message_increment=1,
-            feature_used="gemini_chat",
+            feature_used=feature_used,
         )
         return
 
@@ -2429,7 +2726,7 @@ async def _process_gemini_message(
     if message.from_user:
         async with session_manager.lock(message.from_user.id) as session:
             if session.active_feature == Feature.JO_AI and session.jo_ai_mode == JoAIMode.GEMINI:
-                session.jo_ai_chat_history.append(("user", _compact_history_entry(user_text)))
+                session.jo_ai_chat_history.append(("user", _compact_history_entry(effective_text)))
                 session.jo_ai_chat_history.append(("assistant", _compact_history_entry(reply_text)))
 
     await _send_formatted_ai_reply(message, "chat", reply_text, reply_markup)
@@ -2437,12 +2734,12 @@ async def _process_gemini_message(
         tracking_service=tracking_service,
         message=message,
         message_type="gemini",
-        user_message=user_text,
+        user_message=effective_text,
         bot_reply=reply_text,
         model_used=gemini_service.model,
         success=True,
         message_increment=1,
-        feature_used="gemini_chat",
+        feature_used=feature_used,
     )
 
 

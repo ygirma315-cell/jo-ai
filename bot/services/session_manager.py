@@ -91,9 +91,9 @@ class SessionManager:
     def _transition_notice(self, previous: Feature, new_feature: Feature) -> str:
         if new_feature == Feature.NONE:
             if previous == Feature.AI_TOOLS_MENU:
-                return "Closing AI tools. Returning to main menu."
+                return "Returning to main menu."
             if previous == Feature.JO_AI:
-                return "Closing JO AI. Returning to main menu."
+                return "Returning to main menu."
             return "Returning to main menu."
 
         if previous == Feature.NONE and new_feature == Feature.AI_TOOLS_MENU:
@@ -101,11 +101,11 @@ class SessionManager:
         if previous == Feature.NONE and new_feature == Feature.JO_AI:
             return "Opening JO AI."
         if previous == Feature.JO_AI and new_feature == Feature.AI_TOOLS_MENU:
-            return "Closing JO AI. Opening AI tools."
+            return "Opening AI tools."
         if previous != Feature.JO_AI and new_feature == Feature.JO_AI:
-            return f"{feature_label(previous).capitalize()} closed. Opening JO AI."
+            return "Opening JO AI."
 
-        return f"{feature_label(previous).capitalize()} closed. Opening {feature_label(new_feature)}."
+        return f"Opening {feature_label(new_feature)}."
 
     def _load_known_users(self) -> None:
         if self._known_users_path is None:

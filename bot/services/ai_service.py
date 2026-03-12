@@ -209,8 +209,9 @@ class GeminiChatService:
     api_key: str | None = None
     model: str = DEFAULT_GEMINI_MODEL
     base_url: str = GEMINI_BASE_URL
+    fallback_models: tuple[str, ...] = ()
 
-    async def generate_reply(self, user_message: str) -> str:
+    async def generate_reply(self, user_message: str, model_override: str | None = None) -> str:
         guardrail_response = guardrail_response_for_user_query(user_message)
         if guardrail_response:
             return guardrail_response
@@ -219,10 +220,10 @@ class GeminiChatService:
         if not effective_api_key:
             raise AIServiceError(SAFE_SERVICE_UNAVAILABLE_MESSAGE)
 
-        selected_model = (self.model or DEFAULT_GEMINI_MODEL).strip()
-        request_url = (
-            f"{self.base_url.rstrip('/')}/models/{selected_model}:generateContent"
-            f"?key={effective_api_key}"
+        model_candidates = _gemini_model_candidates(
+            model_override=model_override,
+            primary_model=self.model,
+            fallback_models=self.fallback_models,
         )
         payload = {
             "contents": [
@@ -241,35 +242,45 @@ class GeminiChatService:
         headers = {"Content-Type": "application/json"}
 
         last_error: str = SAFE_SERVICE_UNAVAILABLE_MESSAGE
-        for attempt in range(DEFAULT_RETRY_COUNT + 1):
-            try:
-                async with aiohttp.ClientSession(timeout=timeout) as session:
-                    async with session.post(request_url, headers=headers, json=payload) as response:
-                        body_text = await response.text()
-                if response.status >= 400:
-                    last_error = _extract_api_error(body_text)
-                    if attempt < DEFAULT_RETRY_COUNT and response.status in RETRYABLE_HTTP_STATUSES:
+        for selected_model in model_candidates:
+            request_url = (
+                f"{self.base_url.rstrip('/')}/models/{selected_model}:generateContent"
+                f"?key={effective_api_key}"
+            )
+            for attempt in range(DEFAULT_RETRY_COUNT + 1):
+                try:
+                    async with aiohttp.ClientSession(timeout=timeout) as session:
+                        async with session.post(request_url, headers=headers, json=payload) as response:
+                            body_text = await response.text()
+                    if response.status >= 400:
+                        last_error = _friendly_gemini_error(
+                            _extract_api_error(body_text),
+                            response.status,
+                        )
+                        if attempt < DEFAULT_RETRY_COUNT and response.status in RETRYABLE_HTTP_STATUSES:
+                            await asyncio.sleep(DEFAULT_RETRY_BACKOFF_SECONDS * (attempt + 1))
+                            continue
+                        break
+
+                    parsed = _safe_json(body_text)
+                    extracted = _extract_gemini_text(parsed)
+                    if extracted:
+                        return extracted
+                    last_error = (
+                        "Gemini returned an empty response. "
+                        "Please try again with a shorter prompt."
+                    )
+                except (aiohttp.ClientError, asyncio.TimeoutError):
+                    last_error = "Gemini network timeout. Please retry in a moment."
+                    if attempt < DEFAULT_RETRY_COUNT:
                         await asyncio.sleep(DEFAULT_RETRY_BACKOFF_SECONDS * (attempt + 1))
                         continue
-                    raise AIServiceError(SAFE_SERVICE_UNAVAILABLE_MESSAGE)
-                parsed = _safe_json(body_text)
-                extracted = _extract_gemini_text(parsed)
-                if extracted:
-                    return extracted
-                last_error = "Gemini response was empty."
-            except AIServiceError:
-                raise
-            except (aiohttp.ClientError, asyncio.TimeoutError) as exc:
-                last_error = str(exc) or SAFE_SERVICE_UNAVAILABLE_MESSAGE
-                if attempt < DEFAULT_RETRY_COUNT:
-                    await asyncio.sleep(DEFAULT_RETRY_BACKOFF_SECONDS * (attempt + 1))
-                    continue
-            except Exception as exc:
-                last_error = str(exc) or SAFE_SERVICE_UNAVAILABLE_MESSAGE
-                break
+                except Exception as exc:
+                    last_error = str(exc) or SAFE_SERVICE_UNAVAILABLE_MESSAGE
+                    break
 
         logger.warning("Gemini generation failed: %s", last_error)
-        raise AIServiceError(SAFE_SERVICE_UNAVAILABLE_MESSAGE)
+        raise AIServiceError(last_error or SAFE_SERVICE_UNAVAILABLE_MESSAGE)
 
 
 @dataclass
@@ -655,6 +666,47 @@ async def _post_nvidia_json(
     if last_error is not None:
         raise AIServiceError(SAFE_SERVICE_UNAVAILABLE_MESSAGE) from last_error
     raise AIServiceError(SAFE_SERVICE_UNAVAILABLE_MESSAGE)
+
+
+def _gemini_model_candidates(
+    *,
+    model_override: str | None,
+    primary_model: str | None,
+    fallback_models: tuple[str, ...] | None,
+) -> tuple[str, ...]:
+    models: list[str] = []
+    for candidate in (
+        str(model_override or "").strip(),
+        str(primary_model or "").strip(),
+        *(str(item or "").strip() for item in (fallback_models or ())),
+    ):
+        if not candidate:
+            continue
+        if candidate not in models:
+            models.append(candidate)
+    if not models:
+        models.append(DEFAULT_GEMINI_MODEL)
+    return tuple(models)
+
+
+def _friendly_gemini_error(raw_message: str, status_code: int) -> str:
+    detail = str(raw_message or "").strip()
+    lowered = detail.lower()
+    if status_code in {401, 403} or "api key not valid" in lowered or "permission_denied" in lowered:
+        return "Gemini API key is invalid or blocked. Check GEMINI_API_KEY and key restrictions."
+    if status_code == 404 or ("model" in lowered and "not found" in lowered):
+        return "Gemini model is not available. Check GEMINI_MODEL or set GEMINI_FALLBACK_MODELS."
+    if status_code == 429 or "resource_exhausted" in lowered or "quota" in lowered or "rate limit" in lowered:
+        return (
+            "Gemini quota is exhausted or rate-limited. "
+            "Enable billing/increase limits in Google AI Studio, then retry."
+        )
+    if status_code >= 500:
+        return "Gemini service is temporarily unavailable upstream. Please retry shortly."
+    if detail:
+        clipped = detail[:220].rstrip()
+        return f"Gemini request failed ({status_code}): {clipped}"
+    return SAFE_SERVICE_UNAVAILABLE_MESSAGE
 
 
 def _extract_api_error(raw_text: str) -> str:

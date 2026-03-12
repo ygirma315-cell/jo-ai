@@ -5,7 +5,7 @@ MENU_AI_CODE = "\u26a1 Code Generator"
 MENU_AI_RESEARCH = "\U0001F50D Research"
 MENU_AI_PROMPT = "\u2728 Prompt Generator"
 MENU_AI_IMAGE = "\U0001F3A8 Image Generator"
-MENU_AI_DEEPSEEK = "\U0001F9E0 Deep Analysis"
+MENU_AI_DEEPSEEK = "\U0001F9E0 DeepSeek"
 MENU_AI_GEMINI = "\U0001F4A0 Gemini Chat"
 MENU_AI_KIMI = "\U0001F5BC\ufe0f Vision"
 MENU_AI_TTS = "\U0001F50A Text-to-Speech"
@@ -41,6 +41,7 @@ _LEGACY_MENU_BUTTON_TEXTS = {
     "Prompt Generator",
     "Image Generator",
     "Deep Analysis",
+    "DeepSeek",
     "Gemini Chat",
     "Vision",
     "Text-to-Speech",

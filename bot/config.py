@@ -50,6 +50,7 @@ class Settings:
     kimi_model: str
     gemini_api_key: str | None
     gemini_model: str
+    gemini_fallback_models: tuple[str, ...]
     tts_api_key: str | None
     tts_function_id: str
     supabase_url: str | None
@@ -271,6 +272,17 @@ def _parse_bounded_int(raw_value: str | None, *, default: int, minimum: int, max
     return max(minimum, min(maximum, parsed))
 
 
+def _parse_csv_models(raw_value: str | None) -> tuple[str, ...]:
+    values: list[str] = []
+    for token in str(raw_value or "").split(","):
+        candidate = token.strip()
+        if not candidate:
+            continue
+        if candidate not in values:
+            values.append(candidate)
+    return tuple(values)
+
+
 def load_settings() -> Settings:
     root_dir = Path(__file__).resolve().parent.parent
     load_dotenv(dotenv_path=root_dir / ".env")
@@ -309,6 +321,7 @@ def load_settings() -> Settings:
     )
     gemini_api_key = gemini_api_key or None
     gemini_model = _read_env("GEMINI_MODEL") or DEFAULT_GEMINI_MODEL
+    gemini_fallback_models = _parse_csv_models(_read_env("GEMINI_FALLBACK_MODELS"))
     tts_api_key = _read_env("TTS_API_KEY") or _read_env("NVIDIA_TTS_API_KEY") or nvidia_api_key or ai_api_key
     tts_api_key = tts_api_key or None
     tts_function_id = _read_env("TTS_FUNCTION_ID") or DEFAULT_TTS_FUNCTION_ID
@@ -436,7 +449,7 @@ def load_settings() -> Settings:
     if not miniapp_url:
         validation_errors.append("Mini app URL is missing.")
     if not deepseek_api_key:
-        validation_warnings.append("Deep Analysis credentials are missing. Deep Analysis will use default credentials.")
+        validation_warnings.append("DeepSeek credentials are missing. DeepSeek mode will use default credentials.")
     if not kimi_api_key:
         validation_warnings.append("Vision mode credentials are missing. Vision requests will fail until configured.")
     if not gemini_api_key:
@@ -517,6 +530,7 @@ def load_settings() -> Settings:
         kimi_model=kimi_model,
         gemini_api_key=gemini_api_key,
         gemini_model=gemini_model,
+        gemini_fallback_models=gemini_fallback_models,
         tts_api_key=tts_api_key,
         tts_function_id=tts_function_id,
         supabase_url=supabase_url,

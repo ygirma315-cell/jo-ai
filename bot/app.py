@@ -79,8 +79,10 @@ def _build_miniapp_url(miniapp_url: str | None, api_base: str | None) -> str | N
     return DEFAULT_MINIAPP_URL
 
 
-def _env_flag_enabled(name: str) -> bool:
+def _env_flag_enabled(name: str, *, default: bool = False) -> bool:
     value = os.getenv(name, "").strip().lower()
+    if not value:
+        return default
     return value in {"1", "true", "yes", "on"}
 
 
@@ -191,7 +193,7 @@ async def _run_telegram_startup_tasks_once(runtime: BotRuntime) -> bool:
     menu_ready = await _configure_chat_menu_button(runtime)
 
     notifications_sent = True
-    if _env_flag_enabled("SEND_RESTART_BROADCASTS"):
+    if _env_flag_enabled("SEND_RESTART_BROADCASTS", default=True):
         notifications_sent = await _notify_known_users_on_restart(runtime)
 
     runtime.telegram_ready = webhook_ready and menu_ready and notifications_sent
@@ -260,6 +262,7 @@ async def create_bot_runtime() -> BotRuntime:
     dispatcher["gemini_service"] = GeminiChatService(
         api_key=settings.gemini_api_key,
         model=settings.gemini_model,
+        fallback_models=settings.gemini_fallback_models,
     )
     dispatcher["image_generation_service"] = ImageGenerationService(
         api_key=settings.image_api_key or settings.nvidia_api_key or settings.ai_api_key,

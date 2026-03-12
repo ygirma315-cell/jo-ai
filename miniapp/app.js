@@ -10,7 +10,7 @@
   const REFERRAL_STORAGE_KEY = "jo_referral_code";
   const REFERRAL_CLAIMED_PREFIX = "jo_referral_claimed_";
   const CONVERSATION_STORAGE_PREFIX = "jo_conversation_";
-  const FRONTEND_VERSION = "v1.6.0";
+  const FRONTEND_VERSION = "v1.6.1";
   const SITE_BASE_URL = "https://ygirma315-cell.github.io/jo-ai/";
   const MAX_HISTORY_ITEMS = 18;
   const MAX_UPLOAD_BYTES = 8 * 1024 * 1024;
@@ -27,12 +27,12 @@
 
   const STATIC_RELEASES = [
     {
-      version: "v1.6.0",
-      title: "Mobile stability + referral + Gemini update",
+      version: "v1.6.1",
+      title: "Mobile stability + Gemini update",
       items: [
         "Added Gemini chat mode in the same JO AI interface with server-side provider routing.",
-        "Referral section now loads your personal invite links and tracks referral claims safely.",
-        "Mini app now sends frontend source, conversation ID, and referral headers for cleaner analytics across admin and backend.",
+        "Gemini supports command-style messages in one thread: /image, /voice, and /video.",
+        "Mini app now sends frontend source and conversation ID for cleaner analytics across admin and backend.",
       ],
     },
     {
@@ -116,16 +116,16 @@
     },
     gemini: {
       title: "Gemini Chat",
-      description: "Gemini-powered chat routed through JO AI branding and guardrails.",
-      lead: "Ask anything and get Gemini capability in the same JO AI interface.",
+      description: "Gemini mode with command-style actions in one chat.",
+      lead: "Use plain text for chat, or commands like /image, /voice, and /video.",
       example: "Give me a concise plan to improve my study schedule this week.",
       label: "Ask Gemini via JO AI",
-      placeholder: "Ask Gemini via JO AI",
+      placeholder: "Type a prompt, or use /image, /voice, /video",
       rows: 1,
       maxComposerHeight: 152,
       historyTitle: "Gemini conversation",
       emptyTitle: "Ask Gemini via JO AI",
-      emptyCopy: "Gemini responses appear here with JO AI guardrails.",
+      emptyCopy: "Use chat text or /image, /voice, /video commands here.",
     },
     code: {
       title: "Code Generator",
@@ -143,16 +143,16 @@
       emptyCopy: "Share a bug, spec, or feature request and JO AI will reply in-chat.",
     },
     deepseek: {
-      title: "Deep Analysis",
+      title: "DeepSeek",
       description: "Structured reasoning for harder questions, tradeoffs, and decisions.",
       lead: "Use this when you want a slower, more deliberate answer in the same thread.",
       example: "Compare SQL and NoSQL for a fast-growing product and explain the tradeoffs.",
       label: "Ask Joe AI chatbot to analyze",
-      placeholder: "Ask Joe AI chatbot to compare, reason, or break down a decision",
+      placeholder: "Ask DeepSeek to compare, reason, or break down a decision",
       rows: 1,
       maxComposerHeight: 152,
-      historyTitle: "Analysis thread",
-      emptyTitle: "Ask for deeper analysis",
+      historyTitle: "DeepSeek thread",
+      emptyTitle: "Ask DeepSeek",
       emptyCopy: "Comparisons, reasoning, and structured tradeoffs show up here.",
     },
     research: {
@@ -460,13 +460,6 @@
       updatesClose: byId("updatesClose"),
       comingSoonModal: byId("comingSoonModal"),
       comingSoonClose: byId("comingSoonClose"),
-      referralCard: byId("referralCard"),
-      referralCode: byId("referralCode"),
-      referralTelegramLink: byId("referralTelegramLink"),
-      referralMiniappLink: byId("referralMiniappLink"),
-      referralStatus: byId("referralStatus"),
-      copyReferralCodeBtn: byId("copyReferralCodeBtn"),
-      copyReferralLinkBtn: byId("copyReferralLinkBtn"),
       toast: byId("toast"),
     };
   }
@@ -1392,36 +1385,6 @@
         }
       });
     }
-    if (elements.copyReferralCodeBtn) {
-      elements.copyReferralCodeBtn.addEventListener("click", async () => {
-        const code = elements.referralCode ? String(elements.referralCode.textContent || "").trim() : "";
-        if (!code || code === "-") {
-          showToast("Referral code is not ready yet.", "error");
-          return;
-        }
-        try {
-          await copyText(code);
-          showToast("Referral code copied.");
-        } catch (error) {
-          showToast(error instanceof Error ? error.message : "Copy failed.", "error");
-        }
-      });
-    }
-    if (elements.copyReferralLinkBtn) {
-      elements.copyReferralLinkBtn.addEventListener("click", async () => {
-        const link = elements.referralMiniappLink ? String(elements.referralMiniappLink.textContent || "").trim() : "";
-        if (!link || link === "-") {
-          showToast("Referral link is not ready yet.", "error");
-          return;
-        }
-        try {
-          await copyText(link);
-          showToast("Referral link copied.");
-        } catch (error) {
-          showToast(error instanceof Error ? error.message : "Copy failed.", "error");
-        }
-      });
-    }
     document.addEventListener("keydown", handleActiveModalKeydown);
     document.addEventListener("focusin", handleActiveModalFocus);
   }
@@ -2336,14 +2299,6 @@
     return `jo${numericId.toString(16)}`;
   }
 
-  function setReferralStatus(text, isError = false) {
-    if (!elements.referralStatus) {
-      return;
-    }
-    elements.referralStatus.textContent = String(text || "");
-    elements.referralStatus.style.color = isError ? "#b42318" : "";
-  }
-
   async function claimReferralIfNeeded(apiBase) {
     const referralCode = resolveReferralCode();
     if (!apiBase || !referralCode) {
@@ -2386,60 +2341,6 @@
       }
     } catch (_error) {
       // Non-blocking: do not break page load if referral claim fails.
-    }
-  }
-
-  async function loadReferralCard(apiBase) {
-    if (!elements.referralCard) {
-      return;
-    }
-    elements.referralCard.hidden = false;
-
-    const tracking = buildTrackingPayloadFields();
-    if (!tracking.telegram_id) {
-      setReferralStatus("Open from Telegram to load your personal referral links.");
-      return;
-    }
-
-    if (!apiBase) {
-      setReferralStatus("Referral links are unavailable while the backend is waking up.");
-      return;
-    }
-
-    try {
-      await claimReferralIfNeeded(apiBase);
-      const { response, data } = await fetchJsonWithTimeout(
-        `${apiBase}/api/referral/me`,
-        {
-          method: "GET",
-          headers: buildTrackingHeaders(),
-        },
-        8000
-      );
-      if (!response || !response.ok || !data || data.ok !== true) {
-        throw new Error("Referral API unavailable");
-      }
-
-      const code = sanitizeReferralCode(data.referral_code);
-      state.referralCode = code || state.referralCode;
-      if (code) {
-        safeStorageSet(getLocalStorage(), REFERRAL_STORAGE_KEY, code);
-      }
-
-      if (elements.referralCode) {
-        elements.referralCode.textContent = code || "-";
-      }
-      if (elements.referralTelegramLink) {
-        elements.referralTelegramLink.textContent = data.telegram_link || "-";
-        elements.referralTelegramLink.href = data.telegram_link || "#";
-      }
-      if (elements.referralMiniappLink) {
-        elements.referralMiniappLink.textContent = data.miniapp_link || "-";
-        elements.referralMiniappLink.href = data.miniapp_link || "#";
-      }
-      setReferralStatus("Referral links ready.");
-    } catch (_error) {
-      setReferralStatus("Could not load referral links right now.", true);
     }
   }
 
@@ -3384,7 +3285,7 @@
       markStartupComplete();
       runAfterFirstPaint(async () => {
         const apiBase = await resolveApiBase();
-        await loadReferralCard(apiBase);
+        await claimReferralIfNeeded(apiBase);
       });
       return;
     }

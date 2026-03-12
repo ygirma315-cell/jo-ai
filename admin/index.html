@@ -7,8 +7,8 @@
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
   <link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Sans:wght@400;500;600;700&display=swap" rel="stylesheet">
-  <link rel="stylesheet" href="/admin/static/style.css?v=2.0.0">
-  <script src="/admin/static/app.js?v=2.0.0" defer></script>
+  <link rel="stylesheet" href="/admin/static/style.css?v=2.1.0">
+  <script src="/admin/static/app.js?v=2.1.0" defer></script>
 </head>
 <body>
   <div id="loginOverlay" class="login-overlay">
@@ -53,6 +53,17 @@
           <button id="logoutBtn" class="btn btn-danger">Logout</button>
         </div>
       </header>
+      <nav class="section-tabs" aria-label="Admin sections">
+        <button class="section-tab active" data-section="overview">Overview</button>
+        <button class="section-tab" data-section="users">Users</button>
+        <button class="section-tab" data-section="conversations">Conversations</button>
+        <button class="section-tab" data-section="media">Media</button>
+        <button class="section-tab" data-section="referrals">Referrals</button>
+        <button class="section-tab" data-section="engagement">Engagement</button>
+        <button class="section-tab" data-section="bot-status">Bot Status</button>
+        <button class="section-tab" data-section="settings">Settings</button>
+        <button class="section-tab" data-section="logs">Logs</button>
+      </nav>
 
       <section id="section-overview" class="section active">
         <div class="card-grid" id="overviewSummary"></div>
@@ -93,7 +104,7 @@
             <option value="image">Image</option>
             <option value="vision">Vision</option>
             <option value="tts">TTS</option>
-            <option value="deep_analysis">Deep Analysis</option>
+            <option value="deep_analysis">DeepSeek</option>
           </select>
           <select id="convFrontend">
             <option value="all">All frontends</option>

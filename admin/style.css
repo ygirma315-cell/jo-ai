@@ -112,7 +112,7 @@ body.sidebar-open {
 .workspace {
   min-width: 0;
   display: grid;
-  grid-template-rows: auto minmax(0, 1fr);
+  grid-template-rows: auto auto minmax(0, 1fr);
 }
 
 .topbar {
@@ -137,6 +137,34 @@ body.sidebar-open {
   display: flex;
   gap: 8px;
   align-items: center;
+}
+
+.section-tabs {
+  display: flex;
+  gap: 8px;
+  padding: 8px 12px;
+  border-bottom: 1px solid var(--line);
+  background: #f7f9fc;
+  overflow-x: auto;
+  overscroll-behavior-x: contain;
+}
+
+.section-tab {
+  min-height: 36px;
+  border: 1px solid #cfd8e3;
+  border-radius: 999px;
+  background: #ffffff;
+  color: #22324a;
+  padding: 6px 12px;
+  font-weight: 600;
+  white-space: nowrap;
+  cursor: pointer;
+}
+
+.section-tab.active {
+  border-color: #0f766e;
+  background: #e5f7ee;
+  color: #0f5132;
 }
 
 .section {
@@ -219,6 +247,7 @@ body.sidebar-open {
 .list-item p {
   margin: 4px 0;
   white-space: pre-wrap;
+  overflow-wrap: anywhere;
   word-break: break-word;
 }
 
@@ -295,6 +324,14 @@ textarea {
   padding: 8px 10px;
   background: var(--surface);
   color: var(--text);
+}
+
+.toolbar > * {
+  min-width: 0;
+}
+
+.list-meta span {
+  overflow-wrap: anywhere;
 }
 
 textarea {
@@ -434,6 +471,7 @@ textarea {
   .top-actions {
     margin-left: auto;
   }
+
 }
 
 @media (max-width: 640px) {
@@ -450,5 +488,11 @@ textarea {
   .top-actions {
     width: 100%;
     justify-content: flex-end;
+  }
+
+  .toolbar .btn,
+  .toolbar select,
+  .toolbar input {
+    flex: 1 1 100%;
   }
 }

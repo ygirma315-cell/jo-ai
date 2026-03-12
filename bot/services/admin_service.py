@@ -77,6 +77,10 @@ def _media_preview_ref(media_url: Any, storage_path: Any) -> str | None:
         return None
     if raw_storage_path.startswith("telegram_file:"):
         return f"/api/admin/media/proxy?ref={quote(raw_storage_path, safe='')}"
+    if raw_storage_path.startswith("local_file:"):
+        filename = raw_storage_path.split(":", maxsplit=1)[1].strip()
+        if filename:
+            return f"/media/{quote(filename, safe='')}"
     return raw_storage_path
 
 
@@ -489,6 +493,7 @@ class SupabaseAdminService:
                     "media_type": row.get("media_type"),
                     "media_url": row.get("media_url"),
                     "storage_path": row.get("storage_path"),
+                    "preview_ref": _media_preview_ref(row.get("media_url"), row.get("storage_path")),
                     "mime_type": row.get("mime_type"),
                     "media_width": row.get("media_width"),
                     "media_height": row.get("media_height"),
