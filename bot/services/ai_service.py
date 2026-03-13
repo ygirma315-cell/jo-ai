@@ -3,11 +3,13 @@ from __future__ import annotations
 import asyncio
 import base64
 from dataclasses import dataclass
+import hashlib
 import json
 import logging
 import re
 import time
 from typing import Any, Literal
+from urllib.parse import quote
 
 import aiohttp
 import edge_tts
@@ -35,6 +37,11 @@ DEFAULT_TTS_FUNCTION_ID = "bc45d9e9-7c78-4d56-9737-e27011962ba8"
 DEFAULT_RETRY_COUNT = 1
 DEFAULT_RETRY_BACKOFF_SECONDS = 0.6
 RETRYABLE_HTTP_STATUSES = {408, 409, 425, 429}
+IMAGE_MAX_GENERATION_ATTEMPTS = 2
+IMAGE_POLL_INTERVAL_SECONDS = 1.8
+IMAGE_MAX_POLL_SECONDS = 40
+IMAGE_PENDING_STATES = {"queued", "pending", "processing", "creating", "running", "in_progress"}
+IMAGE_FAILED_STATES = {"failed", "error", "cancelled", "canceled", "rejected"}
 MAX_AUTO_CONTINUATIONS = 6
 COMPLEX_CODE_REQUEST_PATTERN = re.compile(
     r"\b("
@@ -65,12 +72,169 @@ TTS_EMOTION_PROSODY: dict[str, tuple[str, str]] = {
     "serious": ("-5%", "-20Hz"),
 }
 
+IMAGE_STYLE_KEYWORDS = (
+    "anime",
+    "manga",
+    "cartoon",
+    "illustration",
+    "line art",
+    "pixel art",
+    "watercolor",
+    "oil painting",
+    "sketch",
+    "charcoal",
+    "ink",
+    "low poly",
+    "3d",
+    "3d render",
+    "isometric",
+    "cyberpunk",
+    "noir",
+    "vintage",
+    "fantasy art",
+    "concept art",
+    "logo",
+    "icon",
+)
+
 logger = logging.getLogger(__name__)
 
 # Backward-compatible alias for existing imports.
 OpenAIServiceError = AIServiceError
 
 ChatMode = Literal["chat", "code", "research", "prompt", "image_prompt", "image_describe"]
+
+
+def build_enhanced_image_prompt(raw_prompt: str, ratio: str = "1:1") -> str:
+    cleaned = " ".join((raw_prompt or "").split())
+    if not cleaned:
+        return ""
+
+    normalized = cleaned.lower()
+    tokens = re.findall(r"[a-zA-Z0-9']+", normalized)
+    has_explicit_style = any(keyword in normalized for keyword in IMAGE_STYLE_KEYWORDS)
+    simple_subject_prompt = len(tokens) <= 3 and not has_explicit_style
+
+    seed_source = f"{cleaned}|{ratio}|{time.time_ns()}"
+    seed = int(hashlib.sha256(seed_source.encode("utf-8")).hexdigest()[:16], 16)
+
+    def pick(options: tuple[str, ...], salt: int) -> str:
+        if not options:
+            return ""
+        index = abs(seed ^ (salt * 0x9E3779B97F4A7C15)) % len(options)
+        return options[index]
+
+    ratio_hint = {
+        "1:1": "balanced square framing with clean subject placement",
+        "16:9": "wide cinematic composition with environmental storytelling",
+        "9:16": "vertical framing optimized for mobile viewing and depth layering",
+    }.get(ratio, "balanced composition with intentional framing")
+
+    lighting = pick(
+        (
+            "physically plausible global illumination with soft highlight roll-off",
+            "directional key light with nuanced bounce fill and natural shadow falloff",
+            "golden-hour style volumetric lighting with realistic exposure balance",
+            "overcast daylight diffusion with subtle contrast and soft edge shadows",
+            "cinematic practical lighting with controlled specular highlights",
+        ),
+        3,
+    )
+    environment = pick(
+        (
+            "environmental context that feels lived-in and believable",
+            "scene details that support narrative context without visual clutter",
+            "authentic background elements with coherent spatial relationships",
+            "real-world environmental cues with natural scale and proportion",
+            "layered foreground, midground, and background for spatial realism",
+        ),
+        5,
+    )
+    camera = pick(
+        (
+            "captured as if on a full-frame camera with a 35mm prime lens",
+            "captured as if on a high-end cinema camera with a 50mm lens",
+            "captured as if on a full-frame system with an 85mm portrait lens",
+            "captured as if on a professional mirrorless camera with a 28mm lens",
+            "captured as if on a cinema rig with natural perspective and lens character",
+        ),
+        7,
+    )
+    texture = pick(
+        (
+            "high-frequency texture fidelity in skin, fabric, surfaces, and micro-details",
+            "crisp material definition with believable roughness and subtle wear patterns",
+            "fine-grain detail retention with realistic tactile surface response",
+            "physically consistent material textures with nuanced imperfections",
+            "micro-texture realism with accurate edge detail and tonal transitions",
+        ),
+        11,
+    )
+    depth = pick(
+        (
+            "natural depth of field with gentle background separation",
+            "optical depth falloff with subject-priority focus and smooth bokeh",
+            "cinematic depth layering with realistic focus breathing behavior",
+            "controlled depth of field that preserves context while isolating the subject",
+            "real lens-style focus transition with soft peripheral blur",
+        ),
+        13,
+    )
+    cinematic = pick(
+        (
+            "cinematic realism, high dynamic range tonality, and filmic color response",
+            "grounded cinematic look with natural contrast and restrained color grading",
+            "photoreal cinematic treatment with clean highlight handling and shadow detail",
+            "filmic realism with nuanced tonal mapping and realistic color temperature",
+            "cinematic scene coherence with believable light transport and atmosphere",
+        ),
+        17,
+    )
+    imperfections = pick(
+        (
+            "natural imperfections such as slight asymmetry, micro-noise, and tiny texture variance",
+            "subtle real-world imperfections like minor surface wear and non-uniform details",
+            "organic imperfections including tiny flaws and realistic randomness in fine detail",
+            "non-sterile realism with slight irregularities and authentic material variance",
+            "minute imperfections and texture inconsistencies for lifelike authenticity",
+        ),
+        19,
+    )
+
+    style_directive = (
+        pick(
+            (
+                "photorealistic interpretation with believable real-world rendering",
+                "realistic visual treatment with physically grounded detail",
+                "true-to-life rendering with natural color and material behavior",
+            ),
+            23,
+        )
+        if simple_subject_prompt
+        else pick(
+            (
+                "preserve and respect the user's requested style direction",
+                "keep stylistic intent from the original prompt while maximizing quality",
+                "maintain the prompt's style language and enhance realism of execution",
+            ),
+            29,
+        )
+    )
+
+    enhanced_parts = [
+        cleaned,
+        style_directive,
+        ratio_hint,
+        lighting,
+        environment,
+        camera,
+        texture,
+        depth,
+        cinematic,
+        imperfections,
+        "ultra-clean rendering pipeline, coherent anatomy/perspective, no visual artifacts",
+    ]
+    return ", ".join(part.strip() for part in enhanced_parts if part and part.strip())
 
 
 @dataclass
@@ -301,108 +465,107 @@ class ImageGenerationService:
         if not self.api_key:
             raise AIServiceError(SAFE_SERVICE_UNAVAILABLE_MESSAGE)
 
+        prompt_digest = hashlib.sha256(str(prompt).encode("utf-8")).hexdigest()[:12]
+        effective_prompt = str(prompt or "").strip()
+        if not effective_prompt:
+            raise AIServiceError("Image prompt is required.")
+
         width, height = _parse_image_size(size)
         model_path = self.model.strip().strip("/")
         infer_payload_candidates: list[dict[str, object]] = []
         if width and height:
             infer_payload_candidates.append(
                 {
-                    "prompt": prompt,
+                    "prompt": effective_prompt,
                     "width": width,
                     "height": height,
                 }
             )
-        infer_payload_candidates.append({"prompt": prompt})
+        infer_payload_candidates.append({"prompt": effective_prompt})
         payload_candidates = [
             {
                 "model": self.model,
-                "prompt": prompt,
+                "prompt": effective_prompt,
                 "size": size,
                 "aspect_ratio": ratio,
                 "response_format": "b64_json",
             },
             {
                 "model": self.model,
-                "prompt": prompt,
+                "prompt": effective_prompt,
                 "size": size,
                 "aspect_ratio": ratio,
             },
             {
                 "model": self.model,
-                "prompt": prompt,
+                "prompt": effective_prompt,
                 "size": size,
                 "response_format": "b64_json",
             },
             {
                 "model": self.model,
-                "prompt": prompt,
+                "prompt": effective_prompt,
                 "size": size,
             },
         ]
 
         last_error: AIServiceError | None = None
-        if model_path:
-            for payload in infer_payload_candidates:
+        for generation_attempt in range(IMAGE_MAX_GENERATION_ATTEMPTS + 1):
+            if generation_attempt > 0:
+                await asyncio.sleep(DEFAULT_RETRY_BACKOFF_SECONDS * (generation_attempt + 1))
+                logger.info(
+                    "Image generation retry | attempt=%s/%s prompt_hash=%s",
+                    generation_attempt + 1,
+                    IMAGE_MAX_GENERATION_ATTEMPTS + 1,
+                    prompt_digest,
+                )
+
+            if model_path:
+                for payload in infer_payload_candidates:
+                    try:
+                        data = await _post_nvidia_json(
+                            self.api_key,
+                            f"/genai/{model_path}",
+                            payload,
+                            timeout_seconds=70,
+                            max_retries=DEFAULT_RETRY_COUNT,
+                            base_url=NVIDIA_IMAGE_BASE_URL,
+                        )
+                        resolved = await _resolve_generated_image_result(
+                            data=data,
+                            api_key=self.api_key,
+                            fallback_base_url=NVIDIA_IMAGE_BASE_URL,
+                            prompt_digest=prompt_digest,
+                            request_path=f"/genai/{model_path}",
+                        )
+                        if resolved is not None:
+                            return resolved
+                    except AIServiceError as exc:
+                        last_error = exc
+                        continue
+
+            for payload in payload_candidates:
                 try:
                     data = await _post_nvidia_json(
                         self.api_key,
-                        f"/genai/{model_path}",
+                        "/images/generations",
                         payload,
-                        timeout_seconds=60,
-                        max_retries=DEFAULT_RETRY_COUNT,
-                        base_url=NVIDIA_IMAGE_BASE_URL,
+                        timeout_seconds=55,
+                        max_retries=DEFAULT_RETRY_COUNT + 1,
+                        base_url=self.base_url,
                     )
+                    resolved = await _resolve_generated_image_result(
+                        data=data,
+                        api_key=self.api_key,
+                        fallback_base_url=self.base_url,
+                        prompt_digest=prompt_digest,
+                        request_path="/images/generations",
+                    )
+                    if resolved is not None:
+                        return resolved
                 except AIServiceError as exc:
                     last_error = exc
                     continue
-
-                image_b64, image_url = _extract_image_data(data)
-                if image_b64:
-                    try:
-                        compact_b64 = "".join(image_b64.split())
-                        return GeneratedImageResult(image_bytes=base64.b64decode(compact_b64), image_url=image_url)
-                    except ValueError:
-                        pass
-                if image_url:
-                    try:
-                        return GeneratedImageResult(
-                            image_bytes=await _download_image_bytes(image_url),
-                            image_url=image_url,
-                        )
-                    except AIServiceError:
-                        # Keep the URL as a fallback for clients that can render remote images directly.
-                        return GeneratedImageResult(image_bytes=None, image_url=image_url)
-
-        for payload in payload_candidates:
-            try:
-                data = await _post_nvidia_json(
-                    self.api_key,
-                    "/images/generations",
-                    payload,
-                    timeout_seconds=45,
-                    max_retries=DEFAULT_RETRY_COUNT,
-                    base_url=self.base_url,
-                )
-            except AIServiceError as exc:
-                last_error = exc
-                continue
-
-            image_b64, image_url = _extract_image_data(data)
-            if image_b64:
-                try:
-                    compact_b64 = "".join(image_b64.split())
-                    return GeneratedImageResult(image_bytes=base64.b64decode(compact_b64), image_url=image_url)
-                except ValueError:
-                    pass
-            if image_url:
-                try:
-                    return GeneratedImageResult(
-                        image_bytes=await _download_image_bytes(image_url),
-                        image_url=image_url,
-                    )
-                except AIServiceError:
-                    # Keep the URL as a fallback for clients that can render remote images directly.
-                    return GeneratedImageResult(image_bytes=None, image_url=image_url)
 
         if last_error is not None:
             raise last_error
@@ -802,6 +965,254 @@ def _extract_image_data(data: dict[str, object]) -> tuple[str | None, str | None
             return None, image_url
 
     return None, None
+
+
+def _extract_generation_status(data: dict[str, object]) -> str:
+    if not isinstance(data, dict):
+        return ""
+    candidates: list[dict[str, object]] = [data]
+    data_value = data.get("data")
+    if isinstance(data_value, dict):
+        candidates.append(data_value)
+    elif isinstance(data_value, list):
+        candidates.extend(item for item in data_value if isinstance(item, dict))
+    output_value = data.get("output")
+    if isinstance(output_value, dict):
+        candidates.append(output_value)
+    elif isinstance(output_value, list):
+        candidates.extend(item for item in output_value if isinstance(item, dict))
+    for candidate in candidates:
+        for key in ("status", "state", "phase"):
+            raw = candidate.get(key)
+            if isinstance(raw, str) and raw.strip():
+                return raw.strip().lower()
+    return ""
+
+
+def _extract_generation_request_id(data: dict[str, object]) -> str:
+    if not isinstance(data, dict):
+        return ""
+    candidates: list[dict[str, object]] = [data]
+    nested = data.get("data")
+    if isinstance(nested, dict):
+        candidates.append(nested)
+    elif isinstance(nested, list):
+        candidates.extend(item for item in nested if isinstance(item, dict))
+    for candidate in candidates:
+        for key in ("id", "request_id", "job_id", "task_id", "generation_id"):
+            raw = candidate.get(key)
+            if raw is None:
+                continue
+            normalized = str(raw).strip()
+            if normalized:
+                return normalized
+    return ""
+
+
+def _looks_like_image_asset_url(url: str) -> bool:
+    lowered = str(url or "").strip().lower()
+    return lowered.endswith((".png", ".jpg", ".jpeg", ".webp", ".gif", ".bmp")) or "/media/" in lowered
+
+
+def _normalize_poll_url(value: object, fallback_base_url: str) -> str | None:
+    if not isinstance(value, str):
+        return None
+    raw = value.strip()
+    if not raw:
+        return None
+    if raw.startswith("http://") or raw.startswith("https://"):
+        return raw
+    if raw.startswith("/"):
+        return f"{fallback_base_url.rstrip('/')}{raw}"
+    return None
+
+
+def _extract_generation_poll_url(data: dict[str, object], fallback_base_url: str) -> str | None:
+    if not isinstance(data, dict):
+        return None
+    candidates: list[dict[str, object]] = [data]
+    nested_data = data.get("data")
+    if isinstance(nested_data, dict):
+        candidates.append(nested_data)
+    elif isinstance(nested_data, list):
+        candidates.extend(item for item in nested_data if isinstance(item, dict))
+    nested_output = data.get("output")
+    if isinstance(nested_output, dict):
+        candidates.append(nested_output)
+    elif isinstance(nested_output, list):
+        candidates.extend(item for item in nested_output if isinstance(item, dict))
+
+    for candidate in candidates:
+        for key in ("status_url", "poll_url", "result_url", "operation_url", "status_endpoint"):
+            poll_url = _normalize_poll_url(candidate.get(key), fallback_base_url)
+            if poll_url:
+                return poll_url
+
+        # Some providers return a generic URL key for polling; avoid image file URLs.
+        fallback_url = _normalize_poll_url(candidate.get("url"), fallback_base_url)
+        if fallback_url and not _looks_like_image_asset_url(fallback_url):
+            return fallback_url
+    return None
+
+
+async def _poll_image_until_ready(
+    *,
+    api_key: str,
+    poll_url: str,
+    prompt_digest: str,
+    request_path: str,
+    timeout_seconds: int = IMAGE_MAX_POLL_SECONDS,
+) -> dict[str, object]:
+    headers = {"Authorization": f"Bearer {api_key}", "Accept": "application/json"}
+    timeout_value = max(8, int(timeout_seconds))
+    deadline = time.monotonic() + timeout_value
+    attempt = 0
+
+    while time.monotonic() < deadline:
+        attempt += 1
+        remaining = max(1.0, deadline - time.monotonic())
+        timeout = aiohttp.ClientTimeout(total=min(12, remaining))
+        try:
+            async with aiohttp.ClientSession(timeout=timeout) as session:
+                async with session.get(poll_url, headers=headers) as response:
+                    body = await response.text()
+        except (asyncio.TimeoutError, aiohttp.ClientError) as exc:
+            logger.warning(
+                "Image poll network issue | path=%s attempt=%s prompt_hash=%s error=%s",
+                request_path,
+                attempt,
+                prompt_digest,
+                exc.__class__.__name__,
+            )
+            await asyncio.sleep(min(IMAGE_POLL_INTERVAL_SECONDS, max(0.25, deadline - time.monotonic())))
+            continue
+
+        if response.status >= 400:
+            detail = _extract_api_error(body)
+            logger.warning(
+                "Image poll HTTP error | path=%s status=%s attempt=%s prompt_hash=%s detail=%s",
+                request_path,
+                response.status,
+                attempt,
+                prompt_digest,
+                detail[:180],
+            )
+            if _is_retryable_status(response.status):
+                await asyncio.sleep(min(IMAGE_POLL_INTERVAL_SECONDS, max(0.25, deadline - time.monotonic())))
+                continue
+            raise AIServiceError(SAFE_SERVICE_UNAVAILABLE_MESSAGE)
+
+        payload = _safe_json(body)
+        if not payload:
+            await asyncio.sleep(min(IMAGE_POLL_INTERVAL_SECONDS, max(0.25, deadline - time.monotonic())))
+            continue
+
+        image_b64, image_url = _extract_image_data(payload)
+        if image_b64 or image_url:
+            return payload
+
+        status = _extract_generation_status(payload)
+        if status in IMAGE_FAILED_STATES:
+            logger.warning(
+                "Image generation failed upstream | path=%s status=%s attempt=%s prompt_hash=%s",
+                request_path,
+                status,
+                attempt,
+                prompt_digest,
+            )
+            raise AIServiceError(SAFE_SERVICE_UNAVAILABLE_MESSAGE)
+        if status in IMAGE_PENDING_STATES:
+            logger.info(
+                "Image generation still pending | path=%s status=%s attempt=%s prompt_hash=%s",
+                request_path,
+                status,
+                attempt,
+                prompt_digest,
+            )
+            await asyncio.sleep(min(IMAGE_POLL_INTERVAL_SECONDS, max(0.25, deadline - time.monotonic())))
+            continue
+        return payload
+
+    logger.warning(
+        "Image generation poll timeout | path=%s prompt_hash=%s timeout_seconds=%s",
+        request_path,
+        prompt_digest,
+        timeout_value,
+    )
+    raise AIServiceError("Image generation timed out. Please retry.")
+
+
+async def _resolve_generated_image_result(
+    *,
+    data: dict[str, object],
+    api_key: str,
+    fallback_base_url: str,
+    prompt_digest: str,
+    request_path: str,
+) -> GeneratedImageResult | None:
+    image_b64, image_url = _extract_image_data(data)
+    if image_b64:
+        try:
+            compact_b64 = "".join(image_b64.split())
+            return GeneratedImageResult(image_bytes=base64.b64decode(compact_b64), image_url=image_url)
+        except ValueError:
+            logger.warning("Image base64 decode failed | path=%s prompt_hash=%s", request_path, prompt_digest)
+
+    if image_url:
+        try:
+            return GeneratedImageResult(
+                image_bytes=await _download_image_bytes(image_url),
+                image_url=image_url,
+            )
+        except AIServiceError:
+            # Keep remote URL fallback for clients that can render external links.
+            return GeneratedImageResult(image_bytes=None, image_url=image_url)
+
+    status = _extract_generation_status(data)
+    if status in IMAGE_FAILED_STATES:
+        logger.warning(
+            "Image provider marked request failed | path=%s status=%s prompt_hash=%s",
+            request_path,
+            status,
+            prompt_digest,
+        )
+        raise AIServiceError(SAFE_SERVICE_UNAVAILABLE_MESSAGE)
+
+    if status in IMAGE_PENDING_STATES:
+        request_id = _extract_generation_request_id(data)
+        poll_url = _extract_generation_poll_url(data, fallback_base_url)
+        if not poll_url and request_id:
+            poll_url = f"{fallback_base_url.rstrip('/')}/images/generations/{quote(request_id, safe='')}"
+        logger.info(
+            "Image provider returned pending status | path=%s status=%s request_id=%s has_poll_url=%s prompt_hash=%s",
+            request_path,
+            status,
+            request_id or "none",
+            bool(poll_url),
+            prompt_digest,
+        )
+        if poll_url:
+            polled_payload = await _poll_image_until_ready(
+                api_key=api_key,
+                poll_url=poll_url,
+                prompt_digest=prompt_digest,
+                request_path=request_path,
+            )
+            polled_b64, polled_url = _extract_image_data(polled_payload)
+            if polled_b64:
+                try:
+                    compact_b64 = "".join(polled_b64.split())
+                    return GeneratedImageResult(image_bytes=base64.b64decode(compact_b64), image_url=polled_url)
+                except ValueError:
+                    logger.warning("Polled image base64 decode failed | path=%s prompt_hash=%s", request_path, prompt_digest)
+            if polled_url:
+                try:
+                    return GeneratedImageResult(image_bytes=await _download_image_bytes(polled_url), image_url=polled_url)
+                except AIServiceError:
+                    return GeneratedImageResult(image_bytes=None, image_url=polled_url)
+        raise AIServiceError("Image generation timed out. Please retry.")
+
+    return None
 
 
 def _normalize_tts_language(language: str | None) -> str:

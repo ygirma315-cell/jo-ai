@@ -40,7 +40,6 @@ class UserSession:
     active_feature: Feature = Feature.NONE
     jo_ai_mode: JoAIMode = JoAIMode.MENU
     jo_ai_prompt_type: str | None = None
-    jo_ai_image_type: str | None = None
     jo_ai_image_ratio: str | None = None
     jo_ai_kimi_waiting_image: bool = False
     jo_ai_last_image_file_id: str | None = None

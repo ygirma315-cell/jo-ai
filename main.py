@@ -49,6 +49,7 @@ from bot.services.ai_service import (
     GeminiChatService,
     ImageGenerationService,
     TextToSpeechService,
+    build_enhanced_image_prompt,
 )
 from bot.services.supabase_client import build_supabase_config
 from bot.services.tracking_service import SupabaseTrackingService, TrackingIdentity, TrackingMedia
@@ -85,15 +86,8 @@ IMAGE_RATIO_TO_SIZE = {
     "9:16": "768x1344",
 }
 IMAGE_SIZE_TO_RATIO = {value: key for key, value in IMAGE_RATIO_TO_SIZE.items()}
-IMAGE_STYLE_HINTS = {
-    "realistic": "photorealistic, natural textures, realistic camera lens, ultra detailed",
-    "ai_art": "digital art, stylized illustration, painterly texture, artistic composition",
-    "anime": "anime style, clean line art, expressive characters, vibrant colors",
-    "cyberpunk": "cyberpunk, neon lighting, futuristic city, rain reflections, cinematic mood",
-    "logo_icon": "minimal clean logo design, centered icon, vector style, brand-ready composition",
-    "render_3d": "3D render, physically based materials, global illumination, high detail",
-    "concept_art": "concept art, environment storytelling, dramatic composition, matte painting quality",
-}
+IMAGE_ENDPOINT_TIMEOUT_SECONDS = 110
+GEMINI_TEMP_DISABLED = True
 OBSERVABLE_REQUEST_PATHS = frozenset(
     {
         "/ai",
@@ -145,7 +139,6 @@ class CodeRequest(ChatRequest):
 class ImageRequest(TrackingRequestBase):
     prompt: str | None = Field(default=None, max_length=4000)
     message: str | None = Field(default=None, max_length=4000)
-    image_type: str | None = Field(default=None, max_length=60)
     ratio: Literal["1:1", "16:9", "9:16"] | None = Field(default=None)
     size: str | None = Field(default=None, pattern=r"^\d+x\d+$")
 
@@ -171,11 +164,6 @@ class ImageRequest(TrackingRequestBase):
     @property
     def effective_size(self) -> str:
         return IMAGE_RATIO_TO_SIZE[self.effective_ratio]
-
-    @property
-    def effective_style_hint(self) -> str:
-        key = (self.image_type or "").strip().lower()
-        return IMAGE_STYLE_HINTS.get(key, "")
 
 
 class PromptRequest(TrackingRequestBase):
@@ -271,7 +259,6 @@ class GeminiRequest(TrackingRequestBase):
     message: str = Field(min_length=1, max_length=32000)
     mode: GeminiMode | None = None
     model: str | None = Field(default=None, max_length=120)
-    image_type: str | None = Field(default=None, max_length=60)
     ratio: Literal["1:1", "16:9", "9:16"] | None = Field(default=None)
     size: str | None = Field(default=None, pattern=r"^\d+x\d+$")
     language: str | None = Field(default=None, max_length=16)
@@ -574,6 +561,60 @@ def _validate_telegram_init_data(init_data: str, bot_token: str) -> dict[str, An
     return parsed_user
 
 
+def _validate_telegram_login_payload(payload: dict[str, Any], bot_token: str) -> dict[str, Any] | None:
+    if not isinstance(payload, dict):
+        return None
+    if not str(bot_token or "").strip():
+        return None
+
+    provided_hash = str(payload.get("hash") or "").strip()
+    if not provided_hash:
+        return None
+
+    prepared: dict[str, str] = {}
+    for key, value in payload.items():
+        if key == "hash" or value is None:
+            continue
+        normalized_key = str(key or "").strip()
+        if not normalized_key:
+            continue
+        if isinstance(value, bool):
+            prepared[normalized_key] = "1" if value else "0"
+        elif isinstance(value, (int, float)):
+            prepared[normalized_key] = str(int(value))
+        else:
+            prepared[normalized_key] = str(value)
+    if not prepared:
+        return None
+
+    auth_date = _parse_positive_int(prepared.get("auth_date"))
+    if auth_date is None:
+        return None
+    now_ts = int(time.time())
+    if abs(now_ts - auth_date) > ADMIN_INIT_DATA_MAX_AGE_SECONDS:
+        return None
+
+    data_check_string = "\n".join(f"{key}={prepared[key]}" for key in sorted(prepared))
+    secret_key = hashlib.sha256(str(bot_token).encode("utf-8")).digest()
+    computed_hash = hmac.new(secret_key, data_check_string.encode("utf-8"), hashlib.sha256).hexdigest()
+    if not secrets.compare_digest(computed_hash, provided_hash):
+        return None
+    return prepared
+
+
+def _resolve_admin_telegram_id_from_widget_payload(request: Request, payload: dict[str, Any]) -> int | None:
+    settings = get_settings()
+    verification_bot_token = settings.admin_dashboard_telegram_bot_token or settings.bot_token
+    validated = _validate_telegram_login_payload(payload, verification_bot_token)
+    if validated is None:
+        logger.warning(
+            "ADMIN TELEGRAM AUTH FAILED | request_id=%s reason=invalid_widget_payload",
+            _request_id_from_request(request) or "unknown",
+        )
+        return None
+    return _parse_positive_int(validated.get("id"))
+
+
 def _resolve_admin_telegram_id(request: Request) -> int | None:
     settings = get_settings()
     init_data = _extract_telegram_init_data(request)
@@ -597,20 +638,35 @@ def _resolve_admin_telegram_id(request: Request) -> int | None:
     return None
 
 
-def _admin_allowlist() -> tuple[int, ...]:
+def _admin_owner_telegram_id() -> int | None:
+    service = _admin_service()
+    if service.enabled:
+        resolved = service.resolve_admin_owner_telegram_id()
+        if resolved:
+            return int(resolved)
     settings = get_settings()
-    allowlist = tuple(int(value) for value in settings.admin_dashboard_allowlist_telegram_ids if int(value) > 0)
-    if allowlist:
-        return allowlist
     if settings.admin_dashboard_owner_telegram_id:
-        return (int(settings.admin_dashboard_owner_telegram_id),)
-    return ()
+        return int(settings.admin_dashboard_owner_telegram_id)
+    fallback_allowlist = tuple(int(value) for value in settings.admin_dashboard_allowlist_telegram_ids if int(value) > 0)
+    return int(fallback_allowlist[0]) if fallback_allowlist else None
+
+
+def _admin_allowlist() -> tuple[int, ...]:
+    owner_id = _admin_owner_telegram_id()
+    return (int(owner_id),) if owner_id else ()
 
 
 def _is_admin_allowlisted(telegram_id: int | None) -> bool:
-    if not telegram_id:
+    owner_id = _admin_owner_telegram_id()
+    if not telegram_id or not owner_id:
         return False
-    return int(telegram_id) in _admin_allowlist()
+    if int(telegram_id) != int(owner_id):
+        return False
+
+    service = _admin_service()
+    if service.enabled and not service.is_known_telegram_user(int(telegram_id)):
+        return False
+    return True
 
 
 def _require_admin_access(request: Request) -> None:
@@ -618,18 +674,12 @@ def _require_admin_access(request: Request) -> None:
     if provided and _validate_admin_session_token(provided):
         return
 
-    expected = str(get_settings().admin_dashboard_token or "").strip()
-    if expected and provided and secrets.compare_digest(provided, expected):
-        return
-
     logger.warning(
         "ADMIN AUTH FAILED | path=%s request_id=%s",
         request.url.path,
         _request_id_from_request(request) or "unknown",
     )
-    if expected:
-        raise HTTPException(status_code=401, detail="Unauthorized admin token.")
-    raise HTTPException(status_code=401, detail="Admin session is required.")
+    raise HTTPException(status_code=401, detail="Admin session is required. Login with Telegram.")
 
 
 def _admin_error_response(request: Request, status_code: int, message: str) -> JSONResponse:
@@ -991,16 +1041,37 @@ async def _describe_image_with_vision(message: str, image_base64: str) -> str:
 
 
 async def _generate_image(prompt: str, size: str, ratio: Literal["1:1", "16:9", "9:16"]) -> dict[str, str]:
-    try:
-        generated = await _image_service().generate_image(prompt, size=size, ratio=ratio)
-        if generated.image_bytes:
-            return {"image_base64": base64.b64encode(generated.image_bytes).decode("utf-8")}
-        if generated.image_url:
-            return {"image_url": generated.image_url}
-        raise AIServiceError(SAFE_SERVICE_UNAVAILABLE_MESSAGE)
-    except AIServiceError as exc:
-        logger.warning("Image generation failed.", exc_info=True)
-        raise _safe_service_error() from exc
+    max_attempts = 2
+    last_error: AIServiceError | None = None
+    for attempt in range(1, max_attempts + 1):
+        try:
+            generated = await _image_service().generate_image(prompt, size=size, ratio=ratio)
+            if generated.image_bytes:
+                return {"image_base64": base64.b64encode(generated.image_bytes).decode("utf-8")}
+            if generated.image_url:
+                return {"image_url": generated.image_url}
+            raise AIServiceError("Image payload is missing.")
+        except AIServiceError as exc:
+            last_error = exc
+            logger.warning(
+                "Image generation failed | attempt=%s/%s error=%s",
+                attempt,
+                max_attempts,
+                str(exc)[:220] or SAFE_SERVICE_UNAVAILABLE_MESSAGE,
+                exc_info=True,
+            )
+            if attempt < max_attempts:
+                await asyncio.sleep(0.7 * attempt)
+                continue
+
+    safe_message = str(last_error or "").strip() or SAFE_SERVICE_UNAVAILABLE_MESSAGE
+    lowered = safe_message.lower()
+    if "timed out" in lowered or "timeout" in lowered:
+        raise BackendError("Image generation timed out. Please retry.", status_code=504) from last_error
+    raise BackendError(
+        SAFE_SERVICE_UNAVAILABLE_MESSAGE,
+        status_code=_status_code_for_ai_error(safe_message),
+    ) from last_error
 
 
 async def _generate_tts(
@@ -1617,10 +1688,10 @@ async def _startup() -> None:
     )
     admin_service = _admin_service()
     logger.info(
-        "ADMIN DASHBOARD CONFIG | token_set=%s allowlist_count=%s owner_telegram_id_set=%s frontend_present=%s service_enabled=%s",
-        bool(str(settings.admin_dashboard_token or "").strip()),
+        "ADMIN DASHBOARD CONFIG | telegram_auth_only=%s allowlist_count=%s owner_telegram_id_set=%s frontend_present=%s service_enabled=%s",
+        True,
         len(_admin_allowlist()),
-        bool(settings.admin_dashboard_owner_telegram_id),
+        bool(_admin_owner_telegram_id()),
         ADMIN_FRONTEND_DIR.exists(),
         admin_service.enabled,
     )
@@ -1803,17 +1874,17 @@ def admin_dashboard_page() -> HTMLResponse:
 
 @app.get("/api/admin/status")
 def admin_status() -> dict[str, Any]:
-    settings = get_settings()
     service = _admin_service()
     allowlist = _admin_allowlist()
+    owner_id = _admin_owner_telegram_id()
     return {
         "ok": True,
         "auth_required": True,
-        "token_configured": bool(str(settings.admin_dashboard_token or "").strip()),
         "telegram_auth_enabled": bool(allowlist),
-        "telegram_id_shortcut_enabled": bool(allowlist),
+        "telegram_id_shortcut_enabled": bool(owner_id),
         "allowlist_count": len(allowlist),
-        "owner_telegram_id_configured": bool(settings.admin_dashboard_owner_telegram_id),
+        "owner_telegram_id_configured": bool(owner_id),
+        "owner_telegram_id": owner_id,
         "service_enabled": service.enabled,
         "service_reason": service.disabled_reason if not service.enabled else "",
     }
@@ -1841,43 +1912,44 @@ def admin_auth_check(request: Request) -> JSONResponse:
         return _admin_error_response(request, exc.status_code, str(exc.detail))
 
 
-@app.get("/api/admin/auth/telegram")
-def admin_telegram_auth(request: Request) -> JSONResponse:
-    allowlist = _admin_allowlist()
-    if not allowlist:
-        return _admin_error_response(
-            request,
-            503,
-            "Admin Telegram allowlist is not configured.",
-        )
-
-    telegram_id = _resolve_admin_telegram_id(request)
+def _complete_admin_telegram_auth(request: Request, telegram_id: int | None, auth_method: str) -> JSONResponse:
+    owner_id = _admin_owner_telegram_id()
+    if owner_id is None:
+        return _admin_error_response(request, 503, "Admin owner Telegram ID is not configured.")
     if telegram_id is None:
-        return _admin_error_response(
-            request,
-            401,
-            "Telegram identity is missing or invalid. Open this page from Telegram mini app.",
-        )
-    if not _is_admin_allowlisted(telegram_id):
+        return _admin_error_response(request, 401, "Telegram identity is missing or invalid.")
+    if int(telegram_id) != int(owner_id):
         logger.warning(
-            "ADMIN TELEGRAM AUTH FAILED | request_id=%s telegram_id=%s allowlist=%s",
+            "ADMIN TELEGRAM AUTH FAILED | request_id=%s telegram_id=%s owner_id=%s reason=owner_mismatch",
             _request_id_from_request(request) or "unknown",
             telegram_id,
-            ",".join(str(item) for item in allowlist),
+            owner_id,
         )
         return _admin_error_response(request, 403, "This Telegram account is not allowed for admin access.")
 
-    session_payload = _issue_admin_session_token(telegram_id)
+    service = _admin_service()
+    if not service.enabled:
+        return _admin_error_response(request, 503, service.disabled_reason or "Admin data service is unavailable.")
+    if not service.is_known_telegram_user(int(telegram_id)):
+        logger.warning(
+            "ADMIN TELEGRAM AUTH FAILED | request_id=%s telegram_id=%s reason=not_in_user_db",
+            _request_id_from_request(request) or "unknown",
+            telegram_id,
+        )
+        return _admin_error_response(request, 403, "Telegram ID is not present in the bot database.")
+
+    session_payload = _issue_admin_session_token(int(telegram_id))
     logger.info(
-        "ADMIN TELEGRAM AUTH SUCCESS | request_id=%s telegram_id=%s",
+        "ADMIN TELEGRAM AUTH SUCCESS | request_id=%s telegram_id=%s auth_method=%s",
         _request_id_from_request(request) or "unknown",
         telegram_id,
+        auth_method,
     )
     response = JSONResponse(
         status_code=200,
         content={
             "ok": True,
-            "auth_method": "telegram_id",
+            "auth_method": auth_method,
             "token": session_payload["token"],
             "expires_at": session_payload["expires_at"],
             "ttl_seconds": session_payload["ttl_seconds"],
@@ -1886,6 +1958,32 @@ def admin_telegram_auth(request: Request) -> JSONResponse:
     )
     _set_admin_session_cookie(response, str(session_payload["token"]), request=request)
     return response
+
+
+@app.get("/api/admin/auth/telegram")
+def admin_telegram_auth(request: Request) -> JSONResponse:
+    telegram_id = _resolve_admin_telegram_id(request)
+    if telegram_id is None:
+        return _admin_error_response(
+            request,
+            401,
+            "Telegram identity is missing or invalid. Use Telegram login from this dashboard.",
+        )
+    return _complete_admin_telegram_auth(request, telegram_id, auth_method="telegram_webapp")
+
+
+@app.post("/api/admin/auth/telegram")
+async def admin_telegram_auth_widget(request: Request) -> JSONResponse:
+    try:
+        payload = await request.json()
+    except Exception:
+        return _admin_error_response(request, 400, "Invalid Telegram login payload.")
+    if not isinstance(payload, dict):
+        return _admin_error_response(request, 400, "Invalid Telegram login payload.")
+    telegram_id = _resolve_admin_telegram_id_from_widget_payload(request, payload)
+    if telegram_id is None:
+        return _admin_error_response(request, 401, "Telegram identity is missing or invalid.")
+    return _complete_admin_telegram_auth(request, telegram_id, auth_method="telegram_widget")
 
 
 @app.post("/api/admin/auth/logout")
@@ -2598,6 +2696,37 @@ async def gemini_endpoint(request: Request, payload: GeminiRequest) -> JSONRespo
     conversation_id = _extract_conversation_id(request, identity, feature_used)
     tracking_model = str(payload.model or settings.gemini_model).strip() or settings.gemini_model
 
+    if GEMINI_TEMP_DISABLED:
+        disabled_message = (
+            "Gemini is temporarily disabled while image generation is being stabilized. "
+            "Use /image for image generation."
+        )
+        await _track_api_action(
+            identity=identity,
+            message_type="gemini",
+            user_message=user_message,
+            bot_reply=disabled_message,
+            model_used=tracking_model,
+            success=False,
+            message_increment=1,
+            frontend_source=frontend_source,
+            feature_used=feature_used,
+            conversation_id=conversation_id,
+            text_content=user_message,
+            mark_started=bool(identity),
+            referral_code=referral_code,
+        )
+        logger.info(
+            "GEMINI TEMP DISABLED | request_id=%s user=%s mode=%s",
+            request_id or "unknown",
+            user_id,
+            gemini_mode,
+        )
+        payload_response: dict[str, Any] = {"error": disabled_message, "mode": "gemini_disabled"}
+        if request_id:
+            payload_response["request_id"] = request_id
+        return JSONResponse(status_code=503, content=payload_response)
+
     refusal = _maybe_block_sensitive_request(user_message)
     if refusal:
         await _track_api_action(
@@ -2816,14 +2945,13 @@ async def image_endpoint(request: Request, payload: ImageRequest) -> JSONRespons
     referral_code = _extract_referral_code(request)
     user_prompt = payload.effective_prompt
     logger.info(
-        "API IMAGE START | request_id=%s user=%s prompt_len=%s ratio=%s image_type=%s",
+        "API IMAGE START | request_id=%s user=%s prompt_len=%s ratio=%s",
         request_id or "unknown",
         user_id,
         len(user_prompt or ""),
         payload.effective_ratio,
-        payload.image_type or "",
     )
-    refusal = _maybe_block_sensitive_request(payload.effective_prompt, payload.image_type, payload.ratio)
+    refusal = _maybe_block_sensitive_request(payload.effective_prompt, payload.ratio)
     if refusal:
         await _track_api_action(
             identity=identity,
@@ -2847,17 +2975,25 @@ async def image_endpoint(request: Request, payload: ImageRequest) -> JSONRespons
         )
         return refusal
     try:
-        prompt = user_prompt
-        style_hint = payload.effective_style_hint
-        if style_hint:
-            prompt = f"{prompt}\nStyle hints: {style_hint}"
-        result_payload = await _generate_image(
-            prompt=prompt,
-            size=payload.effective_size,
-            ratio=payload.effective_ratio,
+        enhanced_prompt = build_enhanced_image_prompt(user_prompt, ratio=payload.effective_ratio)
+        prompt_hash = hashlib.sha256(user_prompt.encode("utf-8")).hexdigest()[:12]
+        logger.info(
+            "API IMAGE ENHANCED | request_id=%s user=%s prompt_hash=%s enhanced_len=%s",
+            request_id or "unknown",
+            user_id,
+            prompt_hash,
+            len(enhanced_prompt),
+        )
+        result_payload = await asyncio.wait_for(
+            _generate_image(
+                prompt=enhanced_prompt,
+                size=payload.effective_size,
+                ratio=payload.effective_ratio,
+            ),
+            timeout=IMAGE_ENDPOINT_TIMEOUT_SECONDS,
         )
         response_payload: dict[str, Any] = {
-            "output": "Image generated successfully.",
+            "output": user_prompt,
             "ratio": payload.effective_ratio,
         }
         response_payload.update(result_payload)
@@ -2910,6 +3046,40 @@ async def image_endpoint(request: Request, payload: ImageRequest) -> JSONRespons
             "image_url" in response_payload,
         )
         return JSONResponse(status_code=200, content=response_payload)
+    except asyncio.TimeoutError:
+        timeout_message = "Image generation timed out. Please retry."
+        await _track_api_action(
+            identity=identity,
+            message_type="image",
+            user_message=user_prompt,
+            bot_reply=timeout_message,
+            model_used=settings.image_model,
+            success=False,
+            image_increment=1,
+            frontend_source=frontend_source,
+            feature_used=feature_used,
+            conversation_id=conversation_id,
+            text_content=user_prompt,
+            media=TrackingMedia(
+                media_type="image",
+                provider_source="nvidia",
+                media_origin="generated",
+                media_status="failed",
+                media_error_reason="timeout",
+            ),
+            mark_started=bool(identity),
+            referral_code=referral_code,
+        )
+        logger.warning(
+            "API IMAGE TIMEOUT | request_id=%s user=%s timeout_seconds=%s",
+            request_id or "unknown",
+            user_id,
+            IMAGE_ENDPOINT_TIMEOUT_SECONDS,
+        )
+        payload_response = {"error": timeout_message}
+        if request_id:
+            payload_response["request_id"] = request_id
+        return JSONResponse(status_code=504, content=payload_response)
     except BackendError as exc:
         await _track_api_action(
             identity=identity,

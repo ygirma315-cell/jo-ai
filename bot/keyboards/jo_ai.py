@@ -15,13 +15,12 @@ def jo_ai_menu_keyboard() -> InlineKeyboardMarkup:
     builder.button(text="⚡ Code Generator", callback_data="joai:code")
     builder.button(text="🔍 Research", callback_data="joai:research")
     builder.button(text="🧠 DeepSeek", callback_data="joai:deep_analysis")
-    builder.button(text="💠 Gemini Chat", callback_data="joai:gemini")
     builder.button(text="✨ Prompt Generator", callback_data="joai:prompt")
     builder.button(text="🎨 Image Generator", callback_data="joai:image")
     builder.button(text="🖼️ Vision", callback_data="joai:kimi")
     builder.button(text="🔊 Text-to-Speech", callback_data="joai:tts")
     _append_back_main(builder, "menu:ai_tools")
-    builder.adjust(2, 2, 2, 2, 1, 2)
+    builder.adjust(2, 2, 2, 2, 2)
     return builder.as_markup()
 
 
@@ -56,20 +55,6 @@ def uploaded_image_keyboard(back_callback: str = "menu:ai_tools") -> InlineKeybo
     builder.button(text="🖼️ Describe Image", callback_data="joai:kimi_describe_last")
     _append_back_main(builder, back_callback)
     builder.adjust(1, 2)
-    return builder.as_markup()
-
-
-def image_type_keyboard() -> InlineKeyboardMarkup:
-    builder = InlineKeyboardBuilder()
-    builder.button(text="📸 Realistic", callback_data="joaiimg:type:realistic")
-    builder.button(text="🧪 AI Art", callback_data="joaiimg:type:ai_art")
-    builder.button(text="🌸 Anime", callback_data="joaiimg:type:anime")
-    builder.button(text="🌆 Cyberpunk", callback_data="joaiimg:type:cyberpunk")
-    builder.button(text="🪪 Logo / Icon", callback_data="joaiimg:type:logo_icon")
-    builder.button(text="🧊 3D Render", callback_data="joaiimg:type:render_3d")
-    builder.button(text="🗺️ Concept Art", callback_data="joaiimg:type:concept_art")
-    _append_back_main(builder, "joai:menu")
-    builder.adjust(2, 2, 2, 1, 2)
     return builder.as_markup()
 
 

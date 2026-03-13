@@ -65,6 +65,10 @@ body.sidebar-open {
   margin-bottom: 10px;
 }
 
+.telegram-widget-wrap {
+  margin: 12px 0;
+}
+
 .shell {
   min-height: 100dvh;
   display: grid;

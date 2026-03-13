@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import asyncio
 from dataclasses import dataclass
+import hashlib
 import html
 import logging
 import re
@@ -32,7 +33,6 @@ from bot.filters.feature_filter import ActiveFeatureFilter
 from bot.keyboards.jo_ai import (
     gemini_mode_keyboard,
     image_ratio_keyboard,
-    image_type_keyboard,
     jo_ai_menu_keyboard,
     jo_chat_keyboard,
     kimi_result_keyboard,
@@ -50,7 +50,14 @@ from bot.security import (
     SAFE_SERVICE_UNAVAILABLE_MESSAGE,
     guardrail_response_for_user_query,
 )
-from bot.services.ai_service import AIServiceError, ChatService, GeminiChatService, ImageGenerationService, TextToSpeechService
+from bot.services.ai_service import (
+    AIServiceError,
+    ChatService,
+    GeminiChatService,
+    ImageGenerationService,
+    TextToSpeechService,
+    build_enhanced_image_prompt,
+)
 from bot.services.session_manager import SessionManager
 from bot.services.tracking_service import SupabaseTrackingService, TrackingIdentity, TrackingMedia
 from bot.telegram_formatting import TelegramMessageFormatter
@@ -62,7 +69,6 @@ JO_AI_MENU_TEXT = (
     "<b>JO AI Tools</b>\n\n"
     "Choose a mode:\n"
     "- JO AI Chat\n"
-    "- Gemini Chat\n"
     "- Code Generator\n"
     "- Research\n"
     "- DeepSeek\n"
@@ -72,26 +78,6 @@ JO_AI_MENU_TEXT = (
     "- Text-to-Speech\n\n"
     "Tip: use /help any time for guidance."
 )
-
-IMAGE_TYPE_LABELS = {
-    "realistic": "Realistic Image",
-    "ai_art": "AI Art",
-    "anime": "Anime Style",
-    "cyberpunk": "Cyberpunk Style",
-    "logo_icon": "Logo / Icon",
-    "render_3d": "3D Render",
-    "concept_art": "Concept Art",
-}
-
-IMAGE_TYPE_STYLE_HINTS = {
-    "realistic": "photorealistic, natural textures, realistic camera lens, ultra detailed",
-    "ai_art": "digital art, stylized illustration, painterly texture, artistic composition",
-    "anime": "anime style, clean line art, expressive characters, vibrant colors",
-    "cyberpunk": "cyberpunk, neon lighting, futuristic city, rain reflections, cinematic mood",
-    "logo_icon": "minimal clean logo design, centered icon, vector style, brand-ready composition",
-    "render_3d": "3D render, physically based materials, global illumination, high detail",
-    "concept_art": "concept art, environment storytelling, dramatic composition, matte painting quality",
-}
 
 IMAGE_RATIO_LABELS = {
     "1:1": "1:1",
@@ -178,6 +164,8 @@ LONG_CODE_ATTACHMENT_THRESHOLD = 2800
 EXTREME_CODE_LENGTH_THRESHOLD = 16000
 MAX_CODE_UPLOAD_BYTES = 1_500_000
 TELEGRAM_TRACKING_TIMEOUT_SECONDS = 4.0
+TELEGRAM_IMAGE_TIMEOUT_SECONDS = 120
+GEMINI_TEMP_DISABLED = True
 DEBUG_INTENT_PATTERN = re.compile(
     r"\b(debug|fix|error|exception|traceback|bug|issue|crash|failing|failure|broken|not working)\b",
     flags=re.IGNORECASE,
@@ -447,6 +435,13 @@ async def _send_chat_intro(message: Message) -> None:
 
 
 async def _send_gemini_intro(message: Message) -> None:
+    if GEMINI_TEMP_DISABLED:
+        await message.answer(
+            "<b>Gemini mode is temporarily disabled</b>\n\n"
+            "Image generation is being stabilized. Use /image for image requests.",
+            reply_markup=jo_chat_keyboard("joai:menu"),
+        )
+        return
     await message.answer(
         "<b>Step 1: Gemini mode is active</b>\n\n"
         "Step 2: Choose Chat, Image, Voice, or Video below.\n"
@@ -523,28 +518,28 @@ async def _send_prompt_details_step(message: Message) -> None:
     )
 
 
-async def _send_image_style_step(message: Message) -> None:
+async def _send_image_intro(message: Message) -> None:
     await message.answer(
         "<b>Image Generator is active</b>\n\n"
-        "Step 1/3: Choose an image style below.",
-        reply_markup=image_type_keyboard(),
-    )
-
-
-async def _send_image_ratio_step(message: Message, style_label: str | None = None) -> None:
-    intro = f"<b>{html.escape(style_label)}</b> selected.\n\n" if style_label else ""
-    await message.answer(
-        f"{intro}Step 2/3: Choose an aspect ratio.\n"
-        "Available ratios: 1:1, 16:9, 9:16.",
+        "Send a prompt any time to generate an image.\n"
+        "Optional: choose an aspect ratio first.",
         reply_markup=image_ratio_keyboard(),
     )
 
 
-async def _send_image_prompt_step(message: Message, style_label: str, ratio_label: str) -> None:
+async def _send_image_ratio_step(message: Message) -> None:
     await message.answer(
-        f"Style <b>{html.escape(style_label)}</b> | Ratio <b>{html.escape(ratio_label)}</b>\n\n"
-        "Step 3/3: Describe the image you want me to create.\n"
-        "Be specific about subject, mood, lighting, and setting.",
+        "Choose an aspect ratio.\n"
+        "Available ratios: 1:1, 16:9, 9:16.\n\n"
+        "After selecting a ratio, send your image prompt.",
+        reply_markup=image_ratio_keyboard(),
+    )
+
+
+async def _send_image_prompt_step(message: Message, ratio_label: str) -> None:
+    await message.answer(
+        f"Ratio <b>{html.escape(ratio_label)}</b> selected.\n\n"
+        "Now send the image prompt.",
         reply_markup=_image_prompt_reply_keyboard(),
     )
 
@@ -629,7 +624,6 @@ async def _switch_to_jo_ai_mode(user_id: int, mode: JoAIMode, session_manager: S
             if mode != JoAIMode.PROMPT:
                 session.jo_ai_prompt_type = None
             if mode != JoAIMode.IMAGE:
-                session.jo_ai_image_type = None
                 session.jo_ai_image_ratio = None
             if mode != JoAIMode.KIMI_IMAGE_DESCRIBER:
                 session.jo_ai_kimi_waiting_image = False
@@ -676,7 +670,7 @@ async def _activate_mode(
         await _send_prompt_type_step(message)
         return
     if mode == JoAIMode.IMAGE:
-        await _send_image_style_step(message)
+        await _send_image_intro(message)
         return
     if mode == JoAIMode.TEXT_TO_SPEECH:
         await _send_tts_language_step(message)
@@ -887,40 +881,6 @@ def _is_service_unavailable_error(exc: Exception | None) -> bool:
     return normalized == SAFE_SERVICE_UNAVAILABLE_MESSAGE
 
 
-def _normalize_image_prompt_text(prompt: str) -> str:
-    normalized = CODE_FENCE_PATTERN.sub(lambda match: match.group("code"), prompt, count=1)
-    normalized = normalized.replace("Optimized Prompt:", " ").replace("optimized prompt:", " ")
-    normalized = " ".join(normalized.split())
-    return normalized.strip("` ").strip()
-
-
-def _build_local_image_prompt(
-    *,
-    user_text: str,
-    style_label: str,
-    style_hint: str,
-    ratio_label: str,
-) -> str:
-    cleaned_request = " ".join((user_text or "").split())
-    aspect_hint = {
-        "1:1": "square composition, centered framing",
-        "16:9": "wide cinematic composition, landscape framing",
-        "9:16": "vertical composition, mobile-friendly framing",
-    }.get(ratio_label, "balanced composition")
-    parts = [
-        cleaned_request,
-        f"{style_label.lower()} style",
-        style_hint,
-        aspect_hint,
-        "subject-focused composition",
-        "detailed lighting",
-        "clean background separation",
-        "high detail",
-        "high quality",
-    ]
-    return ", ".join(part.strip() for part in parts if part and part.strip())
-
-
 def _image_request_blocked_text() -> str:
     return (
         "Warning: <b>Image request blocked by rules.</b>\n"
@@ -931,21 +891,11 @@ def _image_request_blocked_text() -> str:
 
 def _image_generation_failed_text(
     *,
-    prompt: str,
     confirmed_unavailable: bool,
 ) -> str:
     title = "Image generation is unavailable right now." if confirmed_unavailable else "Image generation failed for this request."
-    detail = (
-        "The image API is missing, inactive, or did not return a valid image."
-        if confirmed_unavailable
-        else "I kept the optimized prompt below so you can retry without losing the request."
-    )
-    return (
-        f"Warning: <b>{title}</b>\n"
-        f"{detail}\n\n"
-        "Optimized prompt:\n"
-        f"<code>{html.escape(prompt[:900])}</code>"
-    )
+    detail = "The image API is missing, inactive, or did not return a valid image."
+    return f"Warning: <b>{title}</b>\n{detail}\nPlease retry in a moment."
 
 
 def _compact_history_entry(text: str, limit: int = CHAT_HISTORY_ENTRY_MAX_CHARS) -> str:
@@ -1193,6 +1143,12 @@ async def open_jo_ai_menu(message: Message, session_manager: SessionManager, min
         await _activate_mode(message, message.from_user.id, JoAIMode.CHAT, session_manager, miniapp_url)
         return
     if text in {"/gemini", MENU_AI_GEMINI.lower()}:
+        if GEMINI_TEMP_DISABLED:
+            await message.answer(
+                "Gemini mode is temporarily disabled while image generation is being stabilized.",
+                reply_markup=jo_ai_menu_keyboard(),
+            )
+            return
         await _activate_mode(message, message.from_user.id, JoAIMode.GEMINI, session_manager, miniapp_url)
         return
     if text in {"/code", MENU_AI_CODE.lower()}:
@@ -1266,6 +1222,14 @@ async def enable_gemini_mode(query: CallbackQuery, session_manager: SessionManag
     if not query.from_user:
         await query.answer()
         return
+    if GEMINI_TEMP_DISABLED:
+        await query.answer("Gemini is temporarily disabled.", show_alert=True)
+        if isinstance(query.message, Message):
+            await query.message.answer(
+                "Gemini mode is temporarily disabled while image generation is being stabilized.",
+                reply_markup=jo_ai_menu_keyboard(),
+            )
+        return
     await query.answer()
     if isinstance(query.message, Message):
         await _activate_mode(query.message, query.from_user.id, JoAIMode.GEMINI, session_manager, miniapp_url)
@@ -1275,6 +1239,9 @@ async def enable_gemini_mode(query: CallbackQuery, session_manager: SessionManag
 async def select_gemini_mode(query: CallbackQuery, session_manager: SessionManager, miniapp_url: str | None) -> None:
     if not query.from_user:
         await query.answer()
+        return
+    if GEMINI_TEMP_DISABLED:
+        await query.answer("Gemini is temporarily disabled.", show_alert=True)
         return
 
     mode_token = str(query.data or "").split(":")[-1].strip().lower()
@@ -1546,53 +1513,20 @@ async def prompt_show_type_menu(query: CallbackQuery, session_manager: SessionMa
         await _send_prompt_type_step(query.message)
 
 
-@router.callback_query(F.data.startswith("joaiimg:type:"))
-async def choose_image_type(query: CallbackQuery, session_manager: SessionManager) -> None:
-    if not query.from_user:
-        await query.answer()
-        return
-    raw = query.data or ""
-    parts = raw.split(":")
-    if len(parts) != 3:
-        await query.answer("Invalid image style.", show_alert=True)
-        return
-    image_type = parts[2]
-    label = IMAGE_TYPE_LABELS.get(image_type)
-    if not label:
-        await query.answer("Unknown image style.", show_alert=True)
-        return
-
-    async with session_manager.lock(query.from_user.id) as session:
-        if session.active_feature != Feature.JO_AI or session.jo_ai_mode != JoAIMode.IMAGE:
-            await query.answer("Image session expired. Send /image again.", show_alert=True)
-            return
-        session.jo_ai_image_type = image_type
-        session.jo_ai_image_ratio = None
-
-    await query.answer(f"{label} selected.")
-    if isinstance(query.message, Message):
-        await _send_image_ratio_step(query.message, label)
-
-
 @router.callback_query(F.data == "joaiimg:ratio_menu")
 async def image_show_ratio_menu(query: CallbackQuery, session_manager: SessionManager) -> None:
     if not query.from_user:
         await query.answer()
         return
-    style_label: str | None = None
     async with session_manager.lock(query.from_user.id) as session:
         if session.active_feature != Feature.JO_AI or session.jo_ai_mode != JoAIMode.IMAGE:
             await query.answer("Image session expired. Send /image again.", show_alert=True)
             return
-        if not session.jo_ai_image_type:
-            await query.answer("Pick an image style first.", show_alert=True)
-            return
         session.jo_ai_image_ratio = None
-        style_label = IMAGE_TYPE_LABELS.get(session.jo_ai_image_type, session.jo_ai_image_type)
 
     await query.answer()
     if isinstance(query.message, Message):
-        await _send_image_ratio_step(query.message, style_label)
+        await _send_image_ratio_step(query.message)
 
 
 @router.callback_query(F.data.startswith("joaiimg:ratio:"))
@@ -1610,20 +1544,15 @@ async def choose_image_ratio(query: CallbackQuery, session_manager: SessionManag
         await query.answer("Unsupported ratio.", show_alert=True)
         return
 
-    style_label: str | None = None
     async with session_manager.lock(query.from_user.id) as session:
         if session.active_feature != Feature.JO_AI or session.jo_ai_mode != JoAIMode.IMAGE:
             await query.answer("Image session expired. Send /image again.", show_alert=True)
             return
-        if not session.jo_ai_image_type:
-            await query.answer("Pick an image style first.", show_alert=True)
-            return
         session.jo_ai_image_ratio = ratio
-        style_label = IMAGE_TYPE_LABELS.get(session.jo_ai_image_type, session.jo_ai_image_type)
 
     await query.answer(f"Ratio {ratio} selected.")
     if isinstance(query.message, Message):
-        await _send_image_prompt_step(query.message, style_label or "Selected style", ratio)
+        await _send_image_prompt_step(query.message, ratio)
 
 
 @router.callback_query(F.data.startswith("joai:"))
@@ -1677,7 +1606,6 @@ async def handle_jo_ai_text(
     async with session_manager.lock(message.from_user.id) as session:
         mode = session.jo_ai_mode if session.active_feature == Feature.JO_AI else JoAIMode.MENU
         prompt_type = session.jo_ai_prompt_type
-        image_type = session.jo_ai_image_type
         image_ratio = session.jo_ai_image_ratio
         code_file_name = session.jo_ai_code_file_name
         code_file_content = session.jo_ai_code_file_content
@@ -1814,11 +1742,8 @@ async def handle_jo_ai_text(
             message,
             user_text,
             session_manager,
-            chat_service,
             image_generation_service,
-            image_type,
             image_ratio,
-            mode_options,
             tracking_service,
         )
         return
@@ -2460,6 +2385,21 @@ async def _process_gemini_message(
     tracking_service: SupabaseTrackingService | None,
 ) -> None:
     reply_markup = jo_chat_keyboard("joai:menu")
+    if GEMINI_TEMP_DISABLED:
+        reply_text = "Gemini mode is temporarily disabled while image generation is being stabilized."
+        await message.answer(reply_text, reply_markup=reply_markup)
+        await _track_telegram_action(
+            tracking_service=tracking_service,
+            message=message,
+            message_type="gemini",
+            user_message=user_text,
+            bot_reply=reply_text,
+            model_used=gemini_service.model,
+            success=False,
+            message_increment=1,
+            feature_used="gemini_disabled",
+        )
+        return
     gemini_mode, effective_text = _extract_gemini_command(user_text)
     feature_used = f"gemini_{gemini_mode}"
     guardrail_reply = guardrail_response_for_user_query(effective_text)
@@ -3086,82 +3026,20 @@ async def _process_prompt_message(
     )
 
 
-def _image_request_blocked_text() -> str:
-    return (
-        "Warning: <b>Image request blocked by rules.</b>\n"
-        "This prompt asks for internal or backend details, so I did not send it to the image generator.\n"
-        "Rewrite it as a visual description only and send it again."
-    )
-
-
-def _image_generation_failed_text(
-    *,
-    prompt: str,
-    confirmed_unavailable: bool,
-) -> str:
-    title = "Image generation is unavailable right now." if confirmed_unavailable else "Image generation failed for this request."
-    detail = (
-        "The image API is missing, inactive, or did not return a valid image."
-        if confirmed_unavailable
-        else "I kept the optimized prompt below so you can retry without losing the request."
-    )
-    return (
-        f"Warning: <b>{title}</b>\n"
-        f"{detail}\n\n"
-        "Optimized prompt:\n"
-        f"<code>{html.escape(prompt[:900])}</code>"
-    )
-
-
 async def _process_image_message(
     message: Message,
     user_text: str,
     session_manager: SessionManager,
-    chat_service: ChatService,
     image_generation_service: ImageGenerationService,
-    current_image_type: str | None,
     current_image_ratio: str | None,
-    mode_options: dict[str, object],
     tracking_service: SupabaseTrackingService | None,
 ) -> None:
     _ = session_manager
     model_used = (image_generation_service.model or "").strip() or None
 
-    if not current_image_type:
-        reply_text = "Step 1/3: Choose an image style first."
-        await message.answer(reply_text, reply_markup=image_type_keyboard())
-        await _track_telegram_action(
-            tracking_service=tracking_service,
-            message=message,
-            message_type="image",
-            user_message=user_text,
-            bot_reply=reply_text,
-            model_used=model_used,
-            success=False,
-            image_increment=1,
-        )
-        return
-    if current_image_ratio not in IMAGE_RATIO_TO_SIZE:
-        reply_text = "Step 2/3: Choose an aspect ratio first."
-        await message.answer(reply_text, reply_markup=image_ratio_keyboard())
-        await _track_telegram_action(
-            tracking_service=tracking_service,
-            message=message,
-            message_type="image",
-            user_message=user_text,
-            bot_reply=reply_text,
-            model_used=model_used,
-            success=False,
-            image_increment=1,
-        )
-        return
-
-    style_label = IMAGE_TYPE_LABELS.get(current_image_type, current_image_type)
-    ratio_label = IMAGE_RATIO_LABELS.get(current_image_ratio, "1:1")
-    image_size = IMAGE_RATIO_TO_SIZE.get(current_image_ratio, IMAGE_RATIO_TO_SIZE["1:1"])
-    style_hint = IMAGE_TYPE_STYLE_HINTS.get(current_image_type, "high quality image")
-
-    guardrail_reply = guardrail_response_for_user_query(user_text, style_label, ratio_label)
+    ratio_label = current_image_ratio if current_image_ratio in IMAGE_RATIO_TO_SIZE else "1:1"
+    image_size = IMAGE_RATIO_TO_SIZE.get(ratio_label, IMAGE_RATIO_TO_SIZE["1:1"])
+    guardrail_reply = guardrail_response_for_user_query(user_text, ratio_label)
     if guardrail_reply:
         reply_text = guardrail_reply if not _is_internal_rule_block(guardrail_reply) else _image_request_blocked_text()
         await message.answer(reply_text, reply_markup=_image_prompt_reply_keyboard())
@@ -3178,55 +3056,51 @@ async def _process_image_message(
         return
 
     await _maybe_send_engagement(message)
-
-    fallback_prompt = _build_local_image_prompt(
-        user_text=user_text,
-        style_label=style_label,
-        style_hint=style_hint,
-        ratio_label=ratio_label,
-    )
-    prompt_request = (
-        f"Image type: {style_label}\n"
-        f"Aspect ratio: {ratio_label}\n"
-        f"Style hints: {style_hint}\n"
-        f"User description: {user_text}\n"
-        "Generate one optimized image prompt with subject detail, lighting, environment, style and quality tags."
+    enhanced_prompt = build_enhanced_image_prompt(user_text, ratio=ratio_label) or user_text
+    prompt_hash = hashlib.sha256(user_text.encode("utf-8")).hexdigest()[:12]
+    logger.info(
+        "TELEGRAM IMAGE ENHANCED | user=%s ratio=%s prompt_hash=%s enhanced_len=%s",
+        message.from_user.id if message.from_user else "unknown",
+        ratio_label,
+        prompt_hash,
+        len(enhanced_prompt),
     )
 
-    progress_message = await _send_progress_message(message, "Optimizing your image prompt...")
-    cleaned_prompt = fallback_prompt
-
-    try:
-        async with ChatActionSender.typing(bot=message.bot, chat_id=message.chat.id):
-            optimized_prompt = await chat_service.generate_reply(
-                prompt_request,
-                history=[],
-                mode="image_prompt",
-                model_override=mode_options.get("model_override"),  # type: ignore[arg-type]
-                api_key_override=mode_options.get("api_key_override"),  # type: ignore[arg-type]
-                thinking=bool(mode_options.get("thinking", False)),
-            )
-        normalized_prompt = _normalize_image_prompt_text(optimized_prompt)
-        if normalized_prompt and not _is_internal_rule_block(normalized_prompt):
-            cleaned_prompt = normalized_prompt
-        else:
-            logger.warning("Image prompt optimizer returned an unusable response; using local fallback prompt.")
-    except AIServiceError:
-        logger.warning("Image prompt optimization failed; using local fallback prompt.", exc_info=True)
-    except Exception:
-        logger.exception("Unexpected image prompt optimization error; using local fallback prompt.")
-
-    if progress_message is not None:
-        with suppress(TelegramBadRequest):
-            await progress_message.edit_text("Creating your image...")
+    progress_message = await _send_progress_message(message, "Creating your image...")
 
     try:
         async with ChatActionSender.upload_photo(bot=message.bot, chat_id=message.chat.id):
-            generated = await image_generation_service.generate_image(
-                cleaned_prompt,
-                size=image_size,
-                ratio=ratio_label,
+            generated = await asyncio.wait_for(
+                image_generation_service.generate_image(
+                    enhanced_prompt,
+                    size=image_size,
+                    ratio=ratio_label,
+                ),
+                timeout=TELEGRAM_IMAGE_TIMEOUT_SECONDS,
             )
+    except asyncio.TimeoutError:
+        await _clear_progress_message(progress_message)
+        reply_text = "Image generation timed out. Please retry."
+        await message.answer(reply_text, reply_markup=_image_prompt_reply_keyboard())
+        await _track_telegram_action(
+            tracking_service=tracking_service,
+            message=message,
+            message_type="image",
+            user_message=user_text,
+            bot_reply=reply_text,
+            model_used=model_used,
+            success=False,
+            image_increment=1,
+            feature_used="image_generation",
+            media=TrackingMedia(
+                media_type="image",
+                provider_source="nvidia",
+                media_origin="generated",
+                media_status="failed",
+                media_error_reason="timeout",
+            ),
+        )
+        return
     except AIServiceError as exc:
         await _clear_progress_message(progress_message)
         if _is_internal_rule_block(str(exc)):
@@ -3252,7 +3126,6 @@ async def _process_image_message(
             )
             return
         reply_text = _image_generation_failed_text(
-            prompt=cleaned_prompt,
             confirmed_unavailable=_is_service_unavailable_error(exc) or not bool(image_generation_service.api_key),
         )
         await message.answer(reply_text, reply_markup=_image_prompt_reply_keyboard())
@@ -3278,7 +3151,7 @@ async def _process_image_message(
     except Exception:
         await _clear_progress_message(progress_message)
         logger.exception("Unexpected image generation error.")
-        reply_text = _image_generation_failed_text(prompt=cleaned_prompt, confirmed_unavailable=False)
+        reply_text = _image_generation_failed_text(confirmed_unavailable=False)
         await message.answer(reply_text, reply_markup=_image_prompt_reply_keyboard())
         await _track_telegram_action(
             tracking_service=tracking_service,
@@ -3301,18 +3174,12 @@ async def _process_image_message(
         return
 
     await _clear_progress_message(progress_message)
-    success_caption = (
-        "<b>Your image is ready</b>\n\n"
-        f"Style: <b>{html.escape(style_label)}</b>\n"
-        f"Ratio: <b>{html.escape(ratio_label)}</b>\n"
-        "Prompt used:\n"
-        f"<code>{html.escape(cleaned_prompt[:900])}</code>"
-    )
+    original_prompt_caption = html.escape(" ".join(user_text.split())[:900]) or "Image generated."
     if generated.image_bytes:
         image_file = BufferedInputFile(generated.image_bytes, filename="jo_ai_generated.png")
         sent = await message.answer_photo(
             photo=image_file,
-            caption=success_caption,
+            caption=original_prompt_caption,
             reply_markup=_image_prompt_reply_keyboard(),
         )
         storage_path = None
@@ -3343,7 +3210,7 @@ async def _process_image_message(
     if generated.image_url:
         sent = await message.answer_photo(
             photo=generated.image_url,
-            caption=success_caption,
+            caption=original_prompt_caption,
             reply_markup=_image_prompt_reply_keyboard(),
         )
         storage_path = None
@@ -3370,7 +3237,7 @@ async def _process_image_message(
         )
         return
 
-    reply_text = _image_generation_failed_text(prompt=cleaned_prompt, confirmed_unavailable=True)
+    reply_text = _image_generation_failed_text(confirmed_unavailable=True)
     await message.answer(reply_text, reply_markup=_image_prompt_reply_keyboard())
     await _track_telegram_action(
         tracking_service=tracking_service,

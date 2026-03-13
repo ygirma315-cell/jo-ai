@@ -17,6 +17,7 @@
   const MAX_CODE_UPLOAD_BYTES = 1_500_000;
   const SAFE_INTERNAL_DETAILS_REFUSAL =
     "I can't share internal backend or API details. For JO API access, contact the developer @grpbuyer3.";
+  const GEMINI_TEMP_DISABLED = true;
 
   const loadingMessages = [
     "Processing...",
@@ -116,8 +117,8 @@
     },
     gemini: {
       title: "Gemini Chat",
-      description: "Gemini mode with command-style actions in one chat.",
-      lead: "Use plain text for chat, or commands like /image, /voice, and /video.",
+      description: "Temporarily unavailable while image generation is being stabilized.",
+      lead: "This mode is paused for now.",
       example: "Give me a concise plan to improve my study schedule this week.",
       label: "Ask Gemini via JO AI",
       placeholder: "Type a prompt, or use /image, /voice, /video",
@@ -125,7 +126,7 @@
       maxComposerHeight: 152,
       historyTitle: "Gemini conversation",
       emptyTitle: "Ask Gemini via JO AI",
-      emptyCopy: "Use chat text or /image, /voice, /video commands here.",
+      emptyCopy: "Gemini mode is temporarily disabled.",
     },
     code: {
       title: "Code Generator",
@@ -185,22 +186,20 @@
     },
     image: {
       title: "Image Generator",
-      description: "Describe a visual, choose a style and ratio, and keep the result in the chat.",
-      lead: "Write the scene, pick a style and ratio, and save the image once it lands.",
+      description: "Describe a visual in simple words and get a high-quality image.",
+      lead: "Write the scene, optionally set ratio, and save the image once it lands.",
       example: "A cinematic night city street with rain reflections and soft neon lighting.",
       label: "Describe the image you want",
       placeholder: "Describe the image you want Joe AI to create",
       rows: 1,
       maxComposerHeight: 160,
       historyTitle: "Image results",
-      needsImageType: true,
       needsImageRatio: true,
       supportsImageSave: true,
-      exampleImageType: "cyberpunk",
       exampleImageRatio: "16:9",
       defaultImageRatio: "1:1",
       emptyTitle: "Create an image with Joe AI",
-      emptyCopy: "Describe a scene, choose a style, and your image result will appear here.",
+      emptyCopy: "Describe a scene and your image result will appear here.",
     },
     tts: {
       title: "Text-to-Speech",
@@ -422,8 +421,6 @@
       aiInput: byId("aiInput"),
       promptTypeWrap: byId("promptTypeWrap"),
       promptType: byId("promptType"),
-      imageTypeWrap: byId("imageTypeWrap"),
-      imageType: byId("imageType"),
       imageRatioWrap: byId("imageRatioWrap"),
       imageRatio: byId("imageRatio"),
       ttsLanguageWrap: byId("ttsLanguageWrap"),
@@ -2071,9 +2068,6 @@
     if (elements.codeFileInfo) {
       elements.codeFileInfo.textContent = "No code file selected.";
     }
-    if (elements.imageType) {
-      elements.imageType.selectedIndex = 0;
-    }
     if (elements.imageRatio) {
       elements.imageRatio.value = "1:1";
     }
@@ -2688,9 +2682,6 @@
         elements.promptType.value = config.defaultPromptType;
       }
     }
-    if (elements.imageTypeWrap) {
-      elements.imageTypeWrap.hidden = !config.needsImageType;
-    }
     if (elements.imageRatioWrap) {
       elements.imageRatioWrap.hidden = !config.needsImageRatio;
     }
@@ -2738,9 +2729,6 @@
       elements.promptType.value = config.examplePromptType;
     } else if (config.defaultPromptType && elements.promptType) {
       elements.promptType.value = config.defaultPromptType;
-    }
-    if (config.exampleImageType && elements.imageType) {
-      elements.imageType.value = config.exampleImageType;
     }
     if (config.exampleImageRatio && elements.imageRatio) {
       elements.imageRatio.value = config.exampleImageRatio;
@@ -2824,6 +2812,9 @@
   async function buildRequestPayload() {
     const mode = getToolId();
     const message = elements.aiInput ? elements.aiInput.value.trim() : "";
+    if (mode === "gemini" && GEMINI_TEMP_DISABLED) {
+      throw new Error("Gemini is temporarily disabled while image generation is being stabilized.");
+    }
     const payload = { message };
 
     if (mode !== "kimi" && !message) {
@@ -2838,7 +2829,6 @@
     }
 
     if (mode === "image") {
-      payload.image_type = elements.imageType ? elements.imageType.value : "realistic";
       payload.ratio = elements.imageRatio ? elements.imageRatio.value : "1:1";
     }
 
@@ -2887,11 +2877,8 @@
     if (mode === "prompt" && payload.prompt_type) {
       note = `Prompt type: ${payload.prompt_type}`;
     }
-    if (mode === "image" && payload.image_type) {
-      note = `Style: ${payload.image_type}`;
-      if (payload.ratio) {
-        note = `${note} | Ratio: ${payload.ratio}`;
-      }
+    if (mode === "image") {
+      note = "";
     }
     if (mode === "code" && payload.code_file_name) {
       note = `File: ${payload.code_file_name}`;
@@ -3199,9 +3186,6 @@
     }
     if (elements.promptType) {
       elements.promptType.addEventListener("input", updateSendButtonState);
-    }
-    if (elements.imageType) {
-      elements.imageType.addEventListener("change", updateSendButtonState);
     }
     if (elements.imageRatio) {
       elements.imageRatio.addEventListener("change", updateSendButtonState);

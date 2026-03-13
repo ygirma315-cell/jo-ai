@@ -125,8 +125,8 @@ Optional:
 - `ALLOWED_ORIGINS`
 - `TELEGRAM_WEBHOOK_URL`
 - `TELEGRAM_WEBHOOK_SECRET`
-- `ADMIN_DASHBOARD_TOKEN` (required to unlock `/admin` and `/api/admin/*`)
-- `ADMIN_DASHBOARD_OWNER_TELEGRAM_ID` (optional Telegram mini app one-tap admin login)
+- `ADMIN_DASHBOARD_OWNER_TELEGRAM_ID` (Telegram ID allowed to access `/admin` and `/api/admin/*`)
+- `ADMIN_DASHBOARD_ALLOWLIST_TELEGRAM_IDS` (optional fallback list; first ID is used as owner when owner ID is unset)
 - `ADMIN_DASHBOARD_TELEGRAM_BOT_TOKEN` (optional; use when admin mini app login comes from a different bot token)
 
 Defaults:

@@ -114,6 +114,62 @@ class SupabaseAdminService:
             raise RuntimeError(self._disabled_reason or "Admin service is not configured.")
         return self._client, self._config
 
+    def _admin_auth_config(self) -> dict[str, Any]:
+        client, _config = self._ensure_ready()
+        try:
+            response = (
+                client.table("admin_config")
+                .select("value_json")
+                .eq("config_key", "admin_auth")
+                .limit(1)
+                .execute()
+            )
+        except Exception:
+            logger.warning("Admin auth config query failed; falling back to settings.", exc_info=True)
+            return {}
+        rows = _response_rows(response)
+        if not rows:
+            return {}
+        value_json = rows[0].get("value_json")
+        if isinstance(value_json, dict):
+            return value_json
+        return {}
+
+    def resolve_admin_owner_telegram_id(self) -> int | None:
+        owner_candidates: list[Any] = []
+        if self.enabled:
+            config = self._admin_auth_config()
+            owner_candidates.extend(
+                [
+                    config.get("owner_telegram_id"),
+                    config.get("admin_telegram_id"),
+                ]
+            )
+        owner_candidates.append(self._settings.admin_dashboard_owner_telegram_id)
+        for value in owner_candidates:
+            candidate = _safe_int(value)
+            if candidate > 0:
+                return candidate
+        allowlist = [int(value) for value in self._settings.admin_dashboard_allowlist_telegram_ids if int(value) > 0]
+        return allowlist[0] if allowlist else None
+
+    def is_known_telegram_user(self, telegram_id: int) -> bool:
+        if int(telegram_id or 0) <= 0:
+            return False
+        client, config = self._ensure_ready()
+        try:
+            response = (
+                client.table(config.users_table)
+                .select("telegram_id")
+                .eq("telegram_id", int(telegram_id))
+                .limit(1)
+                .execute()
+            )
+            return len(_response_rows(response)) > 0
+        except Exception:
+            logger.warning("Admin known-user lookup failed for user=%s", telegram_id, exc_info=True)
+            return False
+
     def _fetch_all_user_totals(self, max_rows: int = 50000) -> list[dict[str, Any]]:
         client, config = self._ensure_ready()
         page_size = 1000

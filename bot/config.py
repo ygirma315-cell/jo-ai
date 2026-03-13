@@ -65,7 +65,6 @@ class Settings:
     public_base_url: str | None
     telegram_webhook_url: str | None
     telegram_webhook_secret: str | None
-    admin_dashboard_token: str | None
     admin_dashboard_owner_telegram_id: int | None
     admin_dashboard_allowlist_telegram_ids: tuple[int, ...]
     admin_dashboard_telegram_bot_token: str | None
@@ -354,7 +353,6 @@ def load_settings() -> Settings:
         public_base_url, "/telegram/webhook"
     )
     telegram_webhook_secret = _read_env("TELEGRAM_WEBHOOK_SECRET") or None
-    admin_dashboard_token = _read_env("ADMIN_DASHBOARD_TOKEN") or _read_env("ADMIN_API_TOKEN") or None
     admin_dashboard_owner_telegram_id = _parse_positive_int(_read_env("ADMIN_DASHBOARD_OWNER_TELEGRAM_ID"))
     admin_dashboard_allowlist_telegram_ids = _parse_csv_positive_ints(
         _read_env("ADMIN_DASHBOARD_ALLOWLIST_TELEGRAM_IDS")
@@ -427,10 +425,6 @@ def load_settings() -> Settings:
     if not public_base_url and not telegram_webhook_url:
         validation_warnings.append(
             "No public base URL detected. Telegram webhook auto-configuration is disabled until a public URL is available."
-        )
-    if not admin_dashboard_token:
-        validation_warnings.append(
-            "ADMIN_DASHBOARD_TOKEN is missing. Admin dashboard API routes will stay protected but unusable until configured."
         )
     if not admin_dashboard_owner_telegram_id:
         validation_warnings.append(
@@ -545,7 +539,6 @@ def load_settings() -> Settings:
         public_base_url=public_base_url,
         telegram_webhook_url=telegram_webhook_url,
         telegram_webhook_secret=telegram_webhook_secret,
-        admin_dashboard_token=admin_dashboard_token,
         admin_dashboard_owner_telegram_id=admin_dashboard_owner_telegram_id,
         admin_dashboard_allowlist_telegram_ids=admin_dashboard_allowlist_telegram_ids,
         admin_dashboard_telegram_bot_token=admin_dashboard_telegram_bot_token,

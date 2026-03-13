@@ -15,12 +15,16 @@
     <div class="login-card">
       <h1>JO AI Admin</h1>
       <p>Secure access for approved admins only.</p>
-      <form id="loginForm" class="login-form">
-        <label for="loginToken">Admin token</label>
-        <input id="loginToken" type="password" placeholder="ADMIN_DASHBOARD_TOKEN">
-        <button type="submit" class="btn btn-primary">Sign in with token</button>
-      </form>
-      <button id="telegramLoginBtn" type="button" class="btn">Sign in with Telegram</button>
+      <button id="telegramLoginBtn" type="button" class="btn btn-primary">Login with Telegram</button>
+      <div id="telegramWidgetWrap" class="telegram-widget-wrap">
+        <script async src="https://telegram.org/js/telegram-widget.js?22"
+          data-telegram-login="Joaiibot"
+          data-size="large"
+          data-userpic="false"
+          data-request-access="write"
+          data-onauth="onTelegramAuth(user)"></script>
+      </div>
+      <p class="muted">Use Telegram identity only. Password/token login is disabled.</p>
       <p id="loginError" class="error" hidden></p>
     </div>
   </div>
@@ -186,11 +190,7 @@
         <article class="card">
           <h3>Admin Settings</h3>
           <p id="statusInfo" class="muted">Loading...</p>
-          <div class="toolbar">
-            <input id="settingsToken" type="password" placeholder="Admin token (session only)">
-            <button id="settingsTokenSave" class="btn">Save session token</button>
-            <button id="settingsTokenTest" class="btn">Test token</button>
-          </div>
+          <p class="muted">Authentication is Telegram ID only.</p>
           <button id="settingsLogout" class="btn btn-danger">Logout session</button>
         </article>
       </section>
