@@ -5,6 +5,7 @@ from dataclasses import dataclass
 import hashlib
 import html
 import logging
+import os
 import re
 from contextlib import suppress
 from typing import Literal
@@ -141,8 +142,24 @@ VIDEO_ASPECT_RATIO_TOKEN_MAP = {
 VIDEO_ASPECT_RATIO_OPTIONS = {"16:9", "9:16"}
 VIDEO_DURATION_OPTIONS = {4, 6, 8}
 TELEGRAM_VIDEO_TIMEOUT_SECONDS = 220
-VIDEO_JOIN_CHANNEL_USERNAME = "@JO_AI_CHAT_BOT"
-VIDEO_JOIN_CHANNEL_URL = "https://t.me/JO_AI_CHAT_BOT"
+_raw_video_join_chat_id = (
+    str(
+        os.getenv("VIDEO_JOIN_CHAT_ID")
+        or os.getenv("VIDEO_JOIN_CHANNEL_USERNAME")
+        or "@JO_AI_CHAT_BOT"
+    )
+    .strip()
+)
+if _raw_video_join_chat_id and _raw_video_join_chat_id.lstrip("-").isdigit():
+    VIDEO_JOIN_CHAT_ID: str | int = int(_raw_video_join_chat_id)
+else:
+    VIDEO_JOIN_CHAT_ID = _raw_video_join_chat_id or "@JO_AI_CHAT_BOT"
+_default_video_join_url = (
+    f"https://t.me/{str(VIDEO_JOIN_CHAT_ID).lstrip('@')}"
+    if str(VIDEO_JOIN_CHAT_ID).startswith("@")
+    else "https://t.me/JO_AI_CHAT_BOT"
+)
+VIDEO_JOIN_CHANNEL_URL = str(os.getenv("VIDEO_JOIN_CHANNEL_URL") or _default_video_join_url).strip() or _default_video_join_url
 VIDEO_ALLOWED_MEMBERSHIP_STATUSES = {"creator", "administrator", "member", "restricted"}
 GPT_AUDIO_MODEL_LABEL = "GPT Audio"
 GPT_AUDIO_TIMEOUT_SECONDS = 120
@@ -186,9 +203,15 @@ def _video_join_required_keyboard() -> InlineKeyboardMarkup:
 
 async def _is_video_generation_allowed(bot, user_id: int) -> bool:
     try:
-        member = await bot.get_chat_member(chat_id=VIDEO_JOIN_CHANNEL_USERNAME, user_id=user_id)
+        member = await bot.get_chat_member(chat_id=VIDEO_JOIN_CHAT_ID, user_id=user_id)
     except Exception:
-        logger.warning("Video membership check failed for user=%s", user_id, exc_info=True)
+        logger.warning(
+            "Video membership check failed for user=%s chat_id=%s. "
+            "Ensure VIDEO_JOIN_CHAT_ID points to a real channel/group and the bot is an admin there.",
+            user_id,
+            VIDEO_JOIN_CHAT_ID,
+            exc_info=True,
+        )
         return False
     status = str(getattr(member, "status", "")).strip().lower()
     return status in VIDEO_ALLOWED_MEMBERSHIP_STATUSES

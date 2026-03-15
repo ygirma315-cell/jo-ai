@@ -106,8 +106,24 @@ IMAGE_MODEL_OPTION_JO = "jo_ai_image_generate"
 IMAGE_MODEL_OPTION_CHAT_GBT = "chat_gbt"
 IMAGE_MODEL_OPTION_GROK_IMAGINE = "grok_imagine"
 VIDEO_MODEL_OPTION_GROK_TEXT_TO_VIDEO = "grok_text_to_video"
-VIDEO_JOIN_CHANNEL_USERNAME = "@JO_AI_CHAT_BOT"
-VIDEO_JOIN_CHANNEL_URL = "https://t.me/JO_AI_CHAT_BOT"
+_raw_video_join_chat_id = (
+    str(
+        os.getenv("VIDEO_JOIN_CHAT_ID")
+        or os.getenv("VIDEO_JOIN_CHANNEL_USERNAME")
+        or "@JO_AI_CHAT_BOT"
+    )
+    .strip()
+)
+if _raw_video_join_chat_id and _raw_video_join_chat_id.lstrip("-").isdigit():
+    VIDEO_JOIN_CHAT_ID: str | int = int(_raw_video_join_chat_id)
+else:
+    VIDEO_JOIN_CHAT_ID = _raw_video_join_chat_id or "@JO_AI_CHAT_BOT"
+_default_video_join_url = (
+    f"https://t.me/{str(VIDEO_JOIN_CHAT_ID).lstrip('@')}"
+    if str(VIDEO_JOIN_CHAT_ID).startswith("@")
+    else "https://t.me/JO_AI_CHAT_BOT"
+)
+VIDEO_JOIN_CHANNEL_URL = str(os.getenv("VIDEO_JOIN_CHANNEL_URL") or _default_video_join_url).strip() or _default_video_join_url
 VIDEO_ALLOWED_MEMBERSHIP_STATUSES = {"creator", "administrator", "member", "restricted"}
 
 IMAGE_MODEL_OPTION_LABELS: dict[str, str] = {
@@ -1462,12 +1478,23 @@ async def _is_video_generation_allowed(telegram_id: int) -> bool:
         logger.warning("Video membership check skipped: bot runtime unavailable.")
         return False
     try:
-        member = await runtime.bot.get_chat_member(chat_id=VIDEO_JOIN_CHANNEL_USERNAME, user_id=telegram_id)
+        member = await runtime.bot.get_chat_member(chat_id=VIDEO_JOIN_CHAT_ID, user_id=telegram_id)
     except (TelegramBadRequest, TelegramForbiddenError, TelegramNetworkError, asyncio.TimeoutError):
-        logger.warning("Video membership check failed for user=%s", telegram_id, exc_info=True)
+        logger.warning(
+            "Video membership check failed for user=%s chat_id=%s. "
+            "Ensure VIDEO_JOIN_CHAT_ID points to a real channel/group and the bot is an admin there.",
+            telegram_id,
+            VIDEO_JOIN_CHAT_ID,
+            exc_info=True,
+        )
         return False
     except Exception:
-        logger.warning("Unexpected video membership check failure for user=%s", telegram_id, exc_info=True)
+        logger.warning(
+            "Unexpected video membership check failure for user=%s chat_id=%s",
+            telegram_id,
+            VIDEO_JOIN_CHAT_ID,
+            exc_info=True,
+        )
         return False
     status = str(getattr(member, "status", "")).strip().lower()
     return status in VIDEO_ALLOWED_MEMBERSHIP_STATUSES
