@@ -284,6 +284,7 @@
     loadingIndex: 0,
     pendingId: "",
     videoJoinVerified: false,
+    videoJoinLinkClicked: false,
     videoJoinRequired: false,
     videoJoinMessage: "",
     videoJoinUrl: VIDEO_JOIN_CHANNEL_URL,
@@ -1573,7 +1574,7 @@
       elements.videoJoinBtn.href = state.videoJoinUrl || VIDEO_JOIN_CHANNEL_URL;
     }
     if (elements.videoJoinedBtn) {
-      elements.videoJoinedBtn.disabled = state.videoJoinCheckInFlight;
+      elements.videoJoinedBtn.disabled = state.videoJoinCheckInFlight || !state.videoJoinLinkClicked;
     }
   }
 
@@ -1585,8 +1586,14 @@
     applyVideoJoinUiState();
   }
 
+  function markVideoJoinLinkClicked() {
+    state.videoJoinLinkClicked = true;
+    applyVideoJoinUiState();
+  }
+
   function markVideoJoinVerified() {
     state.videoJoinVerified = true;
+    state.videoJoinLinkClicked = true;
     state.videoJoinRequired = false;
     state.videoJoinMessage = "";
     state.videoJoinUrl = VIDEO_JOIN_CHANNEL_URL;
@@ -2579,18 +2586,10 @@
       return true;
     }
 
-    const apiBase = await resolveApiBase();
-    if (!apiBase) {
-      throw new Error("The assistant is not ready yet.");
-    }
-
-    const status = await requestVideoJoinStatus(apiBase);
-    if (status.joined) {
-      markVideoJoinVerified();
-      return true;
-    }
-
-    markVideoJoinRequired(status.message, status.joinUrl);
+    markVideoJoinRequired(
+      "Tap Join Channel, then press Confirm Joined to continue.",
+      state.videoJoinUrl || VIDEO_JOIN_CHANNEL_URL
+    );
     return false;
   }
 
@@ -3155,6 +3154,7 @@
       payload.video_model = "grok_text_to_video";
       payload.duration_seconds = Number.parseInt(elements.videoDuration ? elements.videoDuration.value : "4", 10) || 4;
       payload.aspect_ratio = elements.videoRatio ? elements.videoRatio.value : "16:9";
+      payload.join_clicked = Boolean(state.videoJoinLinkClicked);
       payload.join_confirmed = Boolean(state.videoJoinVerified);
     }
 
@@ -3602,9 +3602,13 @@
     }
     if (elements.videoJoinedBtn) {
       elements.videoJoinedBtn.addEventListener("click", async () => {
+        if (!state.videoJoinLinkClicked) {
+          showToast("Tap Join Channel first, then confirm.", "error", 2600);
+          return;
+        }
         markVideoJoinVerified();
         setApiState("ready", "success");
-        showToast("Joined ✅");
+        showToast("Joined confirmed.");
         if (elements.aiInput && elements.aiInput.value.trim()) {
           await submitTool();
         }
@@ -3612,7 +3616,7 @@
     }
     if (elements.videoJoinBtn) {
       elements.videoJoinBtn.addEventListener("click", () => {
-        markVideoJoinVerified();
+        markVideoJoinLinkClicked();
       });
     }
     if (elements.ttsLanguage) {

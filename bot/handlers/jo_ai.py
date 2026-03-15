@@ -160,7 +160,6 @@ _default_video_join_url = (
     else "https://t.me/JO_AI_CHAT_BOT"
 )
 VIDEO_JOIN_CHANNEL_URL = str(os.getenv("VIDEO_JOIN_CHANNEL_URL") or _default_video_join_url).strip() or _default_video_join_url
-VIDEO_ALLOWED_MEMBERSHIP_STATUSES = {"creator", "administrator", "member", "restricted"}
 GPT_AUDIO_MODEL_LABEL = "GPT Audio"
 GPT_AUDIO_TIMEOUT_SECONDS = 120
 
@@ -185,36 +184,23 @@ TTS_EMOTION_LABELS = {
 
 def _video_join_required_text() -> str:
     return (
-        "Please join the JO AI channel first to use Video Generation.\n"
-        f"Join here: {VIDEO_JOIN_CHANNEL_URL}\n"
-        "After joining, try Video Generation again."
+        "Video generation requires a quick join confirmation.\n\n"
+        "1) Tap 'Join JO AI Channel'\n"
+        "2) Tap 'I Clicked Join Link'\n"
+        "3) Then tap 'Confirm Joined'\n\n"
+        "After that, you can generate videos."
     )
 
 
 def _video_join_required_keyboard() -> InlineKeyboardMarkup:
     return InlineKeyboardMarkup(
         inline_keyboard=[
-            [InlineKeyboardButton(text="✈️ Join JO AI Channel", url=VIDEO_JOIN_CHANNEL_URL)],
-            [InlineKeyboardButton(text="Joined ✅", callback_data="joaivid:joined_check")],
-            [InlineKeyboardButton(text="⬅️ Back", callback_data="joai:menu")],
+            [InlineKeyboardButton(text="Join JO AI Channel", url=VIDEO_JOIN_CHANNEL_URL)],
+            [InlineKeyboardButton(text="I Clicked Join Link", callback_data="joaivid:open_channel")],
+            [InlineKeyboardButton(text="Confirm Joined", callback_data="joaivid:joined_check")],
+            [InlineKeyboardButton(text="Back", callback_data="joai:menu")],
         ]
     )
-
-
-async def _is_video_generation_allowed(bot, user_id: int) -> bool:
-    try:
-        member = await bot.get_chat_member(chat_id=VIDEO_JOIN_CHAT_ID, user_id=user_id)
-    except Exception:
-        logger.warning(
-            "Video membership check failed for user=%s chat_id=%s. "
-            "Ensure VIDEO_JOIN_CHAT_ID points to a real channel/group and the bot is an admin there.",
-            user_id,
-            VIDEO_JOIN_CHAT_ID,
-            exc_info=True,
-        )
-        return False
-    status = str(getattr(member, "status", "")).strip().lower()
-    return status in VIDEO_ALLOWED_MEMBERSHIP_STATUSES
 
 
 def _resolve_image_model_option(value: str | None) -> str:
@@ -820,6 +806,7 @@ async def _switch_to_jo_ai_mode(user_id: int, mode: JoAIMode, session_manager: S
             if mode != JoAIMode.VIDEO:
                 session.jo_ai_video_duration = None
                 session.jo_ai_video_aspect_ratio = None
+                session.jo_ai_video_join_link_clicked = False
                 session.jo_ai_video_join_confirmed = False
             if mode != JoAIMode.KIMI_IMAGE_DESCRIBER:
                 session.jo_ai_kimi_waiting_image = False
@@ -872,12 +859,6 @@ async def _activate_mode(
         await _send_image_intro(message)
         return
     if mode == JoAIMode.VIDEO:
-        join_confirmed = False
-        async with session_manager.lock(user_id) as session:
-            join_confirmed = bool(session.jo_ai_video_join_confirmed)
-        if not join_confirmed and not await _is_video_generation_allowed(message.bot, user_id):
-            await _send_video_join_required_step(message)
-            return
         selected_duration = DEFAULT_VIDEO_DURATION_SECONDS
         selected_ratio = DEFAULT_VIDEO_ASPECT_RATIO
         async with session_manager.lock(user_id) as session:
@@ -1873,12 +1854,10 @@ async def video_show_options_menu(query: CallbackQuery, session_manager: Session
         return
     duration_seconds = DEFAULT_VIDEO_DURATION_SECONDS
     aspect_ratio = DEFAULT_VIDEO_ASPECT_RATIO
-    join_confirmed = False
     async with session_manager.lock(query.from_user.id) as session:
         if session.active_feature != Feature.JO_AI or session.jo_ai_mode != JoAIMode.VIDEO:
             await query.answer("Video session expired. Send /video again.", show_alert=True)
             return
-        join_confirmed = bool(session.jo_ai_video_join_confirmed)
         if session.jo_ai_video_duration in VIDEO_DURATION_OPTIONS:
             duration_seconds = int(session.jo_ai_video_duration)
         else:
@@ -1887,13 +1866,6 @@ async def video_show_options_menu(query: CallbackQuery, session_manager: Session
             aspect_ratio = str(session.jo_ai_video_aspect_ratio)
         else:
             session.jo_ai_video_aspect_ratio = DEFAULT_VIDEO_ASPECT_RATIO
-
-    bot_instance = query.message.bot if isinstance(query.message, Message) else query.bot
-    if not join_confirmed and not await _is_video_generation_allowed(bot_instance, query.from_user.id):
-        await query.answer("Join the channel to unlock video generation.", show_alert=True)
-        if isinstance(query.message, Message):
-            await _send_video_join_required_step(query.message)
-        return
 
     await query.answer()
     if isinstance(query.message, Message):
@@ -2001,24 +1973,35 @@ async def prepare_video_generation(query: CallbackQuery, session_manager: Sessio
         else:
             session.jo_ai_video_aspect_ratio = DEFAULT_VIDEO_ASPECT_RATIO
 
-    bot_instance = query.message.bot if isinstance(query.message, Message) else query.bot
-    if not join_confirmed and not await _is_video_generation_allowed(bot_instance, query.from_user.id):
-        await query.answer("Join required before generation.", show_alert=True)
+    if not join_confirmed:
+        await query.answer("Please join first, then tap Confirm Joined.", show_alert=True)
         if isinstance(query.message, Message):
             await _send_video_join_required_step(query.message)
         return
 
-    async with session_manager.lock(query.from_user.id) as session:
-        if session.active_feature == Feature.JO_AI and session.jo_ai_mode == JoAIMode.VIDEO:
-            session.jo_ai_video_join_confirmed = True
-
-    await query.answer("Joined ✅")
+    await query.answer("Join confirmed.")
     if isinstance(query.message, Message):
         await _send_video_prompt_step(
             query.message,
             duration_seconds=duration_seconds,
             aspect_ratio=aspect_ratio,
         )
+
+
+@router.callback_query(F.data == "joaivid:open_channel")
+async def mark_video_join_link_clicked(query: CallbackQuery, session_manager: SessionManager) -> None:
+    if not query.from_user:
+        await query.answer()
+        return
+
+    async with session_manager.lock(query.from_user.id) as session:
+        if session.active_feature != Feature.JO_AI or session.jo_ai_mode != JoAIMode.VIDEO:
+            await query.answer("Video session expired. Send /video again.", show_alert=True)
+            return
+        session.jo_ai_video_join_link_clicked = True
+        session.jo_ai_video_join_confirmed = False
+
+    await query.answer("Great. After joining, tap Confirm Joined.", show_alert=True)
 
 
 @router.callback_query(F.data == "joaivid:joined_check")
@@ -2033,6 +2016,9 @@ async def check_video_join_after_button(query: CallbackQuery, session_manager: S
         if session.active_feature != Feature.JO_AI or session.jo_ai_mode != JoAIMode.VIDEO:
             await query.answer("Video session expired. Send /video again.", show_alert=True)
             return
+        if not bool(session.jo_ai_video_join_link_clicked):
+            await query.answer("Tap 'I Clicked Join Link' first, then confirm.", show_alert=True)
+            return
         session.jo_ai_video_join_confirmed = True
         if session.jo_ai_video_duration in VIDEO_DURATION_OPTIONS:
             duration_seconds = int(session.jo_ai_video_duration)
@@ -2043,7 +2029,7 @@ async def check_video_join_after_button(query: CallbackQuery, session_manager: S
         else:
             session.jo_ai_video_aspect_ratio = DEFAULT_VIDEO_ASPECT_RATIO
 
-    await query.answer("Joined ✅")
+    await query.answer("Join confirmed.")
     if isinstance(query.message, Message):
         with suppress(TelegramBadRequest):
             await query.message.delete()
@@ -3945,7 +3931,7 @@ async def _process_video_message(
     )
     model_used = VIDEO_MODEL_LABEL_GROK_TEXT_TO_VIDEO
     feature_used = "video_generation:grok_text_to_video"
-    if message.from_user and not join_confirmed and not await _is_video_generation_allowed(message.bot, message.from_user.id):
+    if message.from_user and not join_confirmed:
         reply_text = _video_join_required_text()
         await _send_video_join_required_step(message)
         await _track_telegram_action(

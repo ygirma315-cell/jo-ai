@@ -124,7 +124,6 @@ _default_video_join_url = (
     else "https://t.me/JO_AI_CHAT_BOT"
 )
 VIDEO_JOIN_CHANNEL_URL = str(os.getenv("VIDEO_JOIN_CHANNEL_URL") or _default_video_join_url).strip() or _default_video_join_url
-VIDEO_ALLOWED_MEMBERSHIP_STATUSES = {"creator", "administrator", "member", "restricted"}
 
 IMAGE_MODEL_OPTION_LABELS: dict[str, str] = {
     IMAGE_MODEL_OPTION_JO: IMAGE_MODEL_LABEL_JO,
@@ -386,6 +385,7 @@ class VideoRequest(TrackingRequestBase):
     message: str | None = Field(default=None, max_length=4000)
     model: str | None = Field(default=None, max_length=120)
     video_model: str | None = Field(default=None, max_length=120)
+    join_clicked: bool | None = Field(default=None)
     join_confirmed: bool | None = Field(default=None)
     duration_seconds: int | None = Field(default=None, ge=1, le=10)
     duration: int | None = Field(default=None, ge=1, le=10)
@@ -1455,9 +1455,9 @@ async def _resolve_bot_username() -> str | None:
 
 def _video_join_required_text() -> str:
     return (
-        "Please join the JO AI channel first to use Video Generation.\n"
-        f"Join here: {VIDEO_JOIN_CHANNEL_URL}\n"
-        "After joining, try again."
+        "Please complete the video join step first.\n"
+        "Tap the JO AI channel link, then press Confirm Joined.\n"
+        f"Join here: {VIDEO_JOIN_CHANNEL_URL}"
     )
 
 
@@ -1471,34 +1471,6 @@ def _video_join_required_payload(*, request_id: str | None = None) -> dict[str, 
     if request_id:
         payload["request_id"] = request_id
     return payload
-
-
-async def _is_video_generation_allowed(telegram_id: int) -> bool:
-    runtime = _get_bot_runtime()
-    if runtime is None:
-        logger.warning("Video membership check skipped: bot runtime unavailable.")
-        return False
-    try:
-        member = await runtime.bot.get_chat_member(chat_id=VIDEO_JOIN_CHAT_ID, user_id=telegram_id)
-    except (TelegramBadRequest, TelegramForbiddenError, TelegramNetworkError, asyncio.TimeoutError):
-        logger.warning(
-            "Video membership check failed for user=%s chat_id=%s. "
-            "Ensure VIDEO_JOIN_CHAT_ID points to a real channel/group and the bot is an admin there.",
-            telegram_id,
-            VIDEO_JOIN_CHAT_ID,
-            exc_info=True,
-        )
-        return False
-    except Exception:
-        logger.warning(
-            "Unexpected video membership check failure for user=%s chat_id=%s",
-            telegram_id,
-            VIDEO_JOIN_CHAT_ID,
-            exc_info=True,
-        )
-        return False
-    status = str(getattr(member, "status", "")).strip().lower()
-    return status in VIDEO_ALLOWED_MEMBERSHIP_STATUSES
 
 
 def _normalize_tracking_text(value: Any, max_len: int = 128) -> str | None:
@@ -3581,21 +3553,7 @@ async def image_endpoint(request: Request, payload: ImageRequest) -> JSONRespons
 @app.post("/api/video/join-status")
 async def video_join_status_endpoint(request: Request, payload: TrackingRequestBase) -> JSONResponse:
     request_id = _request_id_from_request(request)
-    identity = _resolve_tracking_identity(request, payload)
-    if identity is None:
-        return JSONResponse(status_code=401, content=_video_join_required_payload(request_id=request_id))
-
-    if await _is_video_generation_allowed(identity.telegram_id):
-        payload_response: dict[str, Any] = {
-            "joined": True,
-            "join_required": False,
-            "join_url": VIDEO_JOIN_CHANNEL_URL,
-            "message": "Joined ✅",
-        }
-        if request_id:
-            payload_response["request_id"] = request_id
-        return JSONResponse(status_code=200, content=payload_response)
-
+    _ = payload
     return JSONResponse(status_code=200, content=_video_join_required_payload(request_id=request_id))
 
 
@@ -3610,7 +3568,9 @@ async def video_endpoint(request: Request, payload: VideoRequest) -> JSONRespons
     feature_used = "video_generation"
     conversation_id = _extract_conversation_id(request, identity, feature_used)
     referral_code = _extract_referral_code(request)
+    manual_join_clicked = bool(payload.join_clicked)
     manual_join_confirmed = bool(payload.join_confirmed)
+    manual_join_verified = manual_join_clicked and manual_join_confirmed
     user_prompt = payload.effective_prompt
     video_model_option = payload.effective_model_option
     video_model_label = _video_model_label(video_model_option)
@@ -3627,12 +3587,12 @@ async def video_endpoint(request: Request, payload: VideoRequest) -> JSONRespons
         aspect_ratio,
         video_model_label,
     )
-    if identity is None and not manual_join_confirmed:
+    if identity is None and not manual_join_verified:
         return JSONResponse(status_code=401, content=_video_join_required_payload(request_id=request_id))
 
     join_required_message = _video_join_required_text()
 
-    if identity is not None and not manual_join_confirmed and not await _is_video_generation_allowed(identity.telegram_id):
+    if identity is not None and not manual_join_verified:
         await _track_api_action(
             identity=identity,
             message_type="video",
