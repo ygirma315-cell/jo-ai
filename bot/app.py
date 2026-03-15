@@ -275,6 +275,8 @@ async def create_bot_runtime() -> BotRuntime:
         image_model_chat_gbt=settings.pollinations_image_model_chat_gbt,
         image_model_grok_imagine=settings.pollinations_image_model_grok_imagine,
         video_model_grok_text_to_video=settings.pollinations_video_model_grok_text_to_video,
+        audio_model_gpt_audio=settings.pollinations_audio_model_gpt_audio,
+        audio_voice_gpt_audio=settings.pollinations_audio_voice_gpt_audio,
     )
     dispatcher["tts_service"] = TextToSpeechService(
         api_key=settings.tts_api_key or settings.nvidia_api_key or settings.ai_api_key,

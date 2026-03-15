@@ -19,6 +19,8 @@ DEFAULT_POLLINATIONS_BASE_URL = "https://gen.pollinations.ai"
 DEFAULT_POLLINATIONS_IMAGE_MODEL_CHAT_GBT = "gpt-image-1-mini"
 DEFAULT_POLLINATIONS_IMAGE_MODEL_GROK_IMAGINE = "grok-imagine"
 DEFAULT_POLLINATIONS_VIDEO_MODEL_GROK_TEXT_TO_VIDEO = "grok-video"
+DEFAULT_POLLINATIONS_AUDIO_MODEL_GPT_AUDIO = "openai-audio"
+DEFAULT_POLLINATIONS_AUDIO_VOICE_GPT_AUDIO = "fable"
 DEFAULT_MINIAPP_URL = "https://ygirma315-cell.github.io/jo-ai/"
 DEFAULT_ENGAGEMENT_MESSAGE_TEMPLATE = "What do you want to do with your chat bot today?"
 DEFAULT_HEARTBEAT_TELEGRAM_ID = 7799059248
@@ -53,6 +55,8 @@ class Settings:
     pollinations_image_model_chat_gbt: str
     pollinations_image_model_grok_imagine: str
     pollinations_video_model_grok_text_to_video: str
+    pollinations_audio_model_gpt_audio: str
+    pollinations_audio_voice_gpt_audio: str
     deepseek_api_key: str | None
     deepseek_model: str
     kimi_api_key: str | None
@@ -327,6 +331,12 @@ def load_settings() -> Settings:
     pollinations_video_model_grok_text_to_video = (
         _read_env("POLLINATIONS_VIDEO_MODEL_GROK_TEXT_TO_VIDEO") or DEFAULT_POLLINATIONS_VIDEO_MODEL_GROK_TEXT_TO_VIDEO
     )
+    pollinations_audio_model_gpt_audio = (
+        _read_env("POLLINATIONS_AUDIO_MODEL_GPT_AUDIO") or DEFAULT_POLLINATIONS_AUDIO_MODEL_GPT_AUDIO
+    )
+    pollinations_audio_voice_gpt_audio = (
+        _read_env("POLLINATIONS_AUDIO_VOICE_GPT_AUDIO") or DEFAULT_POLLINATIONS_AUDIO_VOICE_GPT_AUDIO
+    )
 
     deepseek_api_key = _read_env("DEEPSEEK_API_KEY") or None
     deepseek_model = _read_env("DEEPSEEK_MODEL") or DEFAULT_DEEPSEEK_MODEL
@@ -549,6 +559,8 @@ def load_settings() -> Settings:
         pollinations_image_model_chat_gbt=pollinations_image_model_chat_gbt,
         pollinations_image_model_grok_imagine=pollinations_image_model_grok_imagine,
         pollinations_video_model_grok_text_to_video=pollinations_video_model_grok_text_to_video,
+        pollinations_audio_model_gpt_audio=pollinations_audio_model_gpt_audio,
+        pollinations_audio_voice_gpt_audio=pollinations_audio_voice_gpt_audio,
         deepseek_api_key=deepseek_api_key,
         deepseek_model=deepseek_model,
         kimi_api_key=kimi_api_key,

@@ -242,6 +242,21 @@
       emptyTitle: "Create speech from text",
       emptyCopy: "Choose language, voice, and style, then generate speech in one step.",
     },
+    gpt_audio: {
+      title: "GPT Audio",
+      description: "Ask anything and get a spoken AI explanation instantly.",
+      lead:
+        "Send any question or prompt.\nI will generate an AI explanation in audio.\nYour text will be converted into a spoken response.",
+      example: "Explain the difference between frontend and backend in simple terms.",
+      label: "Send any question or prompt",
+      placeholder: "Send any question or prompt",
+      rows: 1,
+      maxComposerHeight: 160,
+      historyTitle: "GPT Audio results",
+      supportsAudioSave: true,
+      emptyTitle: "GPT Audio",
+      emptyCopy: "Send any question or prompt and JO AI will return a spoken response.",
+    },
     kimi: {
       title: "JO AI Vision",
       description: "Upload an image and ask Joe AI to describe or explain it.",
@@ -1926,6 +1941,18 @@
       audio.controls = true;
       audio.preload = "metadata";
       audio.src = entry.audioDataUrl;
+      if (entry.autoPlayAudio) {
+        audio.autoplay = true;
+        audio.addEventListener(
+          "canplay",
+          () => {
+            audio.play().catch(() => {
+              // Autoplay can be blocked by browser policy; controls remain available.
+            });
+          },
+          { once: true }
+        );
+      }
       body.appendChild(audio);
     }
 
@@ -1974,6 +2001,9 @@
         }
         if (normalized.audioDataUrl) {
           normalized.audioDataUrl = "";
+        }
+        if (normalized.autoPlayAudio) {
+          normalized.autoPlayAudio = false;
         }
         return normalized;
       });
@@ -2368,7 +2398,7 @@
     if (!Number.isFinite(numericId) || numericId <= 0) {
       return "";
     }
-    return `jo${numericId.toString(16)}`;
+    return String(numericId);
   }
 
   async function claimReferralIfNeeded(apiBase) {
@@ -2527,6 +2557,12 @@
         { path: "/video", payload: basePayload },
       ];
     }
+    if (mode === "gpt_audio") {
+      return [
+        { path: "/api/gpt-audio", payload: basePayload },
+        { path: "/gpt-audio", payload: basePayload },
+      ];
+    }
 
     return [
       { path: "/api/vision", payload: basePayload },
@@ -2549,6 +2585,9 @@
     }
     if (mode === "tts") {
       return 90000;
+    }
+    if (mode === "gpt_audio") {
+      return 100000;
     }
     if (mode === "kimi") {
       return 90000;
@@ -2960,6 +2999,10 @@
       payload.emotion = elements.ttsEmotion ? elements.ttsEmotion.value : "natural";
     }
 
+    if (mode === "gpt_audio") {
+      payload.prompt = message;
+    }
+
     if (mode === "code") {
       const file = elements.codeFile && elements.codeFile.files ? elements.codeFile.files[0] : null;
       if (file) {
@@ -3021,6 +3064,9 @@
       const voice = payload.voice || "female";
       const emotion = payload.emotion || "natural";
       note = `Language: ${lang} | Voice: ${voice} | Style: ${emotion}`;
+    }
+    if (mode === "gpt_audio") {
+      note = "Model: GPT Audio";
     }
     if (mode === "kimi" && elements.kimiImage && elements.kimiImage.files && elements.kimiImage.files[0]) {
       note = `File: ${elements.kimiImage.files[0].name}`;
@@ -3203,6 +3249,7 @@
         videoMimeType,
         audioDataUrl,
         audioFileName,
+        autoPlayAudio: getToolId() === "gpt_audio" && Boolean(audioDataUrl),
         codeFileDataUrl,
         codeFileName,
         timestamp: Date.now(),

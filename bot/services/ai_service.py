@@ -877,6 +877,8 @@ class PollinationsMediaService:
     image_model_chat_gbt: str = "gpt-image-1-mini"
     image_model_grok_imagine: str = "grok-imagine"
     video_model_grok_text_to_video: str = "grok-video"
+    audio_model_gpt_audio: str = "openai-audio"
+    audio_voice_gpt_audio: str = "fable"
 
     async def generate_image(
         self,
@@ -984,6 +986,73 @@ class PollinationsMediaService:
         if video_url:
             return GeneratedVideoResult(video_bytes=None, video_url=video_url, mime_type="video/mp4")
         raise AIServiceError("Video payload is missing.")
+
+    async def generate_audio(
+        self,
+        *,
+        prompt: str,
+        model: str | None = None,
+        voice: str | None = None,
+        enhance: bool = True,
+    ) -> GeneratedAudioResult:
+        guardrail_response = guardrail_response_for_user_query(prompt)
+        if guardrail_response:
+            raise AIServiceError(guardrail_response)
+
+        effective_prompt = str(prompt or "").strip()
+        if not effective_prompt:
+            raise AIServiceError("Audio prompt is required.")
+        effective_key = str(self.api_key or "").strip()
+        if not effective_key:
+            raise AIServiceError(SAFE_SERVICE_UNAVAILABLE_MESSAGE)
+
+        selected_model = str(model or "").strip() or self.audio_model_gpt_audio
+        selected_voice = str(voice or "").strip() or self.audio_voice_gpt_audio
+        path = f"/audio/{quote(effective_prompt, safe='')}"
+        query: dict[str, Any] = {
+            "model": selected_model,
+            "voice": selected_voice,
+            "enhance": str(bool(enhance)).lower(),
+        }
+
+        body_bytes, content_type = await _get_pollinations_binary(
+            api_key=effective_key,
+            path=path,
+            query=query,
+            timeout_seconds=100,
+            max_retries=DEFAULT_RETRY_COUNT + 1,
+            base_url=self.base_url,
+            accept_header="audio/mpeg,audio/wav,audio/*,application/json,*/*",
+        )
+        normalized_type = _normalize_audio_mime_type(content_type, fallback="audio/mpeg")
+        if body_bytes and (_looks_like_audio(content_type, body_bytes) or normalized_type.startswith("audio/")):
+            return GeneratedAudioResult(
+                audio_bytes=body_bytes,
+                mime_type=normalized_type,
+                file_extension=_audio_extension_for_content_type(normalized_type, fallback="mp3"),
+            )
+
+        payload = _decode_json_bytes(body_bytes)
+        audio_b64 = _extract_audio_base64(payload)
+        if audio_b64:
+            try:
+                decoded = base64.b64decode("".join(audio_b64.split()), validate=True)
+            except ValueError as exc:
+                raise AIServiceError(SAFE_SERVICE_UNAVAILABLE_MESSAGE) from exc
+            return GeneratedAudioResult(
+                audio_bytes=decoded,
+                mime_type="audio/mpeg",
+                file_extension="mp3",
+            )
+        audio_url = _extract_audio_url(payload)
+        if audio_url:
+            audio_bytes, mime_type = await _download_audio_bytes(audio_url)
+            return GeneratedAudioResult(
+                audio_bytes=audio_bytes,
+                mime_type=mime_type,
+                file_extension=_audio_extension_for_content_type(mime_type, fallback="mp3"),
+            )
+        raise AIServiceError("Audio payload is missing.")
 
 
 @dataclass
@@ -1747,6 +1816,39 @@ def _extract_audio_base64(payload: dict[str, Any]) -> str | None:
     return None
 
 
+def _normalize_audio_url(value: object) -> str | None:
+    if not isinstance(value, str):
+        return None
+    normalized = value.strip()
+    if normalized.startswith("http://") or normalized.startswith("https://"):
+        return normalized
+    return None
+
+
+def _extract_audio_url(payload: dict[str, Any]) -> str | None:
+    if not isinstance(payload, dict):
+        return None
+
+    candidates: list[dict[str, Any]] = [payload]
+    data_value = payload.get("data")
+    if isinstance(data_value, dict):
+        candidates.append(data_value)
+    elif isinstance(data_value, list):
+        candidates.extend(item for item in data_value if isinstance(item, dict))
+    output_value = payload.get("output")
+    if isinstance(output_value, dict):
+        candidates.append(output_value)
+    elif isinstance(output_value, list):
+        candidates.extend(item for item in output_value if isinstance(item, dict))
+
+    for candidate in candidates:
+        for key in ("audio_url", "url", "output_url", "result_url"):
+            normalized = _normalize_audio_url(candidate.get(key))
+            if normalized:
+                return normalized
+    return None
+
+
 def _looks_like_audio(content_type: str, payload: bytes) -> bool:
     lowered = (content_type or "").lower()
     if "audio/" in lowered or "application/octet-stream" in lowered:
@@ -2046,6 +2148,22 @@ async def _download_image_bytes(url: str) -> bytes:
         raise AIServiceError("Image download timed out.") from exc
     except aiohttp.ClientError as exc:
         raise AIServiceError(f"Image download failed: {exc}") from exc
+
+
+async def _download_audio_bytes(url: str) -> tuple[bytes, str]:
+    timeout = aiohttp.ClientTimeout(total=35)
+    try:
+        async with aiohttp.ClientSession(timeout=timeout) as session:
+            async with session.get(url) as response:
+                if response.status >= 400:
+                    raise AIServiceError(f"Audio download failed with status {response.status}.")
+                payload = await response.read()
+                content_type = _normalize_audio_mime_type(response.headers.get("Content-Type", ""), fallback="audio/mpeg")
+                return payload, content_type
+    except asyncio.TimeoutError as exc:
+        raise AIServiceError("Audio download timed out.") from exc
+    except aiohttp.ClientError as exc:
+        raise AIServiceError(f"Audio download failed: {exc}") from exc
 
 
 def _system_instruction_for_mode(mode: ChatMode) -> str:

@@ -20,6 +20,7 @@ from bot.constants import (
     MENU_AI_CODE,
     MENU_AI_DEEPSEEK,
     MENU_AI_GEMINI,
+    MENU_AI_GPT_AUDIO,
     MENU_AI_IMAGE,
     MENU_AI_VIDEO,
     MENU_AI_KIMI,
@@ -82,6 +83,7 @@ JO_AI_MENU_TEXT = (
     "- Video Generation\n"
     "- JO AI Vision\n"
     "- Text-to-Speech\n\n"
+    "- GPT Audio\n\n"
     "Tip: use /help any time for guidance."
 )
 
@@ -139,6 +141,11 @@ VIDEO_ASPECT_RATIO_TOKEN_MAP = {
 VIDEO_ASPECT_RATIO_OPTIONS = {"16:9", "9:16"}
 VIDEO_DURATION_OPTIONS = {4, 6, 8}
 TELEGRAM_VIDEO_TIMEOUT_SECONDS = 220
+VIDEO_JOIN_CHANNEL_USERNAME = "@JO_AI_CHAT_BOT"
+VIDEO_JOIN_CHANNEL_URL = "https://t.me/JO_AI_CHAT_BOT"
+VIDEO_ALLOWED_MEMBERSHIP_STATUSES = {"creator", "administrator", "member", "restricted"}
+GPT_AUDIO_MODEL_LABEL = "GPT Audio"
+GPT_AUDIO_TIMEOUT_SECONDS = 120
 
 TTS_LANGUAGE_LABELS = {
     "en": "English",
@@ -157,6 +164,24 @@ TTS_EMOTION_LABELS = {
     "calm": "Calm",
     "serious": "Serious",
 }
+
+
+def _video_join_required_text() -> str:
+    return (
+        "Please join the JO AI channel first to use Video Generation.\n"
+        f"Join here: {VIDEO_JOIN_CHANNEL_URL}\n"
+        "After joining, try Video Generation again."
+    )
+
+
+async def _is_video_generation_allowed(bot, user_id: int) -> bool:
+    try:
+        member = await bot.get_chat_member(chat_id=VIDEO_JOIN_CHANNEL_USERNAME, user_id=user_id)
+    except Exception:
+        logger.warning("Video membership check failed for user=%s", user_id, exc_info=True)
+        return False
+    status = str(getattr(member, "status", "")).strip().lower()
+    return status in VIDEO_ALLOWED_MEMBERSHIP_STATUSES
 
 
 def _resolve_image_model_option(value: str | None) -> str:
@@ -662,6 +687,15 @@ async def _send_tts_text_step(message: Message, style_label: str) -> None:
     )
 
 
+async def _send_gpt_audio_intro(message: Message) -> None:
+    await message.answer(
+        "Send any question or prompt.\n"
+        "I will generate an AI explanation in audio.\n"
+        "Your text will be converted into a spoken response.",
+        reply_markup=jo_chat_keyboard("joai:menu"),
+    )
+
+
 async def _send_vision_intro(message: Message) -> None:
     await message.answer(
         "<b>JO AI Vision is active</b>\n\n"
@@ -696,6 +730,8 @@ def _uploaded_image_back_callback(session) -> str:
         if session.jo_ai_tts_language:
             return "joaitts:lang_menu"
         return "joai:tts"
+    if session.jo_ai_mode == JoAIMode.GPT_AUDIO:
+        return "joai:gpt_audio"
     if session.jo_ai_mode == JoAIMode.KIMI_IMAGE_DESCRIBER:
         return "joai:kimi"
     return "joai:menu"
@@ -766,6 +802,9 @@ async def _activate_mode(
         await _send_image_intro(message)
         return
     if mode == JoAIMode.VIDEO:
+        if not await _is_video_generation_allowed(message.bot, user_id):
+            await message.answer(_video_join_required_text(), reply_markup=jo_chat_keyboard("joai:menu"))
+            return
         selected_duration = DEFAULT_VIDEO_DURATION_SECONDS
         selected_ratio = DEFAULT_VIDEO_ASPECT_RATIO
         async with session_manager.lock(user_id) as session:
@@ -785,6 +824,9 @@ async def _activate_mode(
         return
     if mode == JoAIMode.TEXT_TO_SPEECH:
         await _send_tts_language_step(message)
+        return
+    if mode == JoAIMode.GPT_AUDIO:
+        await _send_gpt_audio_intro(message)
         return
     if mode == JoAIMode.KIMI_IMAGE_DESCRIBER:
         await _send_vision_intro(message)
@@ -1227,6 +1269,7 @@ async def _send_formatted_ai_reply(
 @router.message(Command("kimi"))
 @router.message(Command("vision"))
 @router.message(Command("tts"))
+@router.message(Command("gptaudio"))
 @router.message(F.text == MENU_AI_CHAT)
 @router.message(F.text == "JO AI Chat")
 @router.message(F.text == MENU_AI_CODE)
@@ -1244,6 +1287,8 @@ async def _send_formatted_ai_reply(
 @router.message(F.text == MENU_AI_KIMI)
 @router.message(F.text == MENU_AI_TTS)
 @router.message(F.text == "Text-to-Speech")
+@router.message(F.text == MENU_AI_GPT_AUDIO)
+@router.message(F.text == "GPT Audio")
 @router.message(F.text == MENU_AI_TOOLS)
 @router.message(F.text == "AI Tools")
 @router.message(F.text == MENU_JO_AI)
@@ -1285,6 +1330,9 @@ async def open_jo_ai_menu(message: Message, session_manager: SessionManager, min
         return
     if text in {"/tts", MENU_AI_TTS.lower()}:
         await _activate_mode(message, message.from_user.id, JoAIMode.TEXT_TO_SPEECH, session_manager, miniapp_url)
+        return
+    if text in {"/gptaudio", MENU_AI_GPT_AUDIO.lower()}:
+        await _activate_mode(message, message.from_user.id, JoAIMode.GPT_AUDIO, session_manager, miniapp_url)
         return
     if text in {"/deepseek", "/analysis", MENU_AI_DEEPSEEK.lower()}:
         await _activate_mode(message, message.from_user.id, JoAIMode.DEEP_ANALYSIS, session_manager, miniapp_url)
@@ -1457,6 +1505,16 @@ async def enable_tts_mode(query: CallbackQuery, session_manager: SessionManager,
     await query.answer()
     if isinstance(query.message, Message):
         await _activate_mode(query.message, query.from_user.id, JoAIMode.TEXT_TO_SPEECH, session_manager, miniapp_url)
+
+
+@router.callback_query(F.data == "joai:gpt_audio")
+async def enable_gpt_audio_mode(query: CallbackQuery, session_manager: SessionManager, miniapp_url: str | None) -> None:
+    if not query.from_user:
+        await query.answer()
+        return
+    await query.answer()
+    if isinstance(query.message, Message):
+        await _activate_mode(query.message, query.from_user.id, JoAIMode.GPT_AUDIO, session_manager, miniapp_url)
 
 
 @router.callback_query(F.data == "joaitts:lang_menu")
@@ -2054,6 +2112,14 @@ async def handle_jo_ai_text(
             tts_voice,
             tts_style,
             tts_emotion,
+            tracking_service,
+        )
+        return
+    if mode == JoAIMode.GPT_AUDIO:
+        await _process_gpt_audio_message(
+            message,
+            user_text,
+            pollinations_media_service,
             tracking_service,
         )
         return
@@ -3557,6 +3623,148 @@ async def _process_image_message(
     )
 
 
+async def _process_gpt_audio_message(
+    message: Message,
+    user_text: str,
+    pollinations_media_service: PollinationsMediaService,
+    tracking_service: SupabaseTrackingService | None,
+) -> None:
+    feature_used = "gpt_audio"
+    guardrail_reply = guardrail_response_for_user_query(user_text)
+    if guardrail_reply:
+        reply_text = guardrail_reply if not _is_internal_rule_block(guardrail_reply) else _image_request_blocked_text()
+        await message.answer(reply_text, reply_markup=jo_chat_keyboard("joai:menu"))
+        await _track_telegram_action(
+            tracking_service=tracking_service,
+            message=message,
+            message_type="gpt_audio",
+            user_message=user_text,
+            bot_reply=reply_text,
+            model_used=GPT_AUDIO_MODEL_LABEL,
+            success=False,
+            message_increment=1,
+            feature_used=feature_used,
+        )
+        return
+
+    enhanced_prompt = (
+        "Answer the user request with a clear spoken explanation.\n"
+        "Keep it natural, concise, and helpful.\n\n"
+        f"User request: {user_text}"
+    )
+    progress_message = await _send_progress_message(message, "Generating your GPT Audio...")
+    try:
+        async with ChatActionSender.typing(bot=message.bot, chat_id=message.chat.id):
+            generated = await asyncio.wait_for(
+                pollinations_media_service.generate_audio(
+                    prompt=enhanced_prompt,
+                    model=pollinations_media_service.audio_model_gpt_audio,
+                    voice=pollinations_media_service.audio_voice_gpt_audio,
+                    enhance=True,
+                ),
+                timeout=GPT_AUDIO_TIMEOUT_SECONDS,
+            )
+    except asyncio.TimeoutError:
+        await _clear_progress_message(progress_message)
+        reply_text = "Audio generation timed out. Please try again."
+        await message.answer(reply_text, reply_markup=jo_chat_keyboard("joai:menu"))
+        await _track_telegram_action(
+            tracking_service=tracking_service,
+            message=message,
+            message_type="gpt_audio",
+            user_message=user_text,
+            bot_reply=reply_text,
+            model_used=GPT_AUDIO_MODEL_LABEL,
+            success=False,
+            message_increment=1,
+            feature_used=feature_used,
+            media=TrackingMedia(
+                media_type="audio",
+                provider_source="pollinations",
+                media_origin="generated",
+                media_status="failed",
+                media_error_reason="timeout",
+            ),
+        )
+        return
+    except AIServiceError as exc:
+        await _clear_progress_message(progress_message)
+        reply_text = _friendly_error_text("GPT Audio is temporarily unavailable", exc)
+        await message.answer(reply_text, reply_markup=jo_chat_keyboard("joai:menu"))
+        await _track_telegram_action(
+            tracking_service=tracking_service,
+            message=message,
+            message_type="gpt_audio",
+            user_message=user_text,
+            bot_reply=reply_text,
+            model_used=GPT_AUDIO_MODEL_LABEL,
+            success=False,
+            message_increment=1,
+            feature_used=feature_used,
+            media=TrackingMedia(
+                media_type="audio",
+                provider_source="pollinations",
+                media_origin="generated",
+                media_status="failed",
+                media_error_reason=reply_text,
+            ),
+        )
+        return
+    except Exception:
+        await _clear_progress_message(progress_message)
+        logger.exception("Unexpected GPT Audio generation error.")
+        reply_text = _friendly_error_text("Unexpected GPT Audio generation error")
+        await message.answer(reply_text, reply_markup=jo_chat_keyboard("joai:menu"))
+        await _track_telegram_action(
+            tracking_service=tracking_service,
+            message=message,
+            message_type="gpt_audio",
+            user_message=user_text,
+            bot_reply=reply_text,
+            model_used=GPT_AUDIO_MODEL_LABEL,
+            success=False,
+            message_increment=1,
+            feature_used=feature_used,
+            media=TrackingMedia(
+                media_type="audio",
+                provider_source="pollinations",
+                media_origin="generated",
+                media_status="failed",
+                media_error_reason=reply_text,
+            ),
+        )
+        return
+
+    await _clear_progress_message(progress_message)
+    extension = generated.file_extension if generated.file_extension else "mp3"
+    audio_file = BufferedInputFile(generated.audio_bytes, filename=f"jo_ai_gpt_audio.{extension}")
+    sent = await message.answer_audio(
+        audio=audio_file,
+        caption="Your GPT Audio response is ready.",
+        reply_markup=jo_chat_keyboard("joai:menu"),
+    )
+    storage_path = f"telegram_file:{sent.audio.file_id}" if sent.audio else None
+    await _track_telegram_action(
+        tracking_service=tracking_service,
+        message=message,
+        message_type="gpt_audio",
+        user_message=user_text,
+        bot_reply="GPT Audio generated successfully.",
+        model_used=GPT_AUDIO_MODEL_LABEL,
+        success=True,
+        message_increment=1,
+        feature_used=feature_used,
+        media=TrackingMedia(
+            media_type="audio",
+            storage_path=storage_path,
+            mime_type=generated.mime_type,
+            provider_source="pollinations",
+            media_origin="generated",
+            media_status="available",
+        ),
+    )
+
+
 async def _process_video_message(
     message: Message,
     user_text: str,
@@ -3575,6 +3783,21 @@ async def _process_video_message(
     )
     model_used = VIDEO_MODEL_LABEL_GROK_TEXT_TO_VIDEO
     feature_used = "video_generation:grok_text_to_video"
+    if message.from_user and not await _is_video_generation_allowed(message.bot, message.from_user.id):
+        reply_text = _video_join_required_text()
+        await message.answer(reply_text, reply_markup=_video_prompt_reply_keyboard())
+        await _track_telegram_action(
+            tracking_service=tracking_service,
+            message=message,
+            message_type="video",
+            user_message=user_text,
+            bot_reply=reply_text,
+            model_used=model_used,
+            success=False,
+            message_increment=1,
+            feature_used=feature_used,
+        )
+        return
     guardrail_reply = guardrail_response_for_user_query(user_text, aspect_ratio, str(duration_seconds))
     if guardrail_reply:
         reply_text = guardrail_reply if not _is_internal_rule_block(guardrail_reply) else _image_request_blocked_text()
@@ -3785,6 +4008,7 @@ async def jo_ai_unexpected_input(
         "In Video Generation mode, set duration/ratio then send a prompt.\n"
         "In Vision mode, send an image.\n"
         "In Text-to-Speech mode, choose language, voice, and style first.\n"
+        "In GPT Audio mode, send any question or prompt.\n"
         "You can switch mode anytime."
     )
     await message.answer(reply_text, reply_markup=jo_ai_menu_keyboard())

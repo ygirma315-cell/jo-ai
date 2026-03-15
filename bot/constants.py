@@ -10,6 +10,7 @@ MENU_AI_DEEPSEEK = "\U0001F9E0 DeepSeek"
 MENU_AI_GEMINI = "\U0001F4A0 Gemini Chat"
 MENU_AI_KIMI = "\U0001F5BC\ufe0f Vision"
 MENU_AI_TTS = "\U0001F50A Text-to-Speech"
+MENU_AI_GPT_AUDIO = "GPT Audio"
 MENU_REFERRAL = "\U0001F517 Referral"
 MENU_HELP = "\U0001F4A1 Help"
 MENU_VERSION_MODELS = "\u2139\ufe0f Version"
@@ -28,6 +29,7 @@ _PRIMARY_MENU_BUTTON_TEXTS = {
     MENU_AI_GEMINI,
     MENU_AI_KIMI,
     MENU_AI_TTS,
+    MENU_AI_GPT_AUDIO,
     MENU_REFERRAL,
     MENU_HELP,
     MENU_VERSION_MODELS,
@@ -48,6 +50,7 @@ _LEGACY_MENU_BUTTON_TEXTS = {
     "Gemini Chat",
     "Vision",
     "Text-to-Speech",
+    "GPT Audio",
     "Referral",
     "Version",
     "Help",

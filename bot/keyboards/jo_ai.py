@@ -20,6 +20,7 @@ def jo_ai_menu_keyboard() -> InlineKeyboardMarkup:
     builder.button(text="🎬 Video Generation", callback_data="joai:video")
     builder.button(text="🖼️ Vision", callback_data="joai:kimi")
     builder.button(text="🔊 Text-to-Speech", callback_data="joai:tts")
+    builder.button(text="GPT Audio", callback_data="joai:gpt_audio")
     _append_back_main(builder, "menu:ai_tools")
     builder.adjust(2, 2, 2, 2, 2, 2)
     return builder.as_markup()

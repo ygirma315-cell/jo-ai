@@ -132,9 +132,7 @@ def _normalize_media_payload(media: TrackingMedia | None) -> TrackingMedia:
 
 
 def _referral_code_for_user(telegram_id: int) -> str:
-    # Stable deterministic code per user keeps links simple and avoids collisions.
-    base = format(max(1, int(telegram_id)), "x")
-    return f"jo{base[:18]}"
+    return str(max(1, int(telegram_id)))
 
 
 def _sanitize_referral_code(value: str | None) -> str | None:
@@ -561,7 +559,7 @@ class SupabaseTrackingService:
                                 blocked_at = null,
                                 last_delivery_error = null,
                                 last_frontend_source = coalesce(excluded.last_frontend_source, u.last_frontend_source),
-                                referral_code = coalesce(u.referral_code, excluded.referral_code),
+                                referral_code = excluded.referral_code,
                                 started_via_referral = coalesce(u.started_via_referral, excluded.started_via_referral),
                                 referred_by = coalesce(u.referred_by, excluded.referred_by)
                             """
@@ -738,11 +736,8 @@ class SupabaseTrackingService:
         existing_has_started = bool(existing_user.get("has_started")) if existing_user else False
         existing_started_at = existing_user.get("started_at") if existing_user else None
         existing_referred_by = _safe_non_negative_int(existing_user.get("referred_by") if existing_user else 0)
-        effective_referral_code = (
-            _sanitize_referral_code(existing_user.get("referral_code") if existing_user else None)
-            or _sanitize_referral_code(referral_code)
-            or _referral_code_for_user(identity.telegram_id)
-        )
+        _ = referral_code
+        effective_referral_code = _referral_code_for_user(identity.telegram_id)
         started_referral_value = _sanitize_referral_code(started_via_referral)
         resolved_referred_by = existing_referred_by if existing_referred_by > 0 else 0
         if started_referral_value and (resolved_referred_by <= 0):
@@ -934,6 +929,9 @@ class SupabaseTrackingService:
         normalized_code = _sanitize_referral_code(referral_code)
         if not normalized_code:
             return None
+        numeric_referrer = _safe_non_negative_int(normalized_code, default=0)
+        if numeric_referrer > 0 and numeric_referrer != invitee_telegram_id:
+            return numeric_referrer
 
         if self._backend == "postgres" and self._postgres_config is not None:
             connection = open_postgres_connection(self._postgres_config)
@@ -1294,10 +1292,9 @@ class SupabaseTrackingService:
     def _ensure_referral_code_sync(self, identity: TrackingIdentity, frontend_source: str) -> str:
         existing = self._fetch_existing_user_row(identity.telegram_id) or {}
         current_code = _sanitize_referral_code(existing.get("referral_code"))
-        if current_code:
-            return current_code
-
         referral_code_value = _referral_code_for_user(identity.telegram_id)
+        if current_code == referral_code_value:
+            return current_code
         if self._backend == "postgres" and self._postgres_config is not None:
             connection = open_postgres_connection(self._postgres_config)
             if connection is not None:
@@ -1320,7 +1317,7 @@ class SupabaseTrackingService:
                                         %s, %s, %s, %s, timezone('utc', now()), timezone('utc', now()), %s, %s
                                     )
                                     on conflict (telegram_id) do update set
-                                        referral_code = coalesce({users}.referral_code, excluded.referral_code),
+                                        referral_code = excluded.referral_code,
                                         username = coalesce(excluded.username, {users}.username),
                                         first_name = coalesce(excluded.first_name, {users}.first_name),
                                         last_name = coalesce(excluded.last_name, {users}.last_name),

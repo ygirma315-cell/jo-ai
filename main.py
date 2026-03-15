@@ -93,17 +93,22 @@ VIDEO_ASPECT_RATIOS = ("16:9", "9:16")
 VIDEO_DEFAULT_ASPECT_RATIO = "16:9"
 VIDEO_DEFAULT_DURATION_SECONDS = 4
 VIDEO_ENDPOINT_TIMEOUT_SECONDS = 200
+GPT_AUDIO_ENDPOINT_TIMEOUT_SECONDS = 120
 GEMINI_TEMP_DISABLED = True
 
 IMAGE_MODEL_LABEL_JO = "JO AI Image Generate"
 IMAGE_MODEL_LABEL_CHAT_GBT = "Chat GBT"
 IMAGE_MODEL_LABEL_GROK_IMAGINE = "Grok Imagine"
 VIDEO_MODEL_LABEL_GROK_TEXT_TO_VIDEO = "Grok Text to Video"
+GPT_AUDIO_MODEL_LABEL = "GPT Audio"
 
 IMAGE_MODEL_OPTION_JO = "jo_ai_image_generate"
 IMAGE_MODEL_OPTION_CHAT_GBT = "chat_gbt"
 IMAGE_MODEL_OPTION_GROK_IMAGINE = "grok_imagine"
 VIDEO_MODEL_OPTION_GROK_TEXT_TO_VIDEO = "grok_text_to_video"
+VIDEO_JOIN_CHANNEL_USERNAME = "@JO_AI_CHAT_BOT"
+VIDEO_JOIN_CHANNEL_URL = "https://t.me/JO_AI_CHAT_BOT"
+VIDEO_ALLOWED_MEMBERSHIP_STATUSES = {"creator", "administrator", "member", "restricted"}
 
 IMAGE_MODEL_OPTION_LABELS: dict[str, str] = {
     IMAGE_MODEL_OPTION_JO: IMAGE_MODEL_LABEL_JO,
@@ -144,6 +149,7 @@ OBSERVABLE_REQUEST_PATHS = frozenset(
         "/prompt",
         "/image",
         "/video",
+        "/gpt-audio",
         "/vision",
         "/tts",
         "/telegram/webhook",
@@ -303,6 +309,21 @@ class TTSRequest(TrackingRequestBase):
             "narrator": "serious",
         }
         return aliases.get(value, "neutral")
+
+
+class GPTAudioRequest(TrackingRequestBase):
+    prompt: str | None = Field(default=None, max_length=12000)
+    message: str | None = Field(default=None, max_length=12000)
+
+    @model_validator(mode="after")
+    def _validate_prompt(self) -> "GPTAudioRequest":
+        if not self.prompt and not self.message:
+            raise ValueError("Either 'prompt' or 'message' must be provided.")
+        return self
+
+    @property
+    def effective_prompt(self) -> str:
+        return self.prompt or self.message or ""
 
 
 class GeminiRequest(TrackingRequestBase):
@@ -845,6 +866,8 @@ def _pollinations_service() -> PollinationsMediaService:
         image_model_chat_gbt=settings.pollinations_image_model_chat_gbt,
         image_model_grok_imagine=settings.pollinations_image_model_grok_imagine,
         video_model_grok_text_to_video=settings.pollinations_video_model_grok_text_to_video,
+        audio_model_gpt_audio=settings.pollinations_audio_model_gpt_audio,
+        audio_voice_gpt_audio=settings.pollinations_audio_voice_gpt_audio,
     )
 
 
@@ -1342,6 +1365,42 @@ async def _generate_tts(
         raise _safe_service_error() from exc
 
 
+async def _generate_pollinations_audio(*, prompt: str) -> dict[str, str]:
+    max_attempts = 2
+    last_error: AIServiceError | None = None
+    service = _pollinations_service()
+    for attempt in range(1, max_attempts + 1):
+        try:
+            generated = await service.generate_audio(
+                prompt=prompt,
+                model=service.audio_model_gpt_audio,
+                voice=service.audio_voice_gpt_audio,
+                enhance=True,
+            )
+            return {
+                "audio_base64": base64.b64encode(generated.audio_bytes).decode("utf-8"),
+                "audio_mime_type": generated.mime_type,
+                "audio_file_name": f"jo_ai_gpt_audio.{generated.file_extension}",
+            }
+        except AIServiceError as exc:
+            last_error = exc
+            logger.warning(
+                "Pollinations audio generation failed | attempt=%s/%s error=%s",
+                attempt,
+                max_attempts,
+                str(exc)[:220] or SAFE_SERVICE_UNAVAILABLE_MESSAGE,
+            )
+            if attempt < max_attempts:
+                await asyncio.sleep(0.8 * attempt)
+                continue
+
+    safe_message = str(last_error or "").strip() or SAFE_SERVICE_UNAVAILABLE_MESSAGE
+    lowered = safe_message.lower()
+    if "timed out" in lowered or "timeout" in lowered:
+        raise BackendError("Audio generation timed out. Please retry.", status_code=504) from last_error
+    raise BackendError(SAFE_SERVICE_UNAVAILABLE_MESSAGE, status_code=_status_code_for_ai_error(safe_message)) from last_error
+
+
 def _get_bot_runtime() -> BotRuntime | None:
     runtime = getattr(app.state, "bot_runtime", None)
     return runtime if isinstance(runtime, BotRuntime) else None
@@ -1375,6 +1434,31 @@ async def _resolve_bot_username() -> str | None:
         app.state.bot_username = username
         return username
     return None
+
+
+def _video_join_required_text() -> str:
+    return (
+        "Please join the JO AI channel first to use Video Generation.\n"
+        f"Join here: {VIDEO_JOIN_CHANNEL_URL}\n"
+        "After joining, try again."
+    )
+
+
+async def _is_video_generation_allowed(telegram_id: int) -> bool:
+    runtime = _get_bot_runtime()
+    if runtime is None:
+        logger.warning("Video membership check skipped: bot runtime unavailable.")
+        return False
+    try:
+        member = await runtime.bot.get_chat_member(chat_id=VIDEO_JOIN_CHANNEL_USERNAME, user_id=telegram_id)
+    except (TelegramBadRequest, TelegramForbiddenError, TelegramNetworkError, asyncio.TimeoutError):
+        logger.warning("Video membership check failed for user=%s", telegram_id, exc_info=True)
+        return False
+    except Exception:
+        logger.warning("Unexpected video membership check failure for user=%s", telegram_id, exc_info=True)
+        return False
+    status = str(getattr(member, "status", "")).strip().lower()
+    return status in VIDEO_ALLOWED_MEMBERSHIP_STATUSES
 
 
 def _normalize_tracking_text(value: Any, max_len: int = 128) -> str | None:
@@ -1501,13 +1585,21 @@ def _resolve_frontend_source(request: Request) -> str:
 
 
 def _extract_referral_code(request: Request) -> str | None:
+    def _sanitize_referral_code(raw_value: str | None) -> str | None:
+        raw = str(raw_value or "").strip().lower()
+        if not raw:
+            return None
+        normalized = raw[4:] if raw.startswith("ref_") or raw.startswith("ref-") else raw
+        cleaned = "".join(ch for ch in normalized if ch.isalnum() or ch in {"_", "-"})
+        return cleaned[:64] or None
+
     for key in ("ref", "referral", "referral_code", "start", "startapp"):
-        value = str(request.query_params.get(key) or "").strip()
+        value = _sanitize_referral_code(request.query_params.get(key))
         if value:
-            return value[:64]
-    header_value = str(request.headers.get("x-referral-code") or "").strip()
+            return value
+    header_value = _sanitize_referral_code(request.headers.get("x-referral-code"))
     if header_value:
-        return header_value[:64]
+        return header_value
     return None
 
 
@@ -2056,7 +2148,7 @@ async def referral_me(request: Request) -> JSONResponse:
     bot_username = await _resolve_bot_username()
     settings = get_settings()
 
-    telegram_link = f"https://t.me/{bot_username}?start=ref_{referral_code}" if bot_username else ""
+    telegram_link = f"https://t.me/{bot_username}?start={referral_code}" if bot_username else ""
     miniapp_base = str(settings.miniapp_url or DEFAULT_GITHUB_PAGES_URL).strip() or DEFAULT_GITHUB_PAGES_URL
     separator = "&" if "?" in miniapp_base else "?"
     miniapp_link = f"{miniapp_base}{separator}ref={referral_code}"
@@ -2082,7 +2174,10 @@ async def referral_claim(request: Request, payload: ReferralClaimRequest) -> JSO
     frontend_source = (
         str(payload.frontend_source or "").strip().lower() or _resolve_frontend_source(request)
     )
-    referral_code = str(payload.referral_code or "").strip()[:64]
+    referral_code = str(payload.referral_code or "").strip().lower()
+    if referral_code.startswith("ref_") or referral_code.startswith("ref-"):
+        referral_code = referral_code[4:]
+    referral_code = "".join(ch for ch in referral_code if ch.isalnum() or ch in {"_", "-"})[:64]
     if not referral_code:
         return JSONResponse(status_code=400, content={"error": "Referral code is required."})
 
@@ -3469,6 +3564,34 @@ async def video_endpoint(request: Request, payload: VideoRequest) -> JSONRespons
         aspect_ratio,
         video_model_label,
     )
+    join_required_message = _video_join_required_text()
+    if identity is None:
+        payload_response: dict[str, Any] = {"error": join_required_message}
+        if request_id:
+            payload_response["request_id"] = request_id
+        return JSONResponse(status_code=401, content=payload_response)
+
+    if not await _is_video_generation_allowed(identity.telegram_id):
+        await _track_api_action(
+            identity=identity,
+            message_type="video",
+            user_message=user_prompt,
+            bot_reply=join_required_message,
+            model_used=video_model_label,
+            success=False,
+            message_increment=1,
+            frontend_source=frontend_source,
+            feature_used=f"{feature_used}:{video_model_option}",
+            conversation_id=conversation_id,
+            text_content=user_prompt,
+            mark_started=True,
+            referral_code=referral_code,
+        )
+        payload_response = {"error": join_required_message}
+        if request_id:
+            payload_response["request_id"] = request_id
+        return JSONResponse(status_code=403, content=payload_response)
+
     refusal = _maybe_block_sensitive_request(user_prompt, aspect_ratio, str(duration_seconds))
     if refusal:
         await _track_api_action(
@@ -3760,6 +3883,166 @@ async def vision_endpoint(request: Request, payload: VisionDescribeRequest) -> J
             exc,
         )
         raise
+
+
+@app.post("/gpt-audio")
+@app.post("/api/gpt-audio")
+async def gpt_audio_endpoint(request: Request, payload: GPTAudioRequest) -> JSONResponse:
+    request_id = _request_id_from_request(request)
+    identity = _resolve_tracking_identity(request, payload)
+    user_id = identity.telegram_id if identity else "unknown"
+    frontend_source = _resolve_frontend_source(request)
+    feature_used = "gpt_audio"
+    conversation_id = _extract_conversation_id(request, identity, feature_used)
+    referral_code = _extract_referral_code(request)
+    user_prompt = payload.effective_prompt
+    logger.info(
+        "API GPT AUDIO START | request_id=%s user=%s prompt_len=%s",
+        request_id or "unknown",
+        user_id,
+        len(user_prompt or ""),
+    )
+    refusal = _maybe_block_sensitive_request(user_prompt)
+    if refusal:
+        await _track_api_action(
+            identity=identity,
+            message_type="gpt_audio",
+            user_message=user_prompt,
+            bot_reply=SAFE_INTERNAL_DETAILS_REFUSAL,
+            model_used=GPT_AUDIO_MODEL_LABEL,
+            success=False,
+            message_increment=1,
+            frontend_source=frontend_source,
+            feature_used=feature_used,
+            conversation_id=conversation_id,
+            text_content=user_prompt,
+            mark_started=bool(identity),
+            referral_code=referral_code,
+        )
+        logger.info(
+            "API GPT AUDIO REFUSED | request_id=%s user=%s",
+            request_id or "unknown",
+            user_id,
+        )
+        return refusal
+
+    try:
+        enhanced_prompt = (
+            "Answer the user request with a clear spoken explanation.\n"
+            "Keep it natural, concise, and helpful.\n\n"
+            f"User request: {user_prompt}"
+        )
+        generated = await asyncio.wait_for(
+            _generate_pollinations_audio(prompt=enhanced_prompt),
+            timeout=GPT_AUDIO_ENDPOINT_TIMEOUT_SECONDS,
+        )
+        response_payload: dict[str, Any] = {
+            "output": "Audio generated successfully.",
+            "model_label": GPT_AUDIO_MODEL_LABEL,
+        }
+        response_payload.update(generated)
+        await _track_api_action(
+            identity=identity,
+            message_type="gpt_audio",
+            user_message=user_prompt,
+            bot_reply=str(response_payload.get("output", "Audio generated successfully.")),
+            model_used=GPT_AUDIO_MODEL_LABEL,
+            success=True,
+            message_increment=1,
+            frontend_source=frontend_source,
+            feature_used=feature_used,
+            conversation_id=conversation_id,
+            text_content=str(response_payload.get("output", "Audio generated successfully.")),
+            media=TrackingMedia(
+                media_type="audio",
+                mime_type=str(response_payload.get("audio_mime_type") or "audio/mpeg"),
+                provider_source="pollinations",
+                media_origin="generated",
+                media_status="available",
+            ),
+            mark_started=bool(identity),
+            referral_code=referral_code,
+        )
+        logger.info(
+            "API GPT AUDIO SUCCESS | request_id=%s user=%s audio_mime_type=%s",
+            request_id or "unknown",
+            user_id,
+            response_payload.get("audio_mime_type", ""),
+        )
+        return JSONResponse(status_code=200, content=response_payload)
+    except asyncio.TimeoutError:
+        timeout_message = "Audio generation timed out. Please retry."
+        await _track_api_action(
+            identity=identity,
+            message_type="gpt_audio",
+            user_message=user_prompt,
+            bot_reply=timeout_message,
+            model_used=GPT_AUDIO_MODEL_LABEL,
+            success=False,
+            message_increment=1,
+            frontend_source=frontend_source,
+            feature_used=feature_used,
+            conversation_id=conversation_id,
+            text_content=user_prompt,
+            media=TrackingMedia(
+                media_type="audio",
+                provider_source="pollinations",
+                media_origin="generated",
+                media_status="failed",
+                media_error_reason="timeout",
+            ),
+            mark_started=bool(identity),
+            referral_code=referral_code,
+        )
+        payload_response: dict[str, Any] = {"error": timeout_message}
+        if request_id:
+            payload_response["request_id"] = request_id
+        return JSONResponse(status_code=504, content=payload_response)
+    except BackendError as exc:
+        await _track_api_action(
+            identity=identity,
+            message_type="gpt_audio",
+            user_message=user_prompt,
+            bot_reply=exc.message,
+            model_used=GPT_AUDIO_MODEL_LABEL,
+            success=False,
+            message_increment=1,
+            frontend_source=frontend_source,
+            feature_used=feature_used,
+            conversation_id=conversation_id,
+            text_content=user_prompt,
+            media=TrackingMedia(
+                media_type="audio",
+                provider_source="pollinations",
+                media_origin="generated",
+                media_status="failed",
+                media_error_reason=exc.message,
+            ),
+            mark_started=bool(identity),
+            referral_code=referral_code,
+        )
+        logger.warning(
+            "API GPT AUDIO BACKEND ERROR | request_id=%s user=%s status=%s error=%s",
+            request_id or "unknown",
+            user_id,
+            exc.status_code,
+            exc.message,
+        )
+        payload_response = {"error": exc.message}
+        if request_id:
+            payload_response["request_id"] = request_id
+        return JSONResponse(status_code=exc.status_code, content=payload_response)
+    except Exception as exc:
+        logger.exception(
+            "API GPT AUDIO FAILED | request_id=%s user=%s error=%s",
+            request_id or "unknown",
+            user_id,
+            exc,
+        )
+        payload_response = {"error": SAFE_SERVICE_UNAVAILABLE_MESSAGE}
+        if request_id:
+            payload_response["request_id"] = request_id
+        return JSONResponse(status_code=500, content=payload_response)
 
 
 @app.post("/tts")

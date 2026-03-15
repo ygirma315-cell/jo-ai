@@ -24,6 +24,7 @@ class JoAIMode(str, Enum):
     VIDEO = "video"
     KIMI_IMAGE_DESCRIBER = "kimi_image_describer"
     TEXT_TO_SPEECH = "text_to_speech"
+    GPT_AUDIO = "gpt_audio"
 
 
 def feature_label(feature: Feature) -> str:

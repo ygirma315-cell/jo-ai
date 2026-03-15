@@ -24,6 +24,7 @@ WELCOME_TEXT = (
     "• 🎨 Image generation and vision help\n"
     "• 🎬 Video generation\n"
     "• 🔊 Text-to-Speech output\n"
+    "• 🎧 GPT Audio responses\n"
     "• 🔗 Referral links\n"
     "• 🚀 Mini App access from Telegram\n\n"
     "Tap a menu button below or send a message when you're ready."
@@ -43,6 +44,7 @@ HELP_TEXT = (
     "/deepseek - DeepSeek mode\n"
     "/vision - vision mode (send photo)\n"
     "/tts - text-to-speech mode\n"
+    "/gptaudio - GPT Audio mode\n"
     "/referral - your invite link\n\n"
     "<b>Navigation</b>\n"
     "Back = one step back in the current feature\n"
@@ -78,7 +80,8 @@ AI_TOOLS_TEXT = (
     "• 🎨 Generate images\n"
     "• 🎬 Generate videos\n"
     "• 🖼️ Vision mode\n"
-    "• 🔊 Text-to-Speech"
+    "• 🔊 Text-to-Speech\n"
+    "• 🎧 GPT Audio"
 )
 
 
@@ -199,7 +202,7 @@ async def handle_referral(
         await message.answer("Referral is available only in a Telegram user session.")
         return
 
-    referral_code = f"jo{identity.telegram_id:x}"
+    referral_code = str(identity.telegram_id)
     if tracking_service and tracking_service.enabled:
         referral_code = await tracking_service.ensure_referral_code(identity=identity, frontend_source="telegram_bot")
         await tracking_service.track_action(
@@ -223,7 +226,7 @@ async def handle_referral(
     except Exception:
         bot_username = ""
 
-    telegram_link = f"https://t.me/{bot_username}?start=ref_{referral_code}" if bot_username else f"/start ref_{referral_code}"
+    telegram_link = f"https://t.me/{bot_username}?start={referral_code}" if bot_username else f"/start {referral_code}"
     mini_link = f"{miniapp_url}?ref={referral_code}" if miniapp_url else "Not configured"
     await message.answer(
         "<b>Your referral links</b>\n\n"
