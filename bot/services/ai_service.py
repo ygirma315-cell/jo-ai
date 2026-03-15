@@ -29,6 +29,7 @@ NVIDIA_BASE_URL = "https://integrate.api.nvidia.com/v1"
 NVIDIA_IMAGE_BASE_URL = "https://ai.api.nvidia.com/v1"
 NVIDIA_TTS_BASE_URL = "https://api.ngc.nvidia.com"
 GEMINI_BASE_URL = "https://generativelanguage.googleapis.com/v1beta"
+POLLINATIONS_BASE_URL = "https://gen.pollinations.ai"
 DEFAULT_CHAT_MODEL = "meta/llama-3.1-8b-instruct"
 FALLBACK_CHAT_MODEL = "meta/llama-3.1-8b-instruct"
 DEFAULT_IMAGE_MODEL = "black-forest-labs/flux.1-dev"
@@ -71,6 +72,7 @@ TTS_EMOTION_PROSODY: dict[str, tuple[str, str]] = {
     "calm": ("-10%", "-10Hz"),
     "serious": ("-5%", "-20Hz"),
 }
+POLLINATIONS_VIDEO_MAX_DURATION_SECONDS = 10
 
 IMAGE_STYLE_KEYWORDS = (
     "anime",
@@ -95,6 +97,24 @@ IMAGE_STYLE_KEYWORDS = (
     "concept art",
     "logo",
     "icon",
+)
+
+VIDEO_STYLE_KEYWORDS = (
+    "anime",
+    "cartoon",
+    "pixel art",
+    "watercolor",
+    "oil painting",
+    "low poly",
+    "3d",
+    "cinematic",
+    "noir",
+    "retro",
+    "vintage",
+    "documentary",
+    "handheld",
+    "timelapse",
+    "stop motion",
 )
 
 logger = logging.getLogger(__name__)
@@ -233,6 +253,123 @@ def build_enhanced_image_prompt(raw_prompt: str, ratio: str = "1:1") -> str:
         cinematic,
         imperfections,
         "ultra-clean rendering pipeline, coherent anatomy/perspective, no visual artifacts",
+    ]
+    return ", ".join(part.strip() for part in enhanced_parts if part and part.strip())
+
+
+def build_enhanced_video_prompt(
+    raw_prompt: str,
+    *,
+    aspect_ratio: str = "16:9",
+    duration_seconds: int = 4,
+) -> str:
+    cleaned = " ".join((raw_prompt or "").split())
+    if not cleaned:
+        return ""
+
+    normalized = cleaned.lower()
+    tokens = re.findall(r"[a-zA-Z0-9']+", normalized)
+    has_explicit_style = any(keyword in normalized for keyword in VIDEO_STYLE_KEYWORDS)
+    simple_subject_prompt = len(tokens) <= 5 and not has_explicit_style
+    safe_duration = max(1, min(POLLINATIONS_VIDEO_MAX_DURATION_SECONDS, int(duration_seconds or 4)))
+
+    seed_source = f"{cleaned}|{aspect_ratio}|{safe_duration}|{time.time_ns()}"
+    seed = int(hashlib.sha256(seed_source.encode("utf-8")).hexdigest()[:16], 16)
+
+    def pick(options: tuple[str, ...], salt: int) -> str:
+        if not options:
+            return ""
+        index = abs(seed ^ (salt * 0x9E3779B97F4A7C15)) % len(options)
+        return options[index]
+
+    aspect_hint = {
+        "16:9": "horizontal cinematic framing optimized for widescreen storytelling",
+        "9:16": "vertical cinematic framing optimized for mobile-first viewing",
+    }.get(aspect_ratio, "cinematic framing with strong visual balance")
+    duration_hint = f"{safe_duration}-second sequence with clear start, motion beat, and ending frame"
+
+    motion = pick(
+        (
+            "subject motion is physically plausible with smooth temporal continuity",
+            "camera and subject movement remain coherent with stable trajectories",
+            "motion pacing is cinematic and natural, without jitter or frame flicker",
+            "movement direction and speed are consistent across the entire shot",
+            "action progression feels intentional with realistic acceleration and deceleration",
+        ),
+        2,
+    )
+    camera = pick(
+        (
+            "camera language uses stable composition with controlled cinematic movement",
+            "camera behavior feels like a professional cinema rig with deliberate movement",
+            "framing evolves naturally with confident camera motion and subject focus",
+            "camera perspective preserves scene geography and visual readability",
+            "cinematic camera path maintains depth and subject emphasis",
+        ),
+        5,
+    )
+    lighting = pick(
+        (
+            "lighting is physically grounded with cinematic contrast and realistic falloff",
+            "light transport is coherent across frames with stable exposure and color temperature",
+            "scene illumination remains consistent while preserving dynamic range",
+            "cinematic lighting with believable highlights, shadows, and atmosphere",
+            "natural light behavior with subtle volumetric depth and filmic tonality",
+        ),
+        7,
+    )
+    environment = pick(
+        (
+            "environment details remain temporally consistent between frames",
+            "background elements support narrative context without visual clutter",
+            "foreground, midground, and background layers reinforce depth and motion",
+            "scene context feels lived-in and visually coherent throughout the clip",
+            "environmental details remain stable with realistic material response",
+        ),
+        11,
+    )
+    quality = pick(
+        (
+            "high-fidelity render quality with clean edges and minimal artifacts",
+            "film-grade visual quality with realistic texture and detail retention",
+            "high-quality cinematic output with polished frame-to-frame coherence",
+            "premium visual quality with stable geometry and natural motion blur",
+            "refined cinematic quality with robust temporal consistency",
+        ),
+        13,
+    )
+
+    style_directive = (
+        pick(
+            (
+                "photoreal cinematic execution with realistic materials and natural color response",
+                "realistic cinematic treatment with grounded physics and believable visual detail",
+                "lifelike scene rendering with strong cinematic presence and natural motion",
+            ),
+            17,
+        )
+        if simple_subject_prompt
+        else pick(
+            (
+                "preserve the user's requested style direction while maximizing cinematic quality",
+                "keep stylistic intent from the original prompt and improve temporal coherence",
+                "retain original style language and elevate cinematic motion quality",
+            ),
+            19,
+        )
+    )
+
+    enhanced_parts = [
+        cleaned,
+        style_directive,
+        duration_hint,
+        aspect_hint,
+        motion,
+        camera,
+        lighting,
+        environment,
+        quality,
+        "coherent temporal consistency, stable subject identity, no flicker, no distortion artifacts",
     ]
     return ", ".join(part.strip() for part in enhanced_parts if part and part.strip())
 
@@ -727,8 +864,157 @@ class GeneratedImageResult:
 
 
 @dataclass
-class VideoGenerationService:
+class GeneratedVideoResult:
+    video_bytes: bytes | None
+    video_url: str | None = None
+    mime_type: str = "video/mp4"
+
+
+@dataclass
+class PollinationsMediaService:
     api_key: str | None = None
+    base_url: str = POLLINATIONS_BASE_URL
+    image_model_chat_gbt: str = "gpt-image-1-mini"
+    image_model_grok_imagine: str = "grok-imagine"
+    video_model_grok_text_to_video: str = "grok-video"
+
+    async def generate_image(
+        self,
+        *,
+        prompt: str,
+        model: str,
+        size: str = "1024x1024",
+        enhance: bool = True,
+    ) -> GeneratedImageResult:
+        guardrail_response = guardrail_response_for_user_query(prompt)
+        if guardrail_response:
+            raise AIServiceError(guardrail_response)
+
+        effective_prompt = str(prompt or "").strip()
+        if not effective_prompt:
+            raise AIServiceError("Image prompt is required.")
+        effective_key = str(self.api_key or "").strip()
+        if not effective_key:
+            raise AIServiceError(SAFE_SERVICE_UNAVAILABLE_MESSAGE)
+
+        selected_model = str(model or "").strip() or self.image_model_chat_gbt
+        payload: dict[str, Any] = {
+            "prompt": effective_prompt,
+            "model": selected_model,
+            "size": size,
+            "response_format": "b64_json",
+            "enhance": bool(enhance),
+        }
+        data = await _post_pollinations_json(
+            api_key=effective_key,
+            path="/v1/images/generations",
+            payload=payload,
+            timeout_seconds=80,
+            max_retries=DEFAULT_RETRY_COUNT + 1,
+            base_url=self.base_url,
+        )
+        image_b64, image_url = _extract_image_data(data)
+        if isinstance(image_b64, str) and image_b64.strip():
+            try:
+                image_bytes = base64.b64decode("".join(image_b64.split()), validate=True)
+            except ValueError as exc:
+                raise AIServiceError(SAFE_SERVICE_UNAVAILABLE_MESSAGE) from exc
+            return GeneratedImageResult(image_bytes=image_bytes, image_url=image_url)
+        if image_url:
+            return GeneratedImageResult(image_bytes=None, image_url=image_url)
+        raise AIServiceError("Image payload is missing.")
+
+    async def generate_video(
+        self,
+        *,
+        prompt: str,
+        model: str | None = None,
+        duration_seconds: int = 4,
+        aspect_ratio: str = "16:9",
+        enhance: bool = True,
+        audio: bool = False,
+    ) -> GeneratedVideoResult:
+        guardrail_response = guardrail_response_for_user_query(prompt)
+        if guardrail_response:
+            raise AIServiceError(guardrail_response)
+
+        effective_prompt = str(prompt or "").strip()
+        if not effective_prompt:
+            raise AIServiceError("Video prompt is required.")
+        effective_key = str(self.api_key or "").strip()
+        if not effective_key:
+            raise AIServiceError(SAFE_SERVICE_UNAVAILABLE_MESSAGE)
+
+        selected_model = str(model or "").strip() or self.video_model_grok_text_to_video
+        safe_duration = max(1, min(POLLINATIONS_VIDEO_MAX_DURATION_SECONDS, int(duration_seconds or 4)))
+        safe_aspect_ratio = "9:16" if str(aspect_ratio or "").strip() == "9:16" else "16:9"
+
+        path = f"/video/{quote(effective_prompt, safe='')}"
+        query: dict[str, Any] = {
+            "model": selected_model,
+            "duration": safe_duration,
+            "aspectRatio": safe_aspect_ratio,
+            "enhance": str(bool(enhance)).lower(),
+            "audio": str(bool(audio)).lower(),
+        }
+
+        body_bytes, content_type = await _get_pollinations_binary(
+            api_key=effective_key,
+            path=path,
+            query=query,
+            timeout_seconds=160,
+            max_retries=DEFAULT_RETRY_COUNT + 1,
+            base_url=self.base_url,
+            accept_header="video/mp4,application/json,*/*",
+        )
+        normalized_type = (content_type or "").split(";", maxsplit=1)[0].strip().lower()
+        if normalized_type.startswith("video/"):
+            if not body_bytes:
+                raise AIServiceError(SAFE_SERVICE_UNAVAILABLE_MESSAGE)
+            return GeneratedVideoResult(
+                video_bytes=body_bytes,
+                video_url=None,
+                mime_type=normalized_type or "video/mp4",
+            )
+        if _looks_like_mp4_bytes(body_bytes):
+            return GeneratedVideoResult(video_bytes=body_bytes, video_url=None, mime_type="video/mp4")
+
+        payload = _decode_json_bytes(body_bytes)
+        video_url = _extract_video_url(payload)
+        if video_url:
+            return GeneratedVideoResult(video_bytes=None, video_url=video_url, mime_type="video/mp4")
+        raise AIServiceError("Video payload is missing.")
+
+
+@dataclass
+class VideoGenerationService:
+    # Backward-compatible wrapper kept for existing imports.
+    api_key: str | None = None
+    base_url: str = POLLINATIONS_BASE_URL
+    model: str = "grok-video"
+
+    async def generate_video(
+        self,
+        *,
+        prompt: str,
+        duration_seconds: int = 4,
+        aspect_ratio: str = "16:9",
+        enhance: bool = True,
+        audio: bool = False,
+    ) -> GeneratedVideoResult:
+        service = PollinationsMediaService(
+            api_key=self.api_key,
+            base_url=self.base_url,
+            video_model_grok_text_to_video=self.model,
+        )
+        return await service.generate_video(
+            prompt=prompt,
+            model=self.model,
+            duration_seconds=duration_seconds,
+            aspect_ratio=aspect_ratio,
+            enhance=enhance,
+            audio=audio,
+        )
 
 
 async def _post_nvidia_json(
@@ -825,6 +1111,176 @@ async def _post_nvidia_json(
             )
             raise AIServiceError(SAFE_SERVICE_UNAVAILABLE_MESSAGE)
         return parsed
+
+    if last_error is not None:
+        raise AIServiceError(SAFE_SERVICE_UNAVAILABLE_MESSAGE) from last_error
+    raise AIServiceError(SAFE_SERVICE_UNAVAILABLE_MESSAGE)
+
+
+async def _post_pollinations_json(
+    *,
+    api_key: str,
+    path: str,
+    payload: dict[str, object],
+    timeout_seconds: int = 45,
+    max_retries: int = DEFAULT_RETRY_COUNT,
+    base_url: str = POLLINATIONS_BASE_URL,
+) -> dict[str, object]:
+    headers = {
+        "Authorization": f"Bearer {api_key}",
+        "Content-Type": "application/json",
+        "Accept": "application/json",
+    }
+    timeout = aiohttp.ClientTimeout(total=timeout_seconds)
+    safe_path = path if path.startswith("/") else f"/{path}"
+    request_url = f"{base_url.rstrip('/')}{safe_path}"
+    retries = max(0, int(max_retries))
+    last_error: Exception | None = None
+
+    for attempt in range(retries + 1):
+        started_at = time.perf_counter()
+        try:
+            async with aiohttp.ClientSession(timeout=timeout) as session:
+                async with session.post(request_url, headers=headers, json=payload) as response:
+                    body = await response.text()
+        except asyncio.TimeoutError as exc:
+            last_error = exc
+            elapsed_ms = int((time.perf_counter() - started_at) * 1000)
+            logger.warning(
+                "Pollinations upstream timeout path=%s attempt=%s/%s elapsed_ms=%s",
+                safe_path,
+                attempt + 1,
+                retries + 1,
+                elapsed_ms,
+            )
+            if attempt < retries:
+                await asyncio.sleep(DEFAULT_RETRY_BACKOFF_SECONDS * (attempt + 1))
+                continue
+            raise AIServiceError(SAFE_SERVICE_UNAVAILABLE_MESSAGE) from exc
+        except aiohttp.ClientError as exc:
+            last_error = exc
+            elapsed_ms = int((time.perf_counter() - started_at) * 1000)
+            logger.warning(
+                "Pollinations upstream network error path=%s attempt=%s/%s elapsed_ms=%s error=%s",
+                safe_path,
+                attempt + 1,
+                retries + 1,
+                elapsed_ms,
+                exc.__class__.__name__,
+            )
+            if attempt < retries:
+                await asyncio.sleep(DEFAULT_RETRY_BACKOFF_SECONDS * (attempt + 1))
+                continue
+            raise AIServiceError(SAFE_SERVICE_UNAVAILABLE_MESSAGE) from exc
+
+        elapsed_ms = int((time.perf_counter() - started_at) * 1000)
+        if response.status >= 400:
+            detail = _extract_api_error(body)
+            logger.warning(
+                "Pollinations upstream HTTP error path=%s status=%s attempt=%s/%s elapsed_ms=%s detail=%s",
+                safe_path,
+                response.status,
+                attempt + 1,
+                retries + 1,
+                elapsed_ms,
+                detail[:220],
+            )
+            if _is_retryable_status(response.status) and attempt < retries:
+                await asyncio.sleep(DEFAULT_RETRY_BACKOFF_SECONDS * (attempt + 1))
+                continue
+            raise AIServiceError(SAFE_SERVICE_UNAVAILABLE_MESSAGE)
+
+        parsed = _safe_json(body)
+        if parsed:
+            return parsed
+        logger.warning(
+            "Pollinations upstream returned invalid JSON path=%s attempt=%s/%s elapsed_ms=%s",
+            safe_path,
+            attempt + 1,
+            retries + 1,
+            elapsed_ms,
+        )
+        raise AIServiceError(SAFE_SERVICE_UNAVAILABLE_MESSAGE)
+
+    if last_error is not None:
+        raise AIServiceError(SAFE_SERVICE_UNAVAILABLE_MESSAGE) from last_error
+    raise AIServiceError(SAFE_SERVICE_UNAVAILABLE_MESSAGE)
+
+
+async def _get_pollinations_binary(
+    *,
+    api_key: str,
+    path: str,
+    query: dict[str, object] | None = None,
+    timeout_seconds: int = 120,
+    max_retries: int = DEFAULT_RETRY_COUNT,
+    base_url: str = POLLINATIONS_BASE_URL,
+    accept_header: str = "*/*",
+) -> tuple[bytes, str]:
+    headers = {
+        "Authorization": f"Bearer {api_key}",
+        "Accept": accept_header,
+    }
+    timeout = aiohttp.ClientTimeout(total=timeout_seconds)
+    safe_path = path if path.startswith("/") else f"/{path}"
+    request_url = f"{base_url.rstrip('/')}{safe_path}"
+    retries = max(0, int(max_retries))
+    last_error: Exception | None = None
+
+    for attempt in range(retries + 1):
+        started_at = time.perf_counter()
+        try:
+            async with aiohttp.ClientSession(timeout=timeout) as session:
+                async with session.get(request_url, headers=headers, params=query) as response:
+                    body = await response.read()
+                    content_type = str(response.headers.get("Content-Type") or "")
+        except asyncio.TimeoutError as exc:
+            last_error = exc
+            elapsed_ms = int((time.perf_counter() - started_at) * 1000)
+            logger.warning(
+                "Pollinations binary timeout path=%s attempt=%s/%s elapsed_ms=%s",
+                safe_path,
+                attempt + 1,
+                retries + 1,
+                elapsed_ms,
+            )
+            if attempt < retries:
+                await asyncio.sleep(DEFAULT_RETRY_BACKOFF_SECONDS * (attempt + 1))
+                continue
+            raise AIServiceError(SAFE_SERVICE_UNAVAILABLE_MESSAGE) from exc
+        except aiohttp.ClientError as exc:
+            last_error = exc
+            elapsed_ms = int((time.perf_counter() - started_at) * 1000)
+            logger.warning(
+                "Pollinations binary network error path=%s attempt=%s/%s elapsed_ms=%s error=%s",
+                safe_path,
+                attempt + 1,
+                retries + 1,
+                elapsed_ms,
+                exc.__class__.__name__,
+            )
+            if attempt < retries:
+                await asyncio.sleep(DEFAULT_RETRY_BACKOFF_SECONDS * (attempt + 1))
+                continue
+            raise AIServiceError(SAFE_SERVICE_UNAVAILABLE_MESSAGE) from exc
+
+        elapsed_ms = int((time.perf_counter() - started_at) * 1000)
+        if response.status >= 400:
+            detail = _extract_api_error_bytes(body)
+            logger.warning(
+                "Pollinations binary HTTP error path=%s status=%s attempt=%s/%s elapsed_ms=%s detail=%s",
+                safe_path,
+                response.status,
+                attempt + 1,
+                retries + 1,
+                elapsed_ms,
+                detail[:220],
+            )
+            if _is_retryable_status(response.status) and attempt < retries:
+                await asyncio.sleep(DEFAULT_RETRY_BACKOFF_SECONDS * (attempt + 1))
+                continue
+            raise AIServiceError(SAFE_SERVICE_UNAVAILABLE_MESSAGE)
+        return body, content_type
 
     if last_error is not None:
         raise AIServiceError(SAFE_SERVICE_UNAVAILABLE_MESSAGE) from last_error
@@ -1382,6 +1838,44 @@ def _normalize_image_url(value: object) -> str | None:
     normalized = value.strip()
     if normalized.startswith("http://") or normalized.startswith("https://"):
         return normalized
+    return None
+
+
+def _normalize_video_url(value: object) -> str | None:
+    if not isinstance(value, str):
+        return None
+    normalized = value.strip()
+    if normalized.startswith("http://") or normalized.startswith("https://"):
+        return normalized
+    return None
+
+
+def _looks_like_mp4_bytes(payload: bytes) -> bool:
+    if not payload or len(payload) < 16:
+        return False
+    return b"ftyp" in payload[:64]
+
+
+def _extract_video_url(payload: dict[str, Any]) -> str | None:
+    if not isinstance(payload, dict):
+        return None
+    candidates: list[dict[str, Any]] = [payload]
+    raw_data = payload.get("data")
+    if isinstance(raw_data, dict):
+        candidates.append(raw_data)
+    elif isinstance(raw_data, list):
+        candidates.extend(item for item in raw_data if isinstance(item, dict))
+    output = payload.get("output")
+    if isinstance(output, dict):
+        candidates.append(output)
+    elif isinstance(output, list):
+        candidates.extend(item for item in output if isinstance(item, dict))
+
+    for candidate in candidates:
+        for key in ("video_url", "url", "output_url", "result_url"):
+            normalized = _normalize_video_url(candidate.get(key))
+            if normalized:
+                return normalized
     return None
 
 

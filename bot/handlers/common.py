@@ -22,6 +22,7 @@ WELCOME_TEXT = (
     "• ⚡ Code generation and debugging\n"
     "• 🔍 Research and deeper analysis\n"
     "• 🎨 Image generation and vision help\n"
+    "• 🎬 Video generation\n"
     "• 🔊 Text-to-Speech output\n"
     "• 🔗 Referral links\n"
     "• 🚀 Mini App access from Telegram\n\n"
@@ -37,6 +38,7 @@ HELP_TEXT = (
     "/research - research mode\n"
     "/prompt - prompt generator mode\n"
     "/image - image generator mode\n"
+    "/video - video generation mode\n"
     "/analysis - DeepSeek mode\n"
     "/deepseek - DeepSeek mode\n"
     "/vision - vision mode (send photo)\n"
@@ -74,6 +76,7 @@ AI_TOOLS_TEXT = (
     "• ✨ Build prompts\n"
     "• 🧠 DeepSeek\n"
     "• 🎨 Generate images\n"
+    "• 🎬 Generate videos\n"
     "• 🖼️ Vision mode\n"
     "• 🔊 Text-to-Speech"
 )

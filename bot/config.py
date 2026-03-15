@@ -15,6 +15,10 @@ DEFAULT_KIMI_MODEL = "moonshotai/kimi-k2.5"
 DEFAULT_GEMINI_MODEL = "gemini-2.0-flash"
 DEFAULT_TTS_FUNCTION_ID = "bc45d9e9-7c78-4d56-9737-e27011962ba8"
 DEFAULT_AI_BASE_URL = "https://integrate.api.nvidia.com/v1"
+DEFAULT_POLLINATIONS_BASE_URL = "https://gen.pollinations.ai"
+DEFAULT_POLLINATIONS_IMAGE_MODEL_CHAT_GBT = "gpt-image-1-mini"
+DEFAULT_POLLINATIONS_IMAGE_MODEL_GROK_IMAGINE = "grok-imagine"
+DEFAULT_POLLINATIONS_VIDEO_MODEL_GROK_TEXT_TO_VIDEO = "grok-video"
 DEFAULT_MINIAPP_URL = "https://ygirma315-cell.github.io/jo-ai/"
 DEFAULT_ENGAGEMENT_MESSAGE_TEMPLATE = "What do you want to do with your chat bot today?"
 DEFAULT_HEARTBEAT_TELEGRAM_ID = 7799059248
@@ -44,6 +48,11 @@ class Settings:
     nvidia_chat_model: str
     code_model: str
     image_model: str
+    pollinations_api_key: str | None
+    pollinations_base_url: str
+    pollinations_image_model_chat_gbt: str
+    pollinations_image_model_grok_imagine: str
+    pollinations_video_model_grok_text_to_video: str
     deepseek_api_key: str | None
     deepseek_model: str
     kimi_api_key: str | None
@@ -68,6 +77,7 @@ class Settings:
     admin_dashboard_owner_telegram_id: int | None
     admin_dashboard_allowlist_telegram_ids: tuple[int, ...]
     admin_dashboard_telegram_bot_token: str | None
+    admin_signin_token: str | None
     engagement_enabled: bool
     engagement_message_template: str
     engagement_inactivity_minutes: int
@@ -306,6 +316,17 @@ def load_settings() -> Settings:
     nvidia_chat_model = _read_env("CHAT_MODEL") or _read_env("NVIDIA_CHAT_MODEL") or DEFAULT_CHAT_MODEL
     code_model = _read_env("CODE_MODEL") or nvidia_chat_model
     image_model = _read_env("IMAGE_MODEL") or DEFAULT_IMAGE_MODEL
+    pollinations_api_key = _read_env("POLLINATIONS_API_KEY") or None
+    pollinations_base_url = (_read_env("POLLINATIONS_BASE_URL") or DEFAULT_POLLINATIONS_BASE_URL).rstrip("/")
+    pollinations_image_model_chat_gbt = (
+        _read_env("POLLINATIONS_IMAGE_MODEL_CHAT_GBT") or DEFAULT_POLLINATIONS_IMAGE_MODEL_CHAT_GBT
+    )
+    pollinations_image_model_grok_imagine = (
+        _read_env("POLLINATIONS_IMAGE_MODEL_GROK_IMAGINE") or DEFAULT_POLLINATIONS_IMAGE_MODEL_GROK_IMAGINE
+    )
+    pollinations_video_model_grok_text_to_video = (
+        _read_env("POLLINATIONS_VIDEO_MODEL_GROK_TEXT_TO_VIDEO") or DEFAULT_POLLINATIONS_VIDEO_MODEL_GROK_TEXT_TO_VIDEO
+    )
 
     deepseek_api_key = _read_env("DEEPSEEK_API_KEY") or None
     deepseek_model = _read_env("DEEPSEEK_MODEL") or DEFAULT_DEEPSEEK_MODEL
@@ -364,6 +385,7 @@ def load_settings() -> Settings:
             *admin_dashboard_allowlist_telegram_ids,
         )
     admin_dashboard_telegram_bot_token = _read_env("ADMIN_DASHBOARD_TELEGRAM_BOT_TOKEN") or None
+    admin_signin_token = _read_env("ADMIN_SIGNIN_TOKEN") or _read_env("ADMIN_DASHBOARD_TOKEN") or None
     engagement_enabled = _parse_bool_env(_read_env("ENGAGEMENT_ENABLED"), default=True)
     engagement_message_template = (
         _read_env("ENGAGEMENT_MESSAGE_TEMPLATE") or DEFAULT_ENGAGEMENT_MESSAGE_TEMPLATE
@@ -450,6 +472,10 @@ def load_settings() -> Settings:
         validation_warnings.append("Gemini credentials are missing. Gemini mode will be unavailable until GEMINI_API_KEY is configured.")
     if not tts_api_key:
         validation_warnings.append("Text-to-Speech credentials are missing. TTS will use fallback synthesis.")
+    if not pollinations_api_key:
+        validation_warnings.append(
+            "Pollinations credentials are missing. Chat GBT, Grok Imagine, and Grok Text to Video modes will be unavailable."
+        )
     for alias_warning in (
         _alias_conflict_warning("SUPABASE_URL", "SUPABASE_PROJECT_URL"),
         _alias_conflict_warning("SUPABASE_ANON_KEY", "SUPABASE_PUBLISHABLE_KEY"),
@@ -518,6 +544,11 @@ def load_settings() -> Settings:
         nvidia_chat_model=nvidia_chat_model,
         code_model=code_model,
         image_model=image_model,
+        pollinations_api_key=pollinations_api_key,
+        pollinations_base_url=pollinations_base_url,
+        pollinations_image_model_chat_gbt=pollinations_image_model_chat_gbt,
+        pollinations_image_model_grok_imagine=pollinations_image_model_grok_imagine,
+        pollinations_video_model_grok_text_to_video=pollinations_video_model_grok_text_to_video,
         deepseek_api_key=deepseek_api_key,
         deepseek_model=deepseek_model,
         kimi_api_key=kimi_api_key,
@@ -542,6 +573,7 @@ def load_settings() -> Settings:
         admin_dashboard_owner_telegram_id=admin_dashboard_owner_telegram_id,
         admin_dashboard_allowlist_telegram_ids=admin_dashboard_allowlist_telegram_ids,
         admin_dashboard_telegram_bot_token=admin_dashboard_telegram_bot_token,
+        admin_signin_token=admin_signin_token,
         engagement_enabled=engagement_enabled,
         engagement_message_template=engagement_message_template,
         engagement_inactivity_minutes=engagement_inactivity_minutes,

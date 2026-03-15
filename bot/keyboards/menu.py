@@ -9,6 +9,7 @@ from bot.constants import (
     MENU_AI_DEEPSEEK,
     MENU_AI_GEMINI,
     MENU_AI_IMAGE,
+    MENU_AI_VIDEO,
     MENU_AI_KIMI,
     MENU_AI_PROMPT,
     MENU_AI_RESEARCH,
@@ -44,8 +45,8 @@ def ai_tools_keyboard() -> ReplyKeyboardMarkup:
         [KeyboardButton(text=MENU_AI_CHAT), KeyboardButton(text=MENU_AI_CODE)],
         [KeyboardButton(text=MENU_AI_RESEARCH), KeyboardButton(text=MENU_AI_PROMPT)],
         [KeyboardButton(text=MENU_AI_IMAGE), KeyboardButton(text=MENU_AI_DEEPSEEK)],
-        [KeyboardButton(text=MENU_AI_GEMINI), KeyboardButton(text=MENU_AI_KIMI)],
-        [KeyboardButton(text=MENU_AI_TTS)],
+        [KeyboardButton(text=MENU_AI_VIDEO), KeyboardButton(text=MENU_AI_KIMI)],
+        [KeyboardButton(text=MENU_AI_GEMINI), KeyboardButton(text=MENU_AI_TTS)],
         [KeyboardButton(text=MENU_CANCEL)],
     ]
     return ReplyKeyboardMarkup(

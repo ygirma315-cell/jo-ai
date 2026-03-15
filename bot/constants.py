@@ -5,6 +5,7 @@ MENU_AI_CODE = "\u26a1 Code Generator"
 MENU_AI_RESEARCH = "\U0001F50D Research"
 MENU_AI_PROMPT = "\u2728 Prompt Generator"
 MENU_AI_IMAGE = "\U0001F3A8 Image Generator"
+MENU_AI_VIDEO = "\U0001F3AC Video Generation"
 MENU_AI_DEEPSEEK = "\U0001F9E0 DeepSeek"
 MENU_AI_GEMINI = "\U0001F4A0 Gemini Chat"
 MENU_AI_KIMI = "\U0001F5BC\ufe0f Vision"
@@ -22,6 +23,7 @@ _PRIMARY_MENU_BUTTON_TEXTS = {
     MENU_AI_RESEARCH,
     MENU_AI_PROMPT,
     MENU_AI_IMAGE,
+    MENU_AI_VIDEO,
     MENU_AI_DEEPSEEK,
     MENU_AI_GEMINI,
     MENU_AI_KIMI,
@@ -40,6 +42,7 @@ _LEGACY_MENU_BUTTON_TEXTS = {
     "Research",
     "Prompt Generator",
     "Image Generator",
+    "Video Generation",
     "Deep Analysis",
     "DeepSeek",
     "Gemini Chat",

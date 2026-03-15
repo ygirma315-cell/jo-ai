@@ -16,11 +16,12 @@ def jo_ai_menu_keyboard() -> InlineKeyboardMarkup:
     builder.button(text="🔍 Research", callback_data="joai:research")
     builder.button(text="🧠 DeepSeek", callback_data="joai:deep_analysis")
     builder.button(text="✨ Prompt Generator", callback_data="joai:prompt")
-    builder.button(text="🎨 Image Generator", callback_data="joai:image")
+    builder.button(text="🎨 Image Generation", callback_data="joai:image")
+    builder.button(text="🎬 Video Generation", callback_data="joai:video")
     builder.button(text="🖼️ Vision", callback_data="joai:kimi")
     builder.button(text="🔊 Text-to-Speech", callback_data="joai:tts")
     _append_back_main(builder, "menu:ai_tools")
-    builder.adjust(2, 2, 2, 2, 2)
+    builder.adjust(2, 2, 2, 2, 2, 2)
     return builder.as_markup()
 
 
@@ -36,9 +37,8 @@ def gemini_mode_keyboard() -> InlineKeyboardMarkup:
     builder.button(text="💬 Chat", callback_data="joaigem:mode:chat")
     builder.button(text="🎨 Image", callback_data="joaigem:mode:image")
     builder.button(text="🔊 Voice", callback_data="joaigem:mode:voice")
-    builder.button(text="🎬 Video", callback_data="joaigem:mode:video")
     _append_back_main(builder, "joai:menu")
-    builder.adjust(2, 2, 2)
+    builder.adjust(3, 2)
     return builder.as_markup()
 
 
@@ -63,8 +63,46 @@ def image_ratio_keyboard() -> InlineKeyboardMarkup:
     builder.button(text="1:1", callback_data="joaiimg:ratio:1_1")
     builder.button(text="16:9", callback_data="joaiimg:ratio:16_9")
     builder.button(text="9:16", callback_data="joaiimg:ratio:9_16")
+    builder.button(text="🧩 Model", callback_data="joaiimg:model_menu")
     _append_back_main(builder, "joai:image")
-    builder.adjust(2, 1, 2)
+    builder.adjust(2, 1, 1, 2)
+    return builder.as_markup()
+
+
+def image_model_keyboard(selected_model: str | None = None) -> InlineKeyboardMarkup:
+    selected = (selected_model or "").strip().lower()
+    options: list[tuple[str, str]] = [
+        ("JO AI Image Generate", "joai_image_generate"),
+        ("Chat GBT", "chat_gbt"),
+        ("Grok Imagine", "grok_imagine"),
+    ]
+    builder = InlineKeyboardBuilder()
+    for label, token in options:
+        prefix = "✅ " if token == selected else ""
+        builder.button(text=f"{prefix}{label}", callback_data=f"joaiimg:model:{token}")
+    _append_back_main(builder, "joaiimg:ratio_menu")
+    builder.adjust(1, 1, 1, 2)
+    return builder.as_markup()
+
+
+def video_options_keyboard(
+    selected_duration_seconds: int | None = None,
+    selected_aspect_ratio: str | None = None,
+) -> InlineKeyboardMarkup:
+    duration = int(selected_duration_seconds or 4)
+    ratio = (selected_aspect_ratio or "16:9").strip()
+    duration_options = (4, 6, 8)
+    ratio_options: tuple[tuple[str, str], ...] = (("16:9", "16_9"), ("9:16", "9_16"))
+
+    builder = InlineKeyboardBuilder()
+    for value in duration_options:
+        prefix = "✅ " if value == duration else ""
+        builder.button(text=f"{prefix}{value}s", callback_data=f"joaivid:duration:{value}")
+    for label, token in ratio_options:
+        prefix = "✅ " if label == ratio else ""
+        builder.button(text=f"{prefix}{label}", callback_data=f"joaivid:ratio:{token}")
+    _append_back_main(builder, "joai:video")
+    builder.adjust(3, 2, 2)
     return builder.as_markup()
 
 

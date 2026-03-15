@@ -32,7 +32,8 @@
       title: "Mobile stability + Gemini update",
       items: [
         "Added Gemini chat mode in the same JO AI interface with server-side provider routing.",
-        "Gemini supports command-style messages in one thread: /image, /voice, and /video.",
+        "Gemini supports command-style messages in one thread: /image and /voice.",
+        "Video Generation now has a dedicated tool flow.",
         "Mini app now sends frontend source and conversation ID for cleaner analytics across admin and backend.",
       ],
     },
@@ -121,7 +122,7 @@
       lead: "This mode is paused for now.",
       example: "Give me a concise plan to improve my study schedule this week.",
       label: "Ask Gemini via JO AI",
-      placeholder: "Type a prompt, or use /image, /voice, /video",
+      placeholder: "Type a prompt, or use /image or /voice",
       rows: 1,
       maxComposerHeight: 152,
       historyTitle: "Gemini conversation",
@@ -186,8 +187,8 @@
     },
     image: {
       title: "Image Generator",
-      description: "Describe a visual in simple words and get a high-quality image.",
-      lead: "Write the scene, optionally set ratio, and save the image once it lands.",
+      description: "Describe a visual in simple words and get a premium image result.",
+      lead: "Choose a model profile, set ratio, and save the final image in one flow.",
       example: "A cinematic night city street with rain reflections and soft neon lighting.",
       label: "Describe the image you want",
       placeholder: "Describe the image you want Joe AI to create",
@@ -195,11 +196,31 @@
       maxComposerHeight: 160,
       historyTitle: "Image results",
       needsImageRatio: true,
+      needsImageModel: true,
       supportsImageSave: true,
       exampleImageRatio: "16:9",
       defaultImageRatio: "1:1",
+      defaultImageModel: "jo_ai_image_generate",
       emptyTitle: "Create an image with Joe AI",
       emptyCopy: "Describe a scene and your image result will appear here.",
+    },
+    video: {
+      title: "Video Generation",
+      description: "Create short cinematic videos from text prompts.",
+      lead: "Send a scene description and get a polished video clip in seconds.",
+      example: "A slow cinematic drone shot over a futuristic city at golden hour, dramatic lighting, ultra detailed.",
+      label: "Describe the video you want",
+      placeholder: "Describe the video you want JO AI to create",
+      rows: 1,
+      maxComposerHeight: 164,
+      historyTitle: "Video results",
+      needsVideoDuration: true,
+      needsVideoRatio: true,
+      supportsVideoSave: true,
+      defaultVideoDuration: "4",
+      defaultVideoRatio: "16:9",
+      emptyTitle: "Create a video with JO AI",
+      emptyCopy: "Describe a scene and your generated video will appear here.",
     },
     tts: {
       title: "Text-to-Speech",
@@ -249,6 +270,8 @@
     history: [],
     lastOutputText: "",
     lastImageDataUrl: "",
+    lastVideoDataUrl: "",
+    lastVideoMimeType: "",
     lastAudioDataUrl: "",
     lastAudioFileName: "",
     lastCodeFileDataUrl: "",
@@ -423,6 +446,12 @@
       promptType: byId("promptType"),
       imageRatioWrap: byId("imageRatioWrap"),
       imageRatio: byId("imageRatio"),
+      imageModelWrap: byId("imageModelWrap"),
+      imageModel: byId("imageModel"),
+      videoDurationWrap: byId("videoDurationWrap"),
+      videoDuration: byId("videoDuration"),
+      videoRatioWrap: byId("videoRatioWrap"),
+      videoRatio: byId("videoRatio"),
       ttsLanguageWrap: byId("ttsLanguageWrap"),
       ttsLanguage: byId("ttsLanguage"),
       ttsVoiceWrap: byId("ttsVoiceWrap"),
@@ -1498,13 +1527,14 @@
     }
     if (elements.downloadImageBtn) {
       const config = currentTool();
-      if (config && (config.supportsImageSave || config.supportsCodeSave || config.supportsAudioSave)) {
+      if (config && (config.supportsImageSave || config.supportsCodeSave || config.supportsAudioSave || config.supportsVideoSave)) {
         elements.downloadImageBtn.hidden = false;
         const canSaveImage = Boolean(config.supportsImageSave && state.lastImageDataUrl);
         const canSaveAudio = Boolean(config.supportsAudioSave && state.lastAudioDataUrl);
         const canSaveCode = Boolean(config.supportsCodeSave && state.lastCodeFileDataUrl);
-        elements.downloadImageBtn.disabled = state.isBusy || (!canSaveImage && !canSaveAudio && !canSaveCode);
-        elements.downloadImageBtn.textContent = canSaveCode ? "Save Code" : canSaveAudio ? "Save Audio" : "Save";
+        const canSaveVideo = Boolean(config.supportsVideoSave && state.lastVideoDataUrl);
+        elements.downloadImageBtn.disabled = state.isBusy || (!canSaveImage && !canSaveAudio && !canSaveCode && !canSaveVideo);
+        elements.downloadImageBtn.textContent = canSaveCode ? "Save Code" : canSaveAudio ? "Save Audio" : canSaveVideo ? "Save Video" : "Save";
       } else {
         elements.downloadImageBtn.hidden = true;
       }
@@ -1743,10 +1773,31 @@
     if (/^https?:\/\//i.test(value)) {
       return value;
     }
+    if (value.startsWith("/")) {
+      return `${(state.apiBase || "").replace(/\/+$/, "")}${value}`;
+    }
     if (value.startsWith("data:image")) {
       return value;
     }
     return `data:image/png;base64,${value.replace(/\s+/g, "")}`;
+  }
+
+  function normalizeVideoUrl(rawVideo, mimeType = "video/mp4") {
+    const value = String(rawVideo || "").trim();
+    if (!value) {
+      return "";
+    }
+    if (/^https?:\/\//i.test(value)) {
+      return value;
+    }
+    if (value.startsWith("/")) {
+      return `${(state.apiBase || "").replace(/\/+$/, "")}${value}`;
+    }
+    if (value.startsWith("data:video")) {
+      return value;
+    }
+    const normalizedMime = String(mimeType || "video/mp4").trim() || "video/mp4";
+    return `data:${normalizedMime};base64,${value.replace(/\s+/g, "")}`;
   }
 
   function normalizeCodeFileUrl(rawBase64) {
@@ -1764,6 +1815,9 @@
     }
     if (/^https?:\/\//i.test(value)) {
       return value;
+    }
+    if (value.startsWith("/")) {
+      return `${(state.apiBase || "").replace(/\/+$/, "")}${value}`;
     }
     if (value.startsWith("data:audio")) {
       return value;
@@ -1875,6 +1929,15 @@
       body.appendChild(audio);
     }
 
+    if (entry.videoDataUrl) {
+      const video = document.createElement("video");
+      video.className = "message-video";
+      video.controls = true;
+      video.preload = "metadata";
+      video.src = entry.videoDataUrl;
+      body.appendChild(video);
+    }
+
     if (entry.imageDataUrl) {
       const image = document.createElement("img");
       image.className = "message-image";
@@ -1936,6 +1999,8 @@
     const latestAssistant = [...state.history].reverse().find((entry) => entry.role === "assistant" && !entry.pending);
     state.lastOutputText = latestAssistant && latestAssistant.text ? latestAssistant.text : "";
     state.lastImageDataUrl = latestAssistant && latestAssistant.imageDataUrl ? latestAssistant.imageDataUrl : "";
+    state.lastVideoDataUrl = latestAssistant && latestAssistant.videoDataUrl ? latestAssistant.videoDataUrl : "";
+    state.lastVideoMimeType = latestAssistant && latestAssistant.videoMimeType ? latestAssistant.videoMimeType : "";
     state.lastAudioDataUrl = latestAssistant && latestAssistant.audioDataUrl ? latestAssistant.audioDataUrl : "";
     state.lastAudioFileName = latestAssistant && latestAssistant.audioFileName ? latestAssistant.audioFileName : "";
     state.lastCodeFileDataUrl = latestAssistant && latestAssistant.codeFileDataUrl ? latestAssistant.codeFileDataUrl : "";
@@ -1952,6 +2017,8 @@
       elements.historyList.innerHTML = state.emptyTemplate;
       state.lastOutputText = "";
       state.lastImageDataUrl = "";
+      state.lastVideoDataUrl = "";
+      state.lastVideoMimeType = "";
       state.lastAudioDataUrl = "";
       state.lastAudioFileName = "";
       state.lastCodeFileDataUrl = "";
@@ -2047,6 +2114,8 @@
     state.pendingId = "";
     state.lastOutputText = "";
     state.lastImageDataUrl = "";
+    state.lastVideoDataUrl = "";
+    state.lastVideoMimeType = "";
     state.lastAudioDataUrl = "";
     state.lastAudioFileName = "";
     state.lastCodeFileDataUrl = "";
@@ -2070,6 +2139,15 @@
     }
     if (elements.imageRatio) {
       elements.imageRatio.value = "1:1";
+    }
+    if (elements.imageModel) {
+      elements.imageModel.value = "jo_ai_image_generate";
+    }
+    if (elements.videoDuration) {
+      elements.videoDuration.value = "4";
+    }
+    if (elements.videoRatio) {
+      elements.videoRatio.value = "16:9";
     }
     if (elements.ttsLanguage) {
       elements.ttsLanguage.value = "en";
@@ -2443,6 +2521,12 @@
         { path: "/image", payload: basePayload },
       ];
     }
+    if (mode === "video") {
+      return [
+        { path: "/api/video", payload: basePayload },
+        { path: "/video", payload: basePayload },
+      ];
+    }
 
     return [
       { path: "/api/vision", payload: basePayload },
@@ -2453,6 +2537,9 @@
   function requestTimeoutMsForMode(mode) {
     if (mode === "image") {
       return 120000;
+    }
+    if (mode === "video") {
+      return 210000;
     }
     if (mode === "gemini") {
       return 90000;
@@ -2688,6 +2775,24 @@
     if (elements.imageRatio && config.defaultImageRatio && !elements.imageRatio.value) {
       elements.imageRatio.value = config.defaultImageRatio;
     }
+    if (elements.imageModelWrap) {
+      elements.imageModelWrap.hidden = !config.needsImageModel;
+    }
+    if (elements.imageModel && config.defaultImageModel && !elements.imageModel.value) {
+      elements.imageModel.value = config.defaultImageModel;
+    }
+    if (elements.videoDurationWrap) {
+      elements.videoDurationWrap.hidden = !config.needsVideoDuration;
+    }
+    if (elements.videoDuration && config.defaultVideoDuration && !elements.videoDuration.value) {
+      elements.videoDuration.value = config.defaultVideoDuration;
+    }
+    if (elements.videoRatioWrap) {
+      elements.videoRatioWrap.hidden = !config.needsVideoRatio;
+    }
+    if (elements.videoRatio && config.defaultVideoRatio && !elements.videoRatio.value) {
+      elements.videoRatio.value = config.defaultVideoRatio;
+    }
     if (elements.ttsLanguageWrap) {
       elements.ttsLanguageWrap.hidden = !config.needsTtsLanguage;
     }
@@ -2734,6 +2839,15 @@
       elements.imageRatio.value = config.exampleImageRatio;
     } else if (config.defaultImageRatio && elements.imageRatio) {
       elements.imageRatio.value = config.defaultImageRatio;
+    }
+    if (config.defaultImageModel && elements.imageModel) {
+      elements.imageModel.value = config.defaultImageModel;
+    }
+    if (config.defaultVideoDuration && elements.videoDuration) {
+      elements.videoDuration.value = config.defaultVideoDuration;
+    }
+    if (config.defaultVideoRatio && elements.videoRatio) {
+      elements.videoRatio.value = config.defaultVideoRatio;
     }
     if (config.defaultTtsLanguage && elements.ttsLanguage) {
       elements.ttsLanguage.value = config.defaultTtsLanguage;
@@ -2830,6 +2944,13 @@
 
     if (mode === "image") {
       payload.ratio = elements.imageRatio ? elements.imageRatio.value : "1:1";
+      payload.image_model = elements.imageModel ? elements.imageModel.value : "jo_ai_image_generate";
+    }
+
+    if (mode === "video") {
+      payload.video_model = "grok_text_to_video";
+      payload.duration_seconds = Number.parseInt(elements.videoDuration ? elements.videoDuration.value : "4", 10) || 4;
+      payload.aspect_ratio = elements.videoRatio ? elements.videoRatio.value : "16:9";
     }
 
     if (mode === "tts") {
@@ -2878,7 +2999,19 @@
       note = `Prompt type: ${payload.prompt_type}`;
     }
     if (mode === "image") {
-      note = "";
+      const ratio = payload.ratio || "1:1";
+      const modelLabelMap = {
+        jo_ai_image_generate: "JO AI Image Generate",
+        chat_gbt: "Chat GBT",
+        grok_imagine: "Grok Imagine",
+      };
+      const modelLabel = modelLabelMap[payload.image_model] || "JO AI Image Generate";
+      note = `Model: ${modelLabel} | Ratio: ${ratio}`;
+    }
+    if (mode === "video") {
+      const ratio = payload.aspect_ratio || "16:9";
+      const duration = payload.duration_seconds || 4;
+      note = `Model: Grok Text to Video | Duration: ${duration}s | Ratio: ${ratio}`;
     }
     if (mode === "code" && payload.code_file_name) {
       note = `File: ${payload.code_file_name}`;
@@ -2978,6 +3111,8 @@
       };
       state.lastOutputText = refusal.text;
       state.lastImageDataUrl = "";
+      state.lastVideoDataUrl = "";
+      state.lastVideoMimeType = "";
       state.lastAudioDataUrl = "";
       state.lastAudioFileName = "";
       state.lastCodeFileDataUrl = "";
@@ -3002,6 +3137,16 @@
         : data && typeof data.image_url === "string" && data.image_url.trim()
           ? normalizeImageUrl(data.image_url)
           : "";
+      const videoMimeType =
+        data && typeof data.video_mime_type === "string" && data.video_mime_type.trim()
+          ? data.video_mime_type.trim()
+          : "video/mp4";
+      const videoDataUrl =
+        data && data.video_base64
+          ? normalizeVideoUrl(data.video_base64, videoMimeType)
+          : data && typeof data.video_url === "string" && data.video_url.trim()
+            ? normalizeVideoUrl(data.video_url, videoMimeType)
+            : "";
       const audioDataUrl =
         data && data.audio_base64
           ? normalizeAudioUrl(data.audio_base64, data.audio_mime_type || "audio/mpeg")
@@ -3017,11 +3162,14 @@
         data && typeof data.code_file_name === "string" && data.code_file_name.trim() ? data.code_file_name.trim() : "";
       let text =
         (data && typeof data.output === "string" && data.output.trim()) ||
-        (data && typeof data.warning === "string" && !imageDataUrl && data.warning.trim()) ||
+        (data && typeof data.warning === "string" && !imageDataUrl && !videoDataUrl && data.warning.trim()) ||
         "";
 
       if (!text && imageDataUrl) {
         text = "Your image is ready.";
+      }
+      if (!text && videoDataUrl) {
+        text = "Your video is ready.";
       }
       if (!text && audioDataUrl) {
         text = "Your audio is ready.";
@@ -3032,6 +3180,8 @@
 
       state.lastOutputText = text;
       state.lastImageDataUrl = imageDataUrl;
+      state.lastVideoDataUrl = videoDataUrl;
+      state.lastVideoMimeType = videoMimeType;
       state.lastAudioDataUrl = audioDataUrl;
       state.lastAudioFileName = audioFileName;
       state.lastCodeFileDataUrl = codeFileDataUrl;
@@ -3049,6 +3199,8 @@
             ? data.warning.trim()
             : "",
         imageDataUrl,
+        videoDataUrl,
+        videoMimeType,
         audioDataUrl,
         audioFileName,
         codeFileDataUrl,
@@ -3061,6 +3213,7 @@
         endpoint: data && typeof data._endpoint === "string" ? data._endpoint : "",
         request_id: data && typeof data._request_id === "string" ? data._request_id : "",
         has_image: Boolean(imageDataUrl),
+        has_video: Boolean(videoDataUrl),
         has_audio: Boolean(audioDataUrl),
         has_code_file: Boolean(codeFileDataUrl),
       });
@@ -3091,8 +3244,9 @@
     const config = currentTool();
     const saveCode = Boolean(config && config.supportsCodeSave && state.lastCodeFileDataUrl);
     const saveImage = Boolean(config && config.supportsImageSave && state.lastImageDataUrl);
+    const saveVideo = Boolean(config && config.supportsVideoSave && state.lastVideoDataUrl);
     const saveAudio = Boolean(config && config.supportsAudioSave && state.lastAudioDataUrl);
-    if (!saveCode && !saveImage && !saveAudio) {
+    if (!saveCode && !saveImage && !saveVideo && !saveAudio) {
       showToast("No file available to save.", "error");
       return;
     }
@@ -3100,6 +3254,10 @@
     if (saveCode) {
       link.href = state.lastCodeFileDataUrl;
       link.download = state.lastCodeFileName || `jo-ai-code-${Date.now()}.txt`;
+    } else if (saveVideo) {
+      const ext = String(state.lastVideoMimeType || "video/mp4").toLowerCase().includes("webm") ? "webm" : "mp4";
+      link.href = state.lastVideoDataUrl;
+      link.download = `jo-ai-video-${Date.now()}.${ext}`;
     } else if (saveAudio) {
       link.href = state.lastAudioDataUrl;
       link.download = state.lastAudioFileName || `jo-ai-audio-${Date.now()}.mp3`;
@@ -3189,6 +3347,15 @@
     }
     if (elements.imageRatio) {
       elements.imageRatio.addEventListener("change", updateSendButtonState);
+    }
+    if (elements.imageModel) {
+      elements.imageModel.addEventListener("change", updateSendButtonState);
+    }
+    if (elements.videoDuration) {
+      elements.videoDuration.addEventListener("change", updateSendButtonState);
+    }
+    if (elements.videoRatio) {
+      elements.videoRatio.addEventListener("change", updateSendButtonState);
     }
     if (elements.ttsLanguage) {
       elements.ttsLanguage.addEventListener("change", updateSendButtonState);

@@ -7,7 +7,7 @@
   <meta http-equiv="Cache-Control" content="no-store, max-age=0">
   <meta http-equiv="Pragma" content="no-cache">
   <meta http-equiv="Expires" content="0">
-  <title>Image Generator</title>
+  <title>Video Generation</title>
   <script>
     const onGitHubPagesProject =
       window.location.hostname === "ygirma315-cell.github.io" &&
@@ -18,7 +18,7 @@
       document.head.appendChild(base);
     }
   </script>
-  <link rel="canonical" href="https://ygirma315-cell.github.io/jo-ai/image.html">
+  <link rel="canonical" href="https://ygirma315-cell.github.io/jo-ai/video.html">
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
   <link
@@ -31,7 +31,7 @@
   <script src="config.js?v=1.6.1"></script>
   <script src="app.js?v=1.6.1" defer></script>
 </head>
-<body data-page="tool" data-tool="image" class="tool-page">
+<body data-page="tool" data-tool="video" class="tool-page">
   <section id="appFallback" class="app-fallback" hidden>
     <h1>Mini App failed to load</h1>
     <p id="appFallbackMessage">Unknown startup error.</p>
@@ -45,7 +45,7 @@
             <div class="chat-brand-mark" aria-hidden="true">JO</div>
             <div class="chat-brand-copy">
               <p class="eyebrow">JO AI Chatbot</p>
-              <h1 id="toolTitle" class="chat-title">Image Generator</h1>
+              <h1 id="toolTitle" class="chat-title">Video Generation</h1>
             </div>
           </div>
         </div>
@@ -62,8 +62,8 @@
         <div id="historyList" class="conversation-list chat-history" role="log" aria-live="polite">
           <div id="emptyState" class="empty-state chat-empty-state">
             <div class="empty-state-mark" aria-hidden="true">JO</div>
-            <h3>Create an image with Joe AI</h3>
-            <p>Describe a scene and your image result will appear here.</p>
+            <h3>Create a video with Joe AI</h3>
+            <p>Describe a scene and your generated video will appear here.</p>
           </div>
         </div>
 
@@ -73,7 +73,7 @@
               <label for="promptType">Prompt type</label>
               <input id="promptType" type="text" placeholder="e.g. assistant prompt">
             </div>
-            <div id="imageModelWrap" class="composer-field">
+            <div id="imageModelWrap" class="composer-field" hidden>
               <label for="imageModel">Model</label>
               <select id="imageModel">
                 <option value="jo_ai_image_generate">JO AI Image Generate</option>
@@ -81,7 +81,7 @@
                 <option value="grok_imagine">Grok Imagine</option>
               </select>
             </div>
-            <div id="imageRatioWrap" class="composer-field">
+            <div id="imageRatioWrap" class="composer-field" hidden>
               <label for="imageRatio">Aspect ratio</label>
               <select id="imageRatio">
                 <option value="1:1">1:1</option>
@@ -89,7 +89,7 @@
                 <option value="9:16">9:16</option>
               </select>
             </div>
-            <div id="videoDurationWrap" class="composer-field" hidden>
+            <div id="videoDurationWrap" class="composer-field">
               <label for="videoDuration">Duration</label>
               <select id="videoDuration">
                 <option value="4">4s</option>
@@ -97,14 +97,41 @@
                 <option value="8">8s</option>
               </select>
             </div>
-            <div id="videoRatioWrap" class="composer-field" hidden>
+            <div id="videoRatioWrap" class="composer-field">
               <label for="videoRatio">Video ratio</label>
               <select id="videoRatio">
                 <option value="16:9">16:9</option>
                 <option value="9:16">9:16</option>
               </select>
             </div>
-
+            <div id="ttsLanguageWrap" class="composer-field" hidden>
+              <label for="ttsLanguage">Language</label>
+              <select id="ttsLanguage">
+                <option value="en">English</option>
+                <option value="es">Spanish</option>
+                <option value="fr">French</option>
+              </select>
+            </div>
+            <div id="ttsVoiceWrap" class="composer-field" hidden>
+              <label for="ttsVoice">Voice</label>
+              <select id="ttsVoice">
+                <option value="female">Female</option>
+                <option value="male">Male</option>
+              </select>
+            </div>
+            <div id="ttsEmotionWrap" class="composer-field" hidden>
+              <label for="ttsEmotion">Style</label>
+              <select id="ttsEmotion">
+                <option value="natural">Natural</option>
+                <option value="warm">Warm</option>
+                <option value="bright">Bright</option>
+              </select>
+            </div>
+            <div id="codeFileWrap" class="composer-field" hidden>
+              <label for="codeFile">Code file</label>
+              <input id="codeFile" type="file" accept=".txt,.py,.js,.ts,.tsx,.jsx,.json,.md,.sql,.html,.css,.java,.go,.rs,.php,.c,.cpp,.h,.hpp,.rb,.swift,.kt,.yaml,.yml">
+              <p id="codeFileInfo" class="hint">No code file selected.</p>
+            </div>
             <div id="kimiImageWrap" class="composer-upload" hidden>
               <label class="upload-zone" for="kimiImage">
                 <input id="kimiImage" type="file" accept=".png,.jpg,.jpeg,.webp,.gif,.bmp,image/*">
@@ -118,9 +145,9 @@
             </div>
           </div>
 
-          <label for="aiInput" id="inputLabel" class="sr-only">Describe the image you want</label>
+          <label for="aiInput" id="inputLabel" class="sr-only">Describe the video you want</label>
           <div class="chat-input-row">
-            <textarea id="aiInput" class="chat-input" rows="1" placeholder="Describe the image you want Joe AI to create" enterkeyhint="send"></textarea>
+            <textarea id="aiInput" class="chat-input" rows="1" placeholder="Describe the video you want JO AI to create" enterkeyhint="send"></textarea>
             <button id="sendBtn" class="btn primary send-btn" type="submit" aria-label="Send message">Send</button>
           </div>
           <p id="loadingHint" class="hint composer-status">Ready when you are.</p>
@@ -130,6 +157,3 @@
   </main>
 </body>
 </html>
-
-
-

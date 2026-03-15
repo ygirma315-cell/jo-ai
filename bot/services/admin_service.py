@@ -14,6 +14,7 @@ from bot.services.supabase_client import SupabaseConfig, build_supabase_config
 logger = logging.getLogger(__name__)
 IMAGE_MESSAGE_TYPES = frozenset({"image", "vision"})
 AUDIO_MESSAGE_TYPES = frozenset({"tts", "voice", "audio"})
+MEDIA_MESSAGE_TYPES = frozenset({"image", "vision", "video"})
 
 
 def _safe_int(value: Any, default: int = 0) -> int:
@@ -673,7 +674,7 @@ class SupabaseAdminService:
                 "media_width,media_height,provider_source,media_origin,media_status,media_error_reason"
             ),
             count="exact",
-        ).in_("message_type", sorted(IMAGE_MESSAGE_TYPES))
+        ).in_("message_type", sorted(MEDIA_MESSAGE_TYPES))
         if search_term:
             numeric_id = _safe_int(search_term, default=0)
             if search_term.lstrip("-").isdigit() and numeric_id != 0:
@@ -683,7 +684,17 @@ class SupabaseAdminService:
                 matching_ids = self._search_user_ids(search_term)
                 if not matching_ids:
                     return {
-                        "summary": {"total_images": 0, "successful_images": 0, "images_last_7_days": 0},
+                        "summary": {
+                            "total_media": 0,
+                            "total_images": 0,
+                            "total_videos": 0,
+                            "successful_media": 0,
+                            "successful_images": 0,
+                            "successful_videos": 0,
+                            "media_last_7_days": 0,
+                            "images_last_7_days": 0,
+                            "videos_last_7_days": 0,
+                        },
                         "items": [],
                         "total": 0,
                         "limit": page_limit,
@@ -700,24 +711,82 @@ class SupabaseAdminService:
         successful_query = (
             client.table(config.history_table)
             .select("id", count="exact")
-            .in_("message_type", sorted(IMAGE_MESSAGE_TYPES))
+            .in_("message_type", sorted(MEDIA_MESSAGE_TYPES))
             .eq("success", True)
         )
         recent_query = (
             client.table(config.history_table)
             .select("id", count="exact")
-            .in_("message_type", sorted(IMAGE_MESSAGE_TYPES))
+            .in_("message_type", sorted(MEDIA_MESSAGE_TYPES))
+            .gte("created_at", last_7_days_iso)
+        )
+        image_total_query = (
+            client.table(config.history_table)
+            .select("id", count="exact")
+            .in_("message_type", sorted(MEDIA_MESSAGE_TYPES))
+            .eq("media_type", "image")
+        )
+        video_total_query = (
+            client.table(config.history_table)
+            .select("id", count="exact")
+            .in_("message_type", sorted(MEDIA_MESSAGE_TYPES))
+            .eq("media_type", "video")
+        )
+        image_success_query = (
+            client.table(config.history_table)
+            .select("id", count="exact")
+            .in_("message_type", sorted(MEDIA_MESSAGE_TYPES))
+            .eq("success", True)
+            .eq("media_type", "image")
+        )
+        video_success_query = (
+            client.table(config.history_table)
+            .select("id", count="exact")
+            .in_("message_type", sorted(MEDIA_MESSAGE_TYPES))
+            .eq("success", True)
+            .eq("media_type", "video")
+        )
+        image_recent_query = (
+            client.table(config.history_table)
+            .select("id", count="exact")
+            .in_("message_type", sorted(MEDIA_MESSAGE_TYPES))
+            .eq("media_type", "image")
+            .gte("created_at", last_7_days_iso)
+        )
+        video_recent_query = (
+            client.table(config.history_table)
+            .select("id", count="exact")
+            .in_("message_type", sorted(MEDIA_MESSAGE_TYPES))
+            .eq("media_type", "video")
             .gte("created_at", last_7_days_iso)
         )
         if filtered_user_ids:
             if len(filtered_user_ids) == 1:
                 successful_query = successful_query.eq("telegram_id", filtered_user_ids[0])
                 recent_query = recent_query.eq("telegram_id", filtered_user_ids[0])
+                image_total_query = image_total_query.eq("telegram_id", filtered_user_ids[0])
+                video_total_query = video_total_query.eq("telegram_id", filtered_user_ids[0])
+                image_success_query = image_success_query.eq("telegram_id", filtered_user_ids[0])
+                video_success_query = video_success_query.eq("telegram_id", filtered_user_ids[0])
+                image_recent_query = image_recent_query.eq("telegram_id", filtered_user_ids[0])
+                video_recent_query = video_recent_query.eq("telegram_id", filtered_user_ids[0])
             else:
                 successful_query = successful_query.in_("telegram_id", filtered_user_ids)
                 recent_query = recent_query.in_("telegram_id", filtered_user_ids)
+                image_total_query = image_total_query.in_("telegram_id", filtered_user_ids)
+                video_total_query = video_total_query.in_("telegram_id", filtered_user_ids)
+                image_success_query = image_success_query.in_("telegram_id", filtered_user_ids)
+                video_success_query = video_success_query.in_("telegram_id", filtered_user_ids)
+                image_recent_query = image_recent_query.in_("telegram_id", filtered_user_ids)
+                video_recent_query = video_recent_query.in_("telegram_id", filtered_user_ids)
         successful_response = successful_query.limit(1).execute()
         last_7_days_response = recent_query.limit(1).execute()
+        image_total_response = image_total_query.limit(1).execute()
+        video_total_response = video_total_query.limit(1).execute()
+        image_success_response = image_success_query.limit(1).execute()
+        video_success_response = video_success_query.limit(1).execute()
+        image_recent_response = image_recent_query.limit(1).execute()
+        video_recent_response = video_recent_query.limit(1).execute()
 
         items: list[dict[str, Any]] = []
         for row in rows:
@@ -757,9 +826,15 @@ class SupabaseAdminService:
         total = _response_count(response)
         return {
             "summary": {
-                "total_images": total,
-                "successful_images": _response_count(successful_response),
-                "images_last_7_days": _response_count(last_7_days_response),
+                "total_media": total,
+                "total_images": _response_count(image_total_response),
+                "total_videos": _response_count(video_total_response),
+                "successful_media": _response_count(successful_response),
+                "successful_images": _response_count(image_success_response),
+                "successful_videos": _response_count(video_success_response),
+                "media_last_7_days": _response_count(last_7_days_response),
+                "images_last_7_days": _response_count(image_recent_response),
+                "videos_last_7_days": _response_count(video_recent_response),
             },
             "items": items,
             "total": total,

@@ -47,7 +47,8 @@ body.sidebar-open {
   background: var(--surface);
   border-radius: 16px;
   border: 1px solid var(--line);
-  padding: 20px;
+  padding: 22px;
+  box-shadow: 0 24px 54px rgba(12, 23, 37, 0.28);
 }
 
 .login-card h1 {
@@ -57,6 +58,48 @@ body.sidebar-open {
 
 .login-card p {
   color: var(--muted);
+}
+
+.login-method {
+  display: grid;
+  gap: 8px;
+  margin-top: 12px;
+}
+
+.login-method label {
+  font-size: 0.86rem;
+  color: #253752;
+  font-weight: 600;
+}
+
+.login-inline {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  gap: 8px;
+}
+
+.login-divider {
+  position: relative;
+  display: grid;
+  place-items: center;
+  margin: 14px 0 4px;
+  color: var(--muted);
+  font-size: 0.78rem;
+}
+
+.login-divider::before {
+  content: "";
+  position: absolute;
+  left: 0;
+  right: 0;
+  height: 1px;
+  background: var(--line);
+}
+
+.login-divider span {
+  position: relative;
+  background: var(--surface);
+  padding: 0 8px;
 }
 
 .login-form {
@@ -281,6 +324,14 @@ body.sidebar-open {
   border: 1px solid var(--line);
   border-radius: 10px;
   background: #f4f6fa;
+}
+
+.media-video {
+  width: 100%;
+  max-height: 320px;
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  background: #0f1724;
 }
 
 .form-grid {

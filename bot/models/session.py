@@ -21,6 +21,7 @@ class JoAIMode(str, Enum):
     DEEP_ANALYSIS = "deep_analysis"
     PROMPT = "prompt"
     IMAGE = "image"
+    VIDEO = "video"
     KIMI_IMAGE_DESCRIBER = "kimi_image_describer"
     TEXT_TO_SPEECH = "text_to_speech"
 
@@ -41,6 +42,9 @@ class UserSession:
     jo_ai_mode: JoAIMode = JoAIMode.MENU
     jo_ai_prompt_type: str | None = None
     jo_ai_image_ratio: str | None = None
+    jo_ai_image_model: str | None = None
+    jo_ai_video_duration: int | None = None
+    jo_ai_video_aspect_ratio: str | None = None
     jo_ai_kimi_waiting_image: bool = False
     jo_ai_last_image_file_id: str | None = None
     jo_ai_last_image_prompt: str | None = None

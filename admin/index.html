@@ -7,24 +7,34 @@
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
   <link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Sans:wght@400;500;600;700&display=swap" rel="stylesheet">
-  <link rel="stylesheet" href="/admin/static/style.css?v=2.1.0">
-  <script src="/admin/static/app.js?v=2.1.0" defer></script>
+  <link rel="stylesheet" href="/admin/static/style.css?v=2.2.0">
+  <script src="/admin/static/app.js?v=2.2.0" defer></script>
 </head>
 <body>
   <div id="loginOverlay" class="login-overlay">
     <div class="login-card">
       <h1>JO AI Admin</h1>
-      <p>Secure access for approved admins only.</p>
-      <button id="telegramLoginBtn" type="button" class="btn btn-primary">Login with Telegram</button>
-      <div id="telegramWidgetWrap" class="telegram-widget-wrap">
-        <script async src="https://telegram.org/js/telegram-widget.js?22"
-          data-telegram-login="Joaiibot"
-          data-size="large"
-          data-userpic="false"
-          data-request-access="write"
-          data-onauth="onTelegramAuth(user)"></script>
+      <p id="loginSubtitle">Secure access for approved admins only.</p>
+      <div class="login-method">
+        <label for="tokenSigninInput">Admin token sign-in</label>
+        <div class="login-inline">
+          <input id="tokenSigninInput" type="password" placeholder="Enter admin sign-in token" autocomplete="current-password">
+          <button id="tokenSigninBtn" type="button" class="btn btn-primary">Sign In</button>
+        </div>
       </div>
-      <p class="muted">Use Telegram identity only. Password/token login is disabled.</p>
+      <div class="login-divider"><span>or</span></div>
+      <div class="login-method">
+        <button id="telegramLoginBtn" type="button" class="btn">Login with Telegram</button>
+        <div id="telegramWidgetWrap" class="telegram-widget-wrap">
+          <script async src="https://telegram.org/js/telegram-widget.js?22"
+            data-telegram-login="Joaiibot"
+            data-size="large"
+            data-userpic="false"
+            data-request-access="write"
+            data-onauth="onTelegramAuth(user)"></script>
+        </div>
+      </div>
+      <p id="loginHint" class="muted">Telegram ID and token sign-in are both supported when enabled in backend config.</p>
       <p id="loginError" class="error" hidden></p>
     </div>
   </div>
@@ -106,6 +116,7 @@
             <option value="research">Research</option>
             <option value="prompt">Prompt</option>
             <option value="image">Image</option>
+            <option value="video">Video</option>
             <option value="vision">Vision</option>
             <option value="tts">TTS</option>
             <option value="deep_analysis">DeepSeek</option>
@@ -190,7 +201,7 @@
         <article class="card">
           <h3>Admin Settings</h3>
           <p id="statusInfo" class="muted">Loading...</p>
-          <p class="muted">Authentication is Telegram ID only.</p>
+          <p class="muted">Authentication can be Telegram ID and/or admin token depending on backend config.</p>
           <button id="settingsLogout" class="btn btn-danger">Logout session</button>
         </article>
       </section>

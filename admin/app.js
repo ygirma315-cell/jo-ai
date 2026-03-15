@@ -1,75 +1,896 @@
 
-(()=>{"use strict";
-const K="jo_admin_token",PS=25;
-const s={token:sessionStorage.getItem(K)||"",section:"overview",pages:{users:0,conversations:0,media:0,referrals:0},hasMore:{users:false,conversations:false,media:false,referrals:false},totals:{users:0,conversations:0,media:0,referrals:0},loaded:{overview:false,users:false,conversations:false,media:false,referrals:false,engagement:false,botStatus:false,settings:false,logs:false}};
-const T={overview:"Overview",users:"Users",conversations:"Conversations",media:"Media",referrals:"Referrals",engagement:"Broadcast / Engagement","bot-status":"Bot Status",settings:"Settings",logs:"Logs / Errors"};
-const e={
-loginOverlay:g("loginOverlay"),telegramLoginBtn:g("telegramLoginBtn"),telegramWidgetWrap:g("telegramWidgetWrap"),loginError:g("loginError"),shell:g("shell"),nav:[...document.querySelectorAll(".nav-btn, .section-tab")],menuToggle:g("menuToggle"),pageTitle:g("pageTitle"),refreshBtn:g("refreshBtn"),logoutBtn:g("logoutBtn"),authChip:g("authChip"),
-overviewSummary:g("overviewSummary"),overviewRecent:g("overviewRecent"),
-usersSearch:g("usersSearch"),usersActiveWindow:g("usersActiveWindow"),usersApply:g("usersApply"),usersList:g("usersList"),usersPrev:g("usersPrev"),usersNext:g("usersNext"),usersPageInfo:g("usersPageInfo"),
-convSearch:g("convSearch"),convType:g("convType"),convFrontend:g("convFrontend"),convDateFrom:g("convDateFrom"),convDateTo:g("convDateTo"),convApply:g("convApply"),conversationsList:g("conversationsList"),convPrev:g("convPrev"),convNext:g("convNext"),convPageInfo:g("convPageInfo"),
-mediaSearch:g("mediaSearch"),mediaApply:g("mediaApply"),mediaSummary:g("mediaSummary"),mediaList:g("mediaList"),mediaPrev:g("mediaPrev"),mediaNext:g("mediaNext"),mediaPageInfo:g("mediaPageInfo"),
-refSearch:g("refSearch"),refApply:g("refApply"),refSummary:g("refSummary"),refList:g("refList"),refPrev:g("refPrev"),refNext:g("refNext"),refPageInfo:g("refPageInfo"),
-engEnabled:g("engEnabled"),engInactivity:g("engInactivity"),engCooldown:g("engCooldown"),engBatch:g("engBatch"),engMessage:g("engMessage"),engSave:g("engSave"),engUpdated:g("engUpdated"),
-botStatusRefresh:g("botStatusRefresh"),botStatusGrid:g("botStatusGrid"),botWarnings:g("botWarnings"),
-statusInfo:g("statusInfo"),settingsLogout:g("settingsLogout"),
-logsLevel:g("logsLevel"),logsSearch:g("logsSearch"),logsLimit:g("logsLimit"),logsApply:g("logsApply"),logsOutput:g("logsOutput"),toast:g("toast")
-};
-function g(id){return document.getElementById(id)}
-const h=v=>String(v??"").replaceAll("&","&amp;").replaceAll("<","&lt;").replaceAll(">","&gt;").replaceAll('"',"&quot;").replaceAll("'","&#39;");
-const n=v=>{const p=Number(v??0);return Number.isFinite(p)?p.toLocaleString():"0"};
-const d=v=>{if(!v)return"-";const p=new Date(v);return Number.isNaN(p.getTime())?String(v):p.toLocaleString()};
-const u=r=>{const un=String(r.username||"").trim(),f=String(r.first_name||"").trim(),l=String(r.last_name||"").trim(),nm=[f,l].filter(Boolean).join(" ").trim(),id=un?`@${un}`:nm||"unknown";return `${id} (${r.telegram_id||"?"})`};
-function toast(m,err=false){if(!e.toast)return;e.toast.hidden=false;e.toast.textContent=String(m||"Done.");e.toast.style.background=err?"#8f1d14":"#16202b";clearTimeout(toast.t);toast.t=setTimeout(()=>e.toast.hidden=true,3000)}
-function chip(ok){if(!e.authChip)return;e.authChip.textContent=ok?"Authorized":"Locked";e.authChip.style.background=ok?"#e5f7ee":"#f3f4f6"}
-function showLogin(msg=""){if(e.loginOverlay)e.loginOverlay.hidden=false;if(e.shell)e.shell.hidden=true;if(e.loginError){e.loginError.hidden=!msg;e.loginError.textContent=msg}chip(false)}
-function hideLogin(){if(e.loginOverlay)e.loginOverlay.hidden=true;if(e.shell)e.shell.hidden=false;if(e.loginError){e.loginError.hidden=true;e.loginError.textContent=""}chip(true)}
-function headers(auth=true){const x={Accept:"application/json"};if(auth&&s.token)x["x-admin-token"]=s.token;return x}
-async function req(path,{method="GET",params=null,body=null,auth=true,extra={}}={}){const url=new URL(path,location.origin);url.searchParams.set("_ts",String(Date.now()));if(params)for(const[k,v]of Object.entries(params))if(v!==undefined&&v!==null&&v!=="")url.searchParams.set(k,String(v));const hd={...headers(auth),...extra};if(method!=="GET"&&body!==null)hd["Content-Type"]="application/json";const res=await fetch(url.toString(),{method,headers:hd,body:method!=="GET"&&body!==null?JSON.stringify(body):undefined,credentials:"same-origin",cache:"no-store"});const raw=await res.text();let p={};if(raw)try{p=JSON.parse(raw)}catch{p={error:raw.slice(0,300)}};if(!res.ok){const er=new Error(String(p.error||p.detail||p.message||`Request failed (${res.status}).`));er.status=res.status;er.payload=p;throw er}return p}
-function authErr(er){if(!er||(er.status!==401&&er.status!==403))return false;sessionStorage.removeItem(K);s.token="";showLogin("Session expired. Please login again.");toast("Admin session expired.",true);return true}
-function metric(l,v){return `<article class="metric"><p class="label">${h(l)}</p><p class="value">${h(v)}</p></article>`}
-function empty(c,m){if(c)c.innerHTML=`<article class="list-item"><p>${h(m)}</p></article>`}
-function mediaRef(it){const pr=String(it.preview_ref||"").trim();if(pr)return pr;const mu=String(it.media_url||"").trim();if(mu)return mu;const sp=String(it.storage_path||"").trim();if(sp.startsWith("telegram_file:"))return `/api/admin/media/proxy?ref=${encodeURIComponent(sp)}`;return sp||""}
-function sectionEl(nm){return g(`section-${nm}`)}
-function setSection(nm){s.section=nm;for(const b of e.nav)b.classList.toggle("active",b.dataset.section===nm);for(const k of Object.keys(T)){const p=sectionEl(k);if(p)p.classList.toggle("active",k===nm)}if(e.pageTitle)e.pageTitle.textContent=T[nm]||"Admin"}
-function markStale(){for(const k of Object.keys(s.loaded))s.loaded[k]=false}
-function resetPg(k){s.pages[k]=0;s.hasMore[k]=false}
-function pageInfo(k,total){const p=s.pages[k]+1,tp=Math.max(1,Math.ceil(total/PS));return `Page ${p} / ${tp} (${n(total)} total)`}
-function copy(t){const v=String(t||"");if(!v)return;if(navigator.clipboard&&navigator.clipboard.writeText){navigator.clipboard.writeText(v).then(()=>toast("Copied."),()=>toast("Copy failed.",true));return}toast("Copy not available.",true)}
-async function loadOverview(force=false){if(!force&&s.loaded.overview)return;try{const p=await req("/api/admin/overview"),sm=p.summary||{},m=[["Unique users",n(sm.unique_users)],["Started users",n(sm.total_started_users)],["Active users",n(sm.active_users)],["Blocked/unreachable",n(sm.blocked_users)],["New users today",n(sm.new_users_today)],["New users this week",n(sm.new_users_week)],["Referrals",n(sm.referrals_total)],["Messages",n(sm.total_messages)],["Images",n(sm.total_images)]];if(e.overviewSummary)e.overviewSummary.innerHTML=m.map(x=>metric(x[0],x[1])).join("");const rows=Array.isArray(p.recent_activity)?p.recent_activity:[];if(!rows.length)empty(e.overviewRecent,"No recent activity.");else if(e.overviewRecent)e.overviewRecent.innerHTML=rows.map(it=>`<article class="list-item"><div class="row-head"><h4>${h(u(it))}</h4><button class="btn small copy-btn" data-copy="${h(it.preview||it.text_content||"")}">Copy</button></div><p>${h(it.preview||"-")}</p><div class="list-meta"><span>${h(d(it.created_at))}</span><span>Type: ${h(it.message_type||"-")}</span><span>Feature: ${h(it.feature_used||"-")}</span><span>Frontend: ${h(it.frontend_source||"-")}</span><span>Status: ${it.success?"success":"failed"}</span></div></article>`).join("");s.loaded.overview=true}catch(er){if(authErr(er))return;empty(e.overviewRecent,"Failed to load overview.");toast(er.message||"Failed to load overview.",true)}}
+(() => {
+  "use strict";
 
-async function loadUsers(force=false){if(!force&&s.loaded.users)return;try{const p=await req("/api/admin/users",{params:{limit:PS,offset:s.pages.users*PS,search:e.usersSearch?e.usersSearch.value.trim():"",active_days:e.usersActiveWindow?e.usersActiveWindow.value:"7"}}),it=Array.isArray(p.items)?p.items:[];s.totals.users=Number(p.total||0);s.hasMore.users=Boolean(p.has_more);if(!it.length)empty(e.usersList,"No users found.");else if(e.usersList)e.usersList.innerHTML=it.map(r=>`<article class="list-item"><div class="row-head"><h4>${h(u(r))}</h4><span class="chip ${r.is_blocked?"danger-chip":r.is_active?"ok-chip":"muted-chip"}">${r.is_blocked?"blocked":r.is_active?"active":"inactive"}</span></div><div class="list-meta"><span>First seen: ${h(d(r.first_seen_at))}</span><span>Last seen: ${h(d(r.last_seen_at))}</span><span>Started: ${r.has_started?"yes":"no"}</span><span>Messages: ${h(n(r.total_messages))}</span><span>Images: ${h(n(r.total_images))}</span><span>Unreachable: ${h(n(r.unreachable_count))}</span><span>Referral code: ${h(r.referral_code||"-")}</span><span>Referred by: ${h(r.referred_by||"-")}</span></div>${r.last_delivery_error?`<p class="error">Last delivery error: ${h(r.last_delivery_error)}</p>`:""}</article>`).join("");if(e.usersPageInfo)e.usersPageInfo.textContent=pageInfo("users",s.totals.users);if(e.usersPrev)e.usersPrev.disabled=s.pages.users<=0;if(e.usersNext)e.usersNext.disabled=!s.hasMore.users;s.loaded.users=true}catch(er){if(authErr(er))return;empty(e.usersList,"Failed to load users.");toast(er.message||"Failed to load users.",true)}}
+  const TOKEN_STORAGE_KEY = "jo_admin_token";
+  const PAGE_SIZE = 25;
 
-async function loadConversations(force=false){if(!force&&s.loaded.conversations)return;try{const p=await req("/api/admin/messages",{params:{limit:PS,offset:s.pages.conversations*PS,search:e.convSearch?e.convSearch.value.trim():"",feature_used:e.convType?e.convType.value:"all",frontend_source:e.convFrontend?e.convFrontend.value:"all",date_from:e.convDateFrom?e.convDateFrom.value:"",date_to:e.convDateTo?e.convDateTo.value:""}}),it=Array.isArray(p.items)?p.items:[];s.totals.conversations=Number(p.total||0);s.hasMore.conversations=Boolean(p.has_more);if(!it.length)empty(e.conversationsList,"No conversations found.");else if(e.conversationsList)e.conversationsList.innerHTML=it.map(r=>{const pref=mediaRef(r),img=String(r.media_type||"").toLowerCase().startsWith("image"),tx=[`User: ${r.user_message||r.text_content||""}`,`Assistant: ${r.bot_reply||""}`].filter(Boolean).join("\n\n");return `<article class="list-item"><div class="row-head"><h4>${h(u(r))}</h4><button class="btn small copy-btn" data-copy="${h(tx)}">Copy chat</button></div><p><strong>User:</strong> ${h(r.user_message||r.text_content||"-")}</p><p><strong>Assistant:</strong> ${h(r.bot_reply||"-")}</p>${img&&pref?`<img class="media-thumb" src="${h(pref)}" alt="Conversation media" loading="lazy">`:""}<div class="list-meta"><span>${h(d(r.created_at))}</span><span>Feature: ${h(r.feature_used||"-")}</span><span>Frontend: ${h(r.frontend_source||"-")}</span><span>Type: ${h(r.message_type||"-")}</span><span>Conversation: ${h(r.conversation_id||"-")}</span><span>Model: ${h(r.model_used||"-")}</span><span>Status: ${r.success?"success":"failed"}</span></div>${r.media_error_reason?`<p class="error">Media issue: ${h(r.media_error_reason)}</p>`:""}</article>`}).join("");if(e.convPageInfo)e.convPageInfo.textContent=pageInfo("conversations",s.totals.conversations);if(e.convPrev)e.convPrev.disabled=s.pages.conversations<=0;if(e.convNext)e.convNext.disabled=!s.hasMore.conversations;s.loaded.conversations=true}catch(er){if(authErr(er))return;empty(e.conversationsList,"Failed to load conversations.");toast(er.message||"Failed to load conversations.",true)}}
-async function loadMedia(force=false){if(!force&&s.loaded.media)return;try{const p=await req("/api/admin/media",{params:{limit:PS,offset:s.pages.media*PS,search:e.mediaSearch?e.mediaSearch.value.trim():""}}),sm=p.summary||{},it=Array.isArray(p.items)?p.items:[];s.totals.media=Number(p.total||0);s.hasMore.media=Boolean(p.has_more);if(e.mediaSummary)e.mediaSummary.innerHTML=[metric("Total images",n(sm.total_images)),metric("Successful images",n(sm.successful_images)),metric("Images last 7 days",n(sm.images_last_7_days))].join("");if(!it.length)empty(e.mediaList,"No media records found.");else if(e.mediaList)e.mediaList.innerHTML=it.map(r=>{const pref=mediaRef(r),why=r.media_error_reason||r.media_status||"media unavailable";return `<article class="list-item"><div class="row-head"><h4>${h(u(r))}</h4><span class="chip ${r.success?"ok-chip":"danger-chip"}">${r.success?"success":"failed"}</span></div>${pref?`<img class="media-thumb" src="${h(pref)}" alt="Media preview" loading="lazy">`:`<p class="error">No preview: ${h(why)}</p>`}<p><strong>Prompt:</strong> ${h(r.prompt||r.text_content||"-")}</p><div class="list-meta"><span>${h(d(r.created_at))}</span><span>Origin: ${h(r.media_origin||"-")}</span><span>Provider: ${h(r.provider_source||"-")}</span><span>MIME: ${h(r.mime_type||"-")}</span><span>Size: ${h(r.media_width||"-")}x${h(r.media_height||"-")}</span><span>URL: ${h(r.media_url||"-")}</span><span>Storage: ${h(r.storage_path||"-")}</span></div></article>`}).join("");if(e.mediaPageInfo)e.mediaPageInfo.textContent=pageInfo("media",s.totals.media);if(e.mediaPrev)e.mediaPrev.disabled=s.pages.media<=0;if(e.mediaNext)e.mediaNext.disabled=!s.hasMore.media;s.loaded.media=true}catch(er){if(authErr(er))return;empty(e.mediaList,"Failed to load media.");toast(er.message||"Failed to load media.",true)}}
+  const SECTION_TITLES = {
+    overview: "Overview",
+    users: "Users",
+    conversations: "Conversations",
+    media: "Media",
+    referrals: "Referrals",
+    engagement: "Broadcast / Engagement",
+    "bot-status": "Bot Status",
+    settings: "Settings",
+    logs: "Logs / Errors",
+  };
 
-async function loadReferrals(force=false){if(!force&&s.loaded.referrals)return;try{const p=await req("/api/admin/referrals",{params:{limit:PS,offset:s.pages.referrals*PS,search:e.refSearch?e.refSearch.value.trim():""}}),sm=p.summary||{},it=Array.isArray(p.items)?p.items:[];s.totals.referrals=Number(p.total||0);s.hasMore.referrals=Boolean(p.has_more);if(e.refSummary)e.refSummary.innerHTML=[metric("Total referrals",n(sm.total_referrals)),metric("Unique inviters",n(sm.unique_inviters)),metric("Unique invitees",n(sm.unique_invitees))].join("");if(!it.length)empty(e.refList,"No referral records found.");else if(e.refList)e.refList.innerHTML=it.map(r=>`<article class="list-item"><div class="row-head"><h4>${h(r.referral_code||"-")}</h4><span class="chip muted-chip">${h(r.frontend_source||"unknown")}</span></div><p><strong>Inviter:</strong> ${h(r.inviter_username?`@${r.inviter_username}`:r.inviter_first_name||"unknown")} (${h(r.inviter_telegram_id||"-")})<br><strong>Invitee:</strong> ${h(r.invitee_username?`@${r.invitee_username}`:r.invitee_first_name||"unknown")} (${h(r.invitee_telegram_id||"-")})</p><div class="list-meta"><span>${h(d(r.created_at))}</span><span>ID: ${h(r.id||"-")}</span></div></article>`).join("");if(e.refPageInfo)e.refPageInfo.textContent=pageInfo("referrals",s.totals.referrals);if(e.refPrev)e.refPrev.disabled=s.pages.referrals<=0;if(e.refNext)e.refNext.disabled=!s.hasMore.referrals;s.loaded.referrals=true}catch(er){if(authErr(er))return;empty(e.refList,"Failed to load referrals.");toast(er.message||"Failed to load referrals.",true)}}
+  const state = {
+    token: sessionStorage.getItem(TOKEN_STORAGE_KEY) || "",
+    section: "overview",
+    pages: { users: 0, conversations: 0, media: 0, referrals: 0 },
+    hasMore: { users: false, conversations: false, media: false, referrals: false },
+    totals: { users: 0, conversations: 0, media: 0, referrals: 0 },
+    loaded: {
+      overview: false,
+      users: false,
+      conversations: false,
+      media: false,
+      referrals: false,
+      engagement: false,
+      botStatus: false,
+      settings: false,
+      logs: false,
+    },
+    statusConfig: null,
+  };
 
-async function loadEngagement(force=false){if(!force&&s.loaded.engagement)return;try{const p=await req("/api/admin/engagement"),c=p.config||{};if(e.engEnabled)e.engEnabled.checked=Boolean(c.enabled);if(e.engInactivity)e.engInactivity.value=String(c.inactivity_minutes||240);if(e.engCooldown)e.engCooldown.value=String(c.cooldown_minutes||720);if(e.engBatch)e.engBatch.value=String(c.batch_size||30);if(e.engMessage)e.engMessage.value=String(c.message_template||"");if(e.engUpdated)e.engUpdated.textContent=p.updated_at?`Last updated: ${d(p.updated_at)}`:"Using defaults";s.loaded.engagement=true}catch(er){if(authErr(er))return;toast(er.message||"Failed to load engagement settings.",true)}}
+  function byId(id) {
+    return document.getElementById(id);
+  }
 
-async function saveEngagement(){const b={enabled:Boolean(e.engEnabled&&e.engEnabled.checked),inactivity_minutes:Number(e.engInactivity?e.engInactivity.value:240),cooldown_minutes:Number(e.engCooldown?e.engCooldown.value:720),batch_size:Number(e.engBatch?e.engBatch.value:30),message_template:e.engMessage?e.engMessage.value.trim():""};try{const p=await req("/api/admin/engagement",{method:"POST",body:b});if(e.engUpdated)e.engUpdated.textContent=p.updated_at?`Last updated: ${d(p.updated_at)}`:"Saved";toast("Engagement settings saved.");s.loaded.engagement=true}catch(er){if(authErr(er))return;toast(er.message||"Failed to save engagement settings.",true)}}
+  const refs = {
+    loginOverlay: byId("loginOverlay"),
+    loginSubtitle: byId("loginSubtitle"),
+    loginHint: byId("loginHint"),
+    loginError: byId("loginError"),
+    tokenSigninInput: byId("tokenSigninInput"),
+    tokenSigninBtn: byId("tokenSigninBtn"),
+    telegramLoginBtn: byId("telegramLoginBtn"),
+    telegramWidgetWrap: byId("telegramWidgetWrap"),
 
-async function loadBotStatus(force=false){if(!force&&s.loaded.botStatus)return;try{const p=await req("/api/admin/bot-status"),m=[["Runtime ready",p.runtime_ready?"yes":"no"],["Telegram ready",p.telegram_ready?"yes":"no"],["Webhook configured",p.webhook_configured?"yes":"no"],["Menu button configured",p.menu_button_configured?"yes":"no"],["Startup task running",p.startup_task_running?"yes":"no"],["Keepalive task",p.keepalive_task_running?"running":"stopped"],["Heartbeat task",p.heartbeat_task_running?"running":"stopped"],["Engagement task",p.engagement_task_running?"running":"stopped"],["Uptime seconds",String(p.uptime_seconds||0)]];if(e.botStatusGrid)e.botStatusGrid.innerHTML=m.map(x=>metric(x[0],x[1])).join("");const ws=[];if(p.last_startup_error)ws.push(`Last startup error: ${p.last_startup_error}`);if(Array.isArray(p.startup_warnings))for(const w of p.startup_warnings)if(w)ws.push(String(w));if(!ws.length)empty(e.botWarnings,"No runtime warnings.");else if(e.botWarnings)e.botWarnings.innerHTML=ws.map(w=>`<article class="list-item"><p>${h(w)}</p></article>`).join("");s.loaded.botStatus=true}catch(er){if(authErr(er))return;empty(e.botWarnings,"Failed to load bot status.");toast(er.message||"Failed to load bot status.",true)}}
+    shell: byId("shell"),
+    navButtons: [...document.querySelectorAll(".nav-btn, .section-tab")],
+    menuToggle: byId("menuToggle"),
+    pageTitle: byId("pageTitle"),
+    refreshBtn: byId("refreshBtn"),
+    logoutBtn: byId("logoutBtn"),
+    authChip: byId("authChip"),
 
-async function loadSettings(force=false){if(!force&&s.loaded.settings)return;try{const p=await req("/api/admin/status",{auth:false}),x=[`Telegram admin login: ${p.telegram_auth_enabled?"enabled":"disabled"}`,`Owner Telegram ID configured: ${p.owner_telegram_id_configured?"yes":"no"}`,`Allowlist count: ${n(p.allowlist_count)}`,`Admin data service: ${p.service_enabled?"enabled":"disabled"}`];if(p.owner_telegram_id)x.push(`Owner ID: ${p.owner_telegram_id}`);if(!p.service_enabled&&p.service_reason)x.push(`Reason: ${p.service_reason}`);if(e.statusInfo)e.statusInfo.textContent=x.join(" | ");s.loaded.settings=true}catch{if(e.statusInfo)e.statusInfo.textContent="Failed to load settings status."}}
+    overviewSummary: byId("overviewSummary"),
+    overviewRecent: byId("overviewRecent"),
 
-async function loadLogs(force=false){if(!force&&s.loaded.logs)return;try{const p=await req("/api/admin/logs",{params:{level:e.logsLevel?e.logsLevel.value:"",search:e.logsSearch?e.logsSearch.value.trim():"",limit:e.logsLimit?e.logsLimit.value:"200"}}),it=Array.isArray(p.items)?p.items:[];if(e.logsOutput)e.logsOutput.textContent=it.length?it.join("\n"):"No logs for current filters.";s.loaded.logs=true}catch(er){if(authErr(er))return;if(e.logsOutput)e.logsOutput.textContent=`Failed to load logs. ${er.message||""}`;toast(er.message||"Failed to load logs.",true)}}
+    usersSearch: byId("usersSearch"),
+    usersActiveWindow: byId("usersActiveWindow"),
+    usersApply: byId("usersApply"),
+    usersList: byId("usersList"),
+    usersPrev: byId("usersPrev"),
+    usersNext: byId("usersNext"),
+    usersPageInfo: byId("usersPageInfo"),
 
-async function loadSection(nm,force=false){if(nm==="overview")return loadOverview(force);if(nm==="users")return loadUsers(force);if(nm==="conversations")return loadConversations(force);if(nm==="media")return loadMedia(force);if(nm==="referrals")return loadReferrals(force);if(nm==="engagement")return loadEngagement(force);if(nm==="bot-status")return loadBotStatus(force);if(nm==="settings")return loadSettings(force);if(nm==="logs")return loadLogs(force)}
-function tgCtx(){const tg=window.Telegram&&window.Telegram.WebApp?window.Telegram.WebApp:null;if(!tg)return{initData:"",telegramId:""};const initData=typeof tg.initData==="string"?tg.initData.trim():"",u=tg.initDataUnsafe&&typeof tg.initDataUnsafe==="object"?tg.initDataUnsafe:null,telegramId=u&&u.user&&typeof u.user.id!=="undefined"?String(u.user.id):"";return{initData,telegramId}}
-async function verify(){const p=await req("/api/admin/auth",{auth:Boolean(s.token)});if(p.ok!==true)throw new Error("Admin session check failed.");return p}
-async function finishTelegramLogin(requestOptions){try{const p=await req("/api/admin/auth/telegram",{auth:false,...requestOptions}),t=String(p.token||"").trim();if(t){s.token=t;sessionStorage.setItem(K,t)}await verify();hideLogin();markStale();await loadSection(s.section,true);toast("Telegram admin login successful.")}catch(er){showLogin(er.message||"Telegram admin login failed.");toast(er.message||"Telegram admin login failed.",true)}}
-async function loginTg(){const c=tgCtx();if(!c.initData){showLogin("Use the Telegram login button below, or open this page from Telegram Mini App.");toast("Telegram WebApp context not detected.",true);return}await finishTelegramLogin({extra:{"x-telegram-init-data":c.initData,"x-telegram-id":c.telegramId}})}
-async function loginTgWidget(user){if(!user||typeof user!=="object"){showLogin("Invalid Telegram login payload.");return}await finishTelegramLogin({method:"POST",body:user})}
-window.onTelegramAuth=user=>{loginTgWidget(user)}
-async function logout(){try{await req("/api/admin/auth/logout",{method:"POST",body:{},auth:Boolean(s.token)})}catch{}s.token="";sessionStorage.removeItem(K);showLogin("Logged out.");toast("Logged out.")}
-async function refresh(){s.loaded[s.section==="bot-status"?"botStatus":s.section]=false;await loadSection(s.section,true)}
-function bind(){for(const b of e.nav)b.addEventListener("click",async()=>{const nm=b.dataset.section||"overview";setSection(nm);document.body.classList.remove("sidebar-open");await loadSection(nm)});if(e.menuToggle)e.menuToggle.addEventListener("click",()=>document.body.classList.toggle("sidebar-open"));if(e.telegramLoginBtn)e.telegramLoginBtn.addEventListener("click",()=>loginTg());if(e.logoutBtn)e.logoutBtn.addEventListener("click",()=>logout());if(e.settingsLogout)e.settingsLogout.addEventListener("click",()=>logout());if(e.refreshBtn)e.refreshBtn.addEventListener("click",()=>refresh());if(e.usersApply)e.usersApply.addEventListener("click",async()=>{resetPg("users");s.loaded.users=false;await loadUsers(true)});if(e.convApply)e.convApply.addEventListener("click",async()=>{resetPg("conversations");s.loaded.conversations=false;await loadConversations(true)});if(e.mediaApply)e.mediaApply.addEventListener("click",async()=>{resetPg("media");s.loaded.media=false;await loadMedia(true)});if(e.refApply)e.refApply.addEventListener("click",async()=>{resetPg("referrals");s.loaded.referrals=false;await loadReferrals(true)});if(e.engSave)e.engSave.addEventListener("click",()=>saveEngagement());if(e.botStatusRefresh)e.botStatusRefresh.addEventListener("click",async()=>{s.loaded.botStatus=false;await loadBotStatus(true)});if(e.logsApply)e.logsApply.addEventListener("click",async()=>{s.loaded.logs=false;await loadLogs(true)});
-if(e.usersPrev)e.usersPrev.addEventListener("click",async()=>{if(s.pages.users<=0)return;s.pages.users--;s.loaded.users=false;await loadUsers(true)});if(e.usersNext)e.usersNext.addEventListener("click",async()=>{if(!s.hasMore.users)return;s.pages.users++;s.loaded.users=false;await loadUsers(true)});
-if(e.convPrev)e.convPrev.addEventListener("click",async()=>{if(s.pages.conversations<=0)return;s.pages.conversations--;s.loaded.conversations=false;await loadConversations(true)});if(e.convNext)e.convNext.addEventListener("click",async()=>{if(!s.hasMore.conversations)return;s.pages.conversations++;s.loaded.conversations=false;await loadConversations(true)});
-if(e.mediaPrev)e.mediaPrev.addEventListener("click",async()=>{if(s.pages.media<=0)return;s.pages.media--;s.loaded.media=false;await loadMedia(true)});if(e.mediaNext)e.mediaNext.addEventListener("click",async()=>{if(!s.hasMore.media)return;s.pages.media++;s.loaded.media=false;await loadMedia(true)});
-if(e.refPrev)e.refPrev.addEventListener("click",async()=>{if(s.pages.referrals<=0)return;s.pages.referrals--;s.loaded.referrals=false;await loadReferrals(true)});if(e.refNext)e.refNext.addEventListener("click",async()=>{if(!s.hasMore.referrals)return;s.pages.referrals++;s.loaded.referrals=false;await loadReferrals(true)});
-document.addEventListener("click",ev=>{const t=ev.target;if(!(t instanceof HTMLElement))return;const b=t.closest(".copy-btn");if(!b)return;copy(b.getAttribute("data-copy")||"")})}
-async function init(){setSection("overview");bind();await loadSettings(true);if(s.token){try{await verify();hideLogin();await loadSection("overview",true);return}catch{s.token="";sessionStorage.removeItem(K)}}try{await verify();hideLogin();await loadSection("overview",true);toast("Admin session restored.");return}catch{showLogin()}}
-window.addEventListener("DOMContentLoaded",init);
+    convSearch: byId("convSearch"),
+    convType: byId("convType"),
+    convFrontend: byId("convFrontend"),
+    convDateFrom: byId("convDateFrom"),
+    convDateTo: byId("convDateTo"),
+    convApply: byId("convApply"),
+    conversationsList: byId("conversationsList"),
+    convPrev: byId("convPrev"),
+    convNext: byId("convNext"),
+    convPageInfo: byId("convPageInfo"),
+
+    mediaSearch: byId("mediaSearch"),
+    mediaApply: byId("mediaApply"),
+    mediaSummary: byId("mediaSummary"),
+    mediaList: byId("mediaList"),
+    mediaPrev: byId("mediaPrev"),
+    mediaNext: byId("mediaNext"),
+    mediaPageInfo: byId("mediaPageInfo"),
+
+    refSearch: byId("refSearch"),
+    refApply: byId("refApply"),
+    refSummary: byId("refSummary"),
+    refList: byId("refList"),
+    refPrev: byId("refPrev"),
+    refNext: byId("refNext"),
+    refPageInfo: byId("refPageInfo"),
+
+    engEnabled: byId("engEnabled"),
+    engInactivity: byId("engInactivity"),
+    engCooldown: byId("engCooldown"),
+    engBatch: byId("engBatch"),
+    engMessage: byId("engMessage"),
+    engSave: byId("engSave"),
+    engUpdated: byId("engUpdated"),
+
+    botStatusRefresh: byId("botStatusRefresh"),
+    botStatusGrid: byId("botStatusGrid"),
+    botWarnings: byId("botWarnings"),
+
+    statusInfo: byId("statusInfo"),
+    settingsLogout: byId("settingsLogout"),
+
+    logsLevel: byId("logsLevel"),
+    logsSearch: byId("logsSearch"),
+    logsLimit: byId("logsLimit"),
+    logsApply: byId("logsApply"),
+    logsOutput: byId("logsOutput"),
+
+    toast: byId("toast"),
+  };
+
+  function escapeHtml(value) {
+    return String(value ?? "")
+      .replaceAll("&", "&amp;")
+      .replaceAll("<", "&lt;")
+      .replaceAll(">", "&gt;")
+      .replaceAll('"', "&quot;")
+      .replaceAll("'", "&#39;");
+  }
+
+  function formatNumber(value) {
+    const parsed = Number(value ?? 0);
+    return Number.isFinite(parsed) ? parsed.toLocaleString() : "0";
+  }
+
+  function formatDateTime(value) {
+    if (!value) {
+      return "-";
+    }
+    const parsed = new Date(value);
+    return Number.isNaN(parsed.getTime()) ? String(value) : parsed.toLocaleString();
+  }
+
+  function userLabel(row) {
+    const username = String(row.username || "").trim();
+    const first = String(row.first_name || "").trim();
+    const last = String(row.last_name || "").trim();
+    const name = [first, last].filter(Boolean).join(" ").trim();
+    const idPart = username ? `@${username}` : name || "unknown";
+    return `${idPart} (${row.telegram_id || "?"})`;
+  }
+
+  function showToast(message, isError = false) {
+    if (!refs.toast) {
+      return;
+    }
+    refs.toast.hidden = false;
+    refs.toast.textContent = String(message || "Done.");
+    refs.toast.style.background = isError ? "#8f1d14" : "#16202b";
+    clearTimeout(showToast._timer);
+    showToast._timer = setTimeout(() => {
+      refs.toast.hidden = true;
+    }, 3200);
+  }
+
+  function setAuthChip(authorized) {
+    if (!refs.authChip) {
+      return;
+    }
+    refs.authChip.textContent = authorized ? "Authorized" : "Locked";
+    refs.authChip.style.background = authorized ? "#e5f7ee" : "#f3f4f6";
+  }
+
+  function showLogin(errorMessage = "") {
+    if (refs.loginOverlay) refs.loginOverlay.hidden = false;
+    if (refs.shell) refs.shell.hidden = true;
+    if (refs.loginError) {
+      refs.loginError.hidden = !errorMessage;
+      refs.loginError.textContent = errorMessage;
+    }
+    setAuthChip(false);
+  }
+
+  function hideLogin() {
+    if (refs.loginOverlay) refs.loginOverlay.hidden = true;
+    if (refs.shell) refs.shell.hidden = false;
+    if (refs.loginError) {
+      refs.loginError.hidden = true;
+      refs.loginError.textContent = "";
+    }
+    setAuthChip(true);
+  }
+
+  function requestHeaders(auth = true) {
+    const headers = { Accept: "application/json" };
+    if (auth && state.token) {
+      headers["x-admin-token"] = state.token;
+    }
+    return headers;
+  }
+
+  async function requestJson(path, { method = "GET", params = null, body = null, auth = true, extraHeaders = {} } = {}) {
+    const url = new URL(path, window.location.origin);
+    url.searchParams.set("_ts", String(Date.now()));
+    if (params && typeof params === "object") {
+      for (const [key, value] of Object.entries(params)) {
+        if (value !== undefined && value !== null && value !== "") {
+          url.searchParams.set(key, String(value));
+        }
+      }
+    }
+
+    const headers = { ...requestHeaders(auth), ...extraHeaders };
+    if (method !== "GET" && body !== null) {
+      headers["Content-Type"] = "application/json";
+    }
+
+    const response = await fetch(url.toString(), {
+      method,
+      headers,
+      credentials: "same-origin",
+      body: method !== "GET" && body !== null ? JSON.stringify(body) : undefined,
+      cache: "no-store",
+    });
+
+    const raw = await response.text();
+    let payload = {};
+    if (raw) {
+      try {
+        payload = JSON.parse(raw);
+      } catch (_error) {
+        payload = { error: raw.slice(0, 320) };
+      }
+    }
+
+    if (!response.ok) {
+      const message = String(payload.error || payload.detail || payload.message || `Request failed (${response.status}).`);
+      const error = new Error(message || `Request failed (${response.status}).`);
+      error.status = response.status;
+      error.payload = payload;
+      throw error;
+    }
+
+    return payload;
+  }
+
+  function handleAuthError(error) {
+    if (!error || (error.status !== 401 && error.status !== 403)) {
+      return false;
+    }
+    state.token = "";
+    sessionStorage.removeItem(TOKEN_STORAGE_KEY);
+    showLogin("Session expired. Please sign in again.");
+    showToast("Admin session expired.", true);
+    return true;
+  }
+
+  function metricCard(label, value) {
+    return `<article class="metric"><p class="label">${escapeHtml(label)}</p><p class="value">${escapeHtml(value)}</p></article>`;
+  }
+
+  function renderEmpty(container, message) {
+    if (!container) {
+      return;
+    }
+    container.innerHTML = `<article class="list-item"><p>${escapeHtml(message)}</p></article>`;
+  }
+
+  function mediaRef(item) {
+    const preview = String(item.preview_ref || "").trim();
+    if (preview) return preview;
+    const mediaUrl = String(item.media_url || "").trim();
+    if (mediaUrl) return mediaUrl;
+    const storagePath = String(item.storage_path || "").trim();
+    if (storagePath.startsWith("telegram_file:")) {
+      return `/api/admin/media/proxy?ref=${encodeURIComponent(storagePath)}`;
+    }
+    return storagePath || "";
+  }
+
+  function renderMediaBlock(row, altText) {
+    const reference = mediaRef(row);
+    if (!reference) {
+      return "";
+    }
+    const mediaType = String(row.media_type || "").toLowerCase();
+    if (mediaType.startsWith("video")) {
+      return `<video class="media-video" src="${escapeHtml(reference)}" controls preload="metadata"></video>`;
+    }
+    return `<img class="media-thumb" src="${escapeHtml(reference)}" alt="${escapeHtml(altText || "Media preview")}" loading="lazy">`;
+  }
+
+  function sectionElement(name) {
+    return byId(`section-${name}`);
+  }
+
+  function setSection(name) {
+    state.section = name;
+    for (const button of refs.navButtons) {
+      button.classList.toggle("active", button.dataset.section === name);
+    }
+    for (const key of Object.keys(SECTION_TITLES)) {
+      const section = sectionElement(key);
+      if (section) {
+        section.classList.toggle("active", key === name);
+      }
+    }
+    if (refs.pageTitle) {
+      refs.pageTitle.textContent = SECTION_TITLES[name] || "Admin";
+    }
+  }
+
+  function resetPage(key) {
+    state.pages[key] = 0;
+    state.hasMore[key] = false;
+  }
+
+  function pageInfo(key, total) {
+    const currentPage = state.pages[key] + 1;
+    const totalPages = Math.max(1, Math.ceil(total / PAGE_SIZE));
+    return `Page ${currentPage} / ${totalPages} (${formatNumber(total)} total)`;
+  }
+  async function copyText(value) {
+    const text = String(value || "");
+    if (!text) {
+      return;
+    }
+    if (navigator.clipboard && navigator.clipboard.writeText) {
+      await navigator.clipboard.writeText(text);
+      showToast("Copied.");
+      return;
+    }
+    showToast("Copy is not available in this browser.", true);
+  }
+
+  async function loadStatusConfig(force = false) {
+    if (state.statusConfig && !force) {
+      return state.statusConfig;
+    }
+    try {
+      const payload = await requestJson("/api/admin/status", { auth: false });
+      state.statusConfig = payload;
+      const tokenEnabled = Boolean(payload.token_auth_enabled);
+      const telegramEnabled = Boolean(payload.telegram_auth_enabled);
+      if (refs.loginSubtitle) {
+        refs.loginSubtitle.textContent = tokenEnabled && telegramEnabled
+          ? "Secure access via token or Telegram identity."
+          : tokenEnabled
+            ? "Secure access via admin token."
+            : "Secure access via Telegram identity.";
+      }
+      if (refs.loginHint) {
+        refs.loginHint.textContent = tokenEnabled
+          ? "Token sign-in is enabled on this backend."
+          : "Token sign-in is disabled in backend config.";
+      }
+      if (refs.tokenSigninBtn) refs.tokenSigninBtn.disabled = !tokenEnabled;
+      if (refs.tokenSigninInput) refs.tokenSigninInput.disabled = !tokenEnabled;
+      if (refs.telegramLoginBtn) refs.telegramLoginBtn.disabled = !telegramEnabled;
+      if (refs.telegramWidgetWrap) {
+        refs.telegramWidgetWrap.style.opacity = telegramEnabled ? "1" : "0.5";
+        refs.telegramWidgetWrap.style.pointerEvents = telegramEnabled ? "auto" : "none";
+      }
+      return payload;
+    } catch (_error) {
+      return null;
+    }
+  }
+
+  async function verifySession() {
+    const payload = await requestJson("/api/admin/auth", { auth: Boolean(state.token) });
+    if (payload.ok !== true) {
+      throw new Error("Admin session check failed.");
+    }
+    return payload;
+  }
+
+  function telegramContext() {
+    const tg = window.Telegram && window.Telegram.WebApp ? window.Telegram.WebApp : null;
+    if (!tg) return { initData: "", telegramId: "" };
+    const initData = typeof tg.initData === "string" ? tg.initData.trim() : "";
+    const unsafe = tg.initDataUnsafe && typeof tg.initDataUnsafe === "object" ? tg.initDataUnsafe : null;
+    const telegramId = unsafe && unsafe.user && typeof unsafe.user.id !== "undefined" ? String(unsafe.user.id) : "";
+    return { initData, telegramId };
+  }
+
+  async function completeTelegramAuth(requestOptions) {
+    try {
+      const payload = await requestJson("/api/admin/auth/telegram", {
+        auth: false,
+        ...requestOptions,
+      });
+      const token = String(payload.token || "").trim();
+      if (token) {
+        state.token = token;
+        sessionStorage.setItem(TOKEN_STORAGE_KEY, token);
+      }
+      await verifySession();
+      hideLogin();
+      state.loaded.overview = false;
+      await loadSection(state.section, true);
+      showToast("Telegram admin login successful.");
+    } catch (error) {
+      showLogin(error.message || "Telegram admin login failed.");
+      showToast(error.message || "Telegram admin login failed.", true);
+    }
+  }
+
+  async function loginWithTelegramContext() {
+    const context = telegramContext();
+    if (!context.initData) {
+      showLogin("Use Telegram login below or open this page from Telegram Mini App.");
+      showToast("Telegram WebApp context not detected.", true);
+      return;
+    }
+    await completeTelegramAuth({
+      extraHeaders: {
+        "x-telegram-init-data": context.initData,
+        "x-telegram-id": context.telegramId,
+      },
+    });
+  }
+
+  async function loginWithTelegramWidget(user) {
+    if (!user || typeof user !== "object") {
+      showLogin("Invalid Telegram login payload.");
+      return;
+    }
+    await completeTelegramAuth({ method: "POST", body: user });
+  }
+
+  async function loginWithToken() {
+    const token = String(refs.tokenSigninInput ? refs.tokenSigninInput.value : "").trim();
+    if (!token) {
+      showLogin("Enter your admin sign-in token.");
+      return;
+    }
+    try {
+      const payload = await requestJson("/api/admin/auth/token", {
+        method: "POST",
+        auth: false,
+        body: { token },
+      });
+      const sessionToken = String(payload.token || "").trim();
+      if (!sessionToken) {
+        throw new Error("Token sign-in failed.");
+      }
+      state.token = sessionToken;
+      sessionStorage.setItem(TOKEN_STORAGE_KEY, sessionToken);
+      if (refs.tokenSigninInput) refs.tokenSigninInput.value = "";
+      await verifySession();
+      hideLogin();
+      state.loaded.overview = false;
+      await loadSection(state.section, true);
+      showToast("Token sign-in successful.");
+    } catch (error) {
+      showLogin(error.message || "Token sign-in failed.");
+      showToast(error.message || "Token sign-in failed.", true);
+    }
+  }
+
+  async function logout() {
+    try {
+      await requestJson("/api/admin/auth/logout", {
+        method: "POST",
+        auth: Boolean(state.token),
+        body: {},
+      });
+    } catch (_error) {
+      // ignore
+    }
+    state.token = "";
+    sessionStorage.removeItem(TOKEN_STORAGE_KEY);
+    showLogin("Logged out.");
+    showToast("Logged out.");
+  }
+
+  async function loadOverview(force = false) {
+    if (!force && state.loaded.overview) return;
+    try {
+      const payload = await requestJson("/api/admin/overview");
+      const summary = payload.summary || {};
+      if (refs.overviewSummary) {
+        refs.overviewSummary.innerHTML = [
+          metricCard("Unique users", formatNumber(summary.unique_users)),
+          metricCard("Started users", formatNumber(summary.total_started_users)),
+          metricCard("Active users", formatNumber(summary.active_users)),
+          metricCard("Blocked/unreachable", formatNumber(summary.blocked_users)),
+          metricCard("New users today", formatNumber(summary.new_users_today)),
+          metricCard("New users this week", formatNumber(summary.new_users_week)),
+          metricCard("Referrals", formatNumber(summary.referrals_total)),
+          metricCard("Messages", formatNumber(summary.total_messages)),
+          metricCard("Images", formatNumber(summary.total_images)),
+        ].join("");
+      }
+      const items = Array.isArray(payload.recent_activity) ? payload.recent_activity : [];
+      if (!items.length) {
+        renderEmpty(refs.overviewRecent, "No recent activity.");
+      } else if (refs.overviewRecent) {
+        refs.overviewRecent.innerHTML = items.map((item) => {
+          const preview = item.preview || item.text_content || "";
+          return `<article class="list-item"><div class="row-head"><h4>${escapeHtml(userLabel(item))}</h4><button class="btn small copy-btn" data-copy="${escapeHtml(preview)}">Copy</button></div><p>${escapeHtml(preview || "-")}</p><div class="list-meta"><span>${escapeHtml(formatDateTime(item.created_at))}</span><span>Type: ${escapeHtml(item.message_type || "-")}</span><span>Feature: ${escapeHtml(item.feature_used || "-")}</span><span>Frontend: ${escapeHtml(item.frontend_source || "-")}</span><span>Status: ${item.success ? "success" : "failed"}</span></div></article>`;
+        }).join("");
+      }
+      state.loaded.overview = true;
+    } catch (error) {
+      if (handleAuthError(error)) return;
+      renderEmpty(refs.overviewRecent, "Failed to load overview.");
+      showToast(error.message || "Failed to load overview.", true);
+    }
+  }
+
+  async function loadUsers(force = false) {
+    if (!force && state.loaded.users) return;
+    try {
+      const payload = await requestJson("/api/admin/users", {
+        params: {
+          limit: PAGE_SIZE,
+          offset: state.pages.users * PAGE_SIZE,
+          search: refs.usersSearch ? refs.usersSearch.value.trim() : "",
+          active_days: refs.usersActiveWindow ? refs.usersActiveWindow.value : "7",
+        },
+      });
+      const items = Array.isArray(payload.items) ? payload.items : [];
+      state.totals.users = Number(payload.total || 0);
+      state.hasMore.users = Boolean(payload.has_more);
+
+      if (!items.length) {
+        renderEmpty(refs.usersList, "No users found.");
+      } else if (refs.usersList) {
+        refs.usersList.innerHTML = items.map((row) => {
+          const chipClass = row.is_blocked ? "danger-chip" : row.is_active ? "ok-chip" : "muted-chip";
+          const chipLabel = row.is_blocked ? "blocked" : row.is_active ? "active" : "inactive";
+          return `<article class="list-item"><div class="row-head"><h4>${escapeHtml(userLabel(row))}</h4><span class="chip ${chipClass}">${chipLabel}</span></div><div class="list-meta"><span>First seen: ${escapeHtml(formatDateTime(row.first_seen_at))}</span><span>Last seen: ${escapeHtml(formatDateTime(row.last_seen_at))}</span><span>Started: ${row.has_started ? "yes" : "no"}</span><span>Messages: ${escapeHtml(formatNumber(row.total_messages))}</span><span>Images: ${escapeHtml(formatNumber(row.total_images))}</span><span>Unreachable: ${escapeHtml(formatNumber(row.unreachable_count))}</span><span>Referral code: ${escapeHtml(row.referral_code || "-")}</span><span>Referred by: ${escapeHtml(row.referred_by || "-")}</span></div>${row.last_delivery_error ? `<p class="error">Last delivery error: ${escapeHtml(row.last_delivery_error)}</p>` : ""}</article>`;
+        }).join("");
+      }
+
+      if (refs.usersPageInfo) refs.usersPageInfo.textContent = pageInfo("users", state.totals.users);
+      if (refs.usersPrev) refs.usersPrev.disabled = state.pages.users <= 0;
+      if (refs.usersNext) refs.usersNext.disabled = !state.hasMore.users;
+      state.loaded.users = true;
+    } catch (error) {
+      if (handleAuthError(error)) return;
+      renderEmpty(refs.usersList, "Failed to load users.");
+      showToast(error.message || "Failed to load users.", true);
+    }
+  }
+  async function loadConversations(force = false) {
+    if (!force && state.loaded.conversations) return;
+    try {
+      const payload = await requestJson("/api/admin/messages", {
+        params: {
+          limit: PAGE_SIZE,
+          offset: state.pages.conversations * PAGE_SIZE,
+          search: refs.convSearch ? refs.convSearch.value.trim() : "",
+          message_type: refs.convType ? refs.convType.value : "all",
+          frontend_source: refs.convFrontend ? refs.convFrontend.value : "all",
+          date_from: refs.convDateFrom ? refs.convDateFrom.value : "",
+          date_to: refs.convDateTo ? refs.convDateTo.value : "",
+        },
+      });
+      const items = Array.isArray(payload.items) ? payload.items : [];
+      state.totals.conversations = Number(payload.total || 0);
+      state.hasMore.conversations = Boolean(payload.has_more);
+
+      if (!items.length) {
+        renderEmpty(refs.conversationsList, "No conversations found.");
+      } else if (refs.conversationsList) {
+        refs.conversationsList.innerHTML = items.map((row) => {
+          const copyPayload = [`User: ${row.user_message || row.text_content || ""}`, `Assistant: ${row.bot_reply || ""}`].filter(Boolean).join("\n\n");
+          return `<article class="list-item"><div class="row-head"><h4>${escapeHtml(userLabel(row))}</h4><button class="btn small copy-btn" data-copy="${escapeHtml(copyPayload)}">Copy chat</button></div><p><strong>User:</strong> ${escapeHtml(row.user_message || row.text_content || "-")}</p><p><strong>Assistant:</strong> ${escapeHtml(row.bot_reply || "-")}</p>${renderMediaBlock(row, "Conversation media")}<div class="list-meta"><span>${escapeHtml(formatDateTime(row.created_at))}</span><span>Feature: ${escapeHtml(row.feature_used || "-")}</span><span>Frontend: ${escapeHtml(row.frontend_source || "-")}</span><span>Type: ${escapeHtml(row.message_type || "-")}</span><span>Conversation: ${escapeHtml(row.conversation_id || "-")}</span><span>Model: ${escapeHtml(row.model_used || "-")}</span><span>Status: ${row.success ? "success" : "failed"}</span></div>${row.media_error_reason ? `<p class="error">Media issue: ${escapeHtml(row.media_error_reason)}</p>` : ""}</article>`;
+        }).join("");
+      }
+
+      if (refs.convPageInfo) refs.convPageInfo.textContent = pageInfo("conversations", state.totals.conversations);
+      if (refs.convPrev) refs.convPrev.disabled = state.pages.conversations <= 0;
+      if (refs.convNext) refs.convNext.disabled = !state.hasMore.conversations;
+      state.loaded.conversations = true;
+    } catch (error) {
+      if (handleAuthError(error)) return;
+      renderEmpty(refs.conversationsList, "Failed to load conversations.");
+      showToast(error.message || "Failed to load conversations.", true);
+    }
+  }
+
+  async function loadMedia(force = false) {
+    if (!force && state.loaded.media) return;
+    try {
+      const payload = await requestJson("/api/admin/media", {
+        params: {
+          limit: PAGE_SIZE,
+          offset: state.pages.media * PAGE_SIZE,
+          search: refs.mediaSearch ? refs.mediaSearch.value.trim() : "",
+        },
+      });
+      const summary = payload.summary || {};
+      const items = Array.isArray(payload.items) ? payload.items : [];
+      state.totals.media = Number(payload.total || 0);
+      state.hasMore.media = Boolean(payload.has_more);
+
+      if (refs.mediaSummary) {
+        refs.mediaSummary.innerHTML = [
+          metricCard("Total media", formatNumber(summary.total_media)),
+          metricCard("Total images", formatNumber(summary.total_images)),
+          metricCard("Total videos", formatNumber(summary.total_videos)),
+          metricCard("Successful media", formatNumber(summary.successful_media)),
+          metricCard("Successful images", formatNumber(summary.successful_images)),
+          metricCard("Successful videos", formatNumber(summary.successful_videos)),
+          metricCard("Media last 7 days", formatNumber(summary.media_last_7_days)),
+          metricCard("Videos last 7 days", formatNumber(summary.videos_last_7_days)),
+        ].join("");
+      }
+
+      if (!items.length) {
+        renderEmpty(refs.mediaList, "No media records found.");
+      } else if (refs.mediaList) {
+        refs.mediaList.innerHTML = items.map((row) => {
+          const mediaBlock = renderMediaBlock(row, "Media preview");
+          const mediaIssue = row.media_error_reason || row.media_status || "media unavailable";
+          return `<article class="list-item"><div class="row-head"><h4>${escapeHtml(userLabel(row))}</h4><span class="chip ${row.success ? "ok-chip" : "danger-chip"}">${row.success ? "success" : "failed"}</span></div>${mediaBlock || `<p class="error">No preview: ${escapeHtml(mediaIssue)}</p>`}<p><strong>Prompt:</strong> ${escapeHtml(row.prompt || row.text_content || "-")}</p><div class="list-meta"><span>${escapeHtml(formatDateTime(row.created_at))}</span><span>Type: ${escapeHtml(row.media_type || "-")}</span><span>Origin: ${escapeHtml(row.media_origin || "-")}</span><span>Provider: ${escapeHtml(row.provider_source || "-")}</span><span>MIME: ${escapeHtml(row.mime_type || "-")}</span><span>Size: ${escapeHtml(row.media_width || "-")}x${escapeHtml(row.media_height || "-")}</span><span>URL: ${escapeHtml(row.media_url || "-")}</span><span>Storage: ${escapeHtml(row.storage_path || "-")}</span></div></article>`;
+        }).join("");
+      }
+
+      if (refs.mediaPageInfo) refs.mediaPageInfo.textContent = pageInfo("media", state.totals.media);
+      if (refs.mediaPrev) refs.mediaPrev.disabled = state.pages.media <= 0;
+      if (refs.mediaNext) refs.mediaNext.disabled = !state.hasMore.media;
+      state.loaded.media = true;
+    } catch (error) {
+      if (handleAuthError(error)) return;
+      renderEmpty(refs.mediaList, "Failed to load media.");
+      showToast(error.message || "Failed to load media.", true);
+    }
+  }
+
+  async function loadReferrals(force = false) {
+    if (!force && state.loaded.referrals) return;
+    try {
+      const payload = await requestJson("/api/admin/referrals", {
+        params: {
+          limit: PAGE_SIZE,
+          offset: state.pages.referrals * PAGE_SIZE,
+          search: refs.refSearch ? refs.refSearch.value.trim() : "",
+        },
+      });
+      const summary = payload.summary || {};
+      const items = Array.isArray(payload.items) ? payload.items : [];
+      state.totals.referrals = Number(payload.total || 0);
+      state.hasMore.referrals = Boolean(payload.has_more);
+
+      if (refs.refSummary) {
+        refs.refSummary.innerHTML = [
+          metricCard("Total referrals", formatNumber(summary.total_referrals)),
+          metricCard("Unique inviters", formatNumber(summary.unique_inviters)),
+          metricCard("Unique invitees", formatNumber(summary.unique_invitees)),
+        ].join("");
+      }
+
+      if (!items.length) {
+        renderEmpty(refs.refList, "No referral records found.");
+      } else if (refs.refList) {
+        refs.refList.innerHTML = items.map((row) => `<article class="list-item"><div class="row-head"><h4>${escapeHtml(row.referral_code || "-")}</h4><span class="chip muted-chip">${escapeHtml(row.frontend_source || "unknown")}</span></div><p><strong>Inviter:</strong> ${escapeHtml(row.inviter_username ? `@${row.inviter_username}` : row.inviter_first_name || "unknown")} (${escapeHtml(row.inviter_telegram_id || "-")})<br><strong>Invitee:</strong> ${escapeHtml(row.invitee_username ? `@${row.invitee_username}` : row.invitee_first_name || "unknown")} (${escapeHtml(row.invitee_telegram_id || "-")})</p><div class="list-meta"><span>${escapeHtml(formatDateTime(row.created_at))}</span><span>ID: ${escapeHtml(row.id || "-")}</span></div></article>`).join("");
+      }
+
+      if (refs.refPageInfo) refs.refPageInfo.textContent = pageInfo("referrals", state.totals.referrals);
+      if (refs.refPrev) refs.refPrev.disabled = state.pages.referrals <= 0;
+      if (refs.refNext) refs.refNext.disabled = !state.hasMore.referrals;
+      state.loaded.referrals = true;
+    } catch (error) {
+      if (handleAuthError(error)) return;
+      renderEmpty(refs.refList, "Failed to load referrals.");
+      showToast(error.message || "Failed to load referrals.", true);
+    }
+  }
+
+  async function loadEngagement(force = false) {
+    if (!force && state.loaded.engagement) return;
+    try {
+      const payload = await requestJson("/api/admin/engagement");
+      const config = payload.config || {};
+      if (refs.engEnabled) refs.engEnabled.checked = Boolean(config.enabled);
+      if (refs.engInactivity) refs.engInactivity.value = String(config.inactivity_minutes || 240);
+      if (refs.engCooldown) refs.engCooldown.value = String(config.cooldown_minutes || 720);
+      if (refs.engBatch) refs.engBatch.value = String(config.batch_size || 30);
+      if (refs.engMessage) refs.engMessage.value = String(config.message_template || "");
+      if (refs.engUpdated) refs.engUpdated.textContent = payload.updated_at ? `Last updated: ${formatDateTime(payload.updated_at)}` : "Using defaults";
+      state.loaded.engagement = true;
+    } catch (error) {
+      if (handleAuthError(error)) return;
+      showToast(error.message || "Failed to load engagement settings.", true);
+    }
+  }
+
+  async function saveEngagement() {
+    const body = {
+      enabled: Boolean(refs.engEnabled && refs.engEnabled.checked),
+      inactivity_minutes: Number(refs.engInactivity ? refs.engInactivity.value : 240),
+      cooldown_minutes: Number(refs.engCooldown ? refs.engCooldown.value : 720),
+      batch_size: Number(refs.engBatch ? refs.engBatch.value : 30),
+      message_template: refs.engMessage ? refs.engMessage.value.trim() : "",
+    };
+    try {
+      const payload = await requestJson("/api/admin/engagement", { method: "POST", body });
+      if (refs.engUpdated) refs.engUpdated.textContent = payload.updated_at ? `Last updated: ${formatDateTime(payload.updated_at)}` : "Saved";
+      state.loaded.engagement = true;
+      showToast("Engagement settings saved.");
+    } catch (error) {
+      if (handleAuthError(error)) return;
+      showToast(error.message || "Failed to save engagement settings.", true);
+    }
+  }
+
+  async function loadBotStatus(force = false) {
+    if (!force && state.loaded.botStatus) return;
+    try {
+      const payload = await requestJson("/api/admin/bot-status");
+      if (refs.botStatusGrid) {
+        refs.botStatusGrid.innerHTML = [
+          metricCard("Runtime ready", payload.runtime_ready ? "yes" : "no"),
+          metricCard("Telegram ready", payload.telegram_ready ? "yes" : "no"),
+          metricCard("Webhook configured", payload.webhook_configured ? "yes" : "no"),
+          metricCard("Menu button configured", payload.menu_button_configured ? "yes" : "no"),
+          metricCard("Startup task running", payload.startup_task_running ? "yes" : "no"),
+          metricCard("Keepalive task", payload.keepalive_task_running ? "running" : "stopped"),
+          metricCard("Heartbeat task", payload.heartbeat_task_running ? "running" : "stopped"),
+          metricCard("Engagement task", payload.engagement_task_running ? "running" : "stopped"),
+          metricCard("Uptime seconds", String(payload.uptime_seconds || 0)),
+        ].join("");
+      }
+      const warnings = [];
+      if (payload.last_startup_error) warnings.push(`Last startup error: ${payload.last_startup_error}`);
+      if (Array.isArray(payload.startup_warnings)) {
+        for (const warning of payload.startup_warnings) if (warning) warnings.push(String(warning));
+      }
+      if (!warnings.length) {
+        renderEmpty(refs.botWarnings, "No runtime warnings.");
+      } else if (refs.botWarnings) {
+        refs.botWarnings.innerHTML = warnings.map((warning) => `<article class="list-item"><p>${escapeHtml(warning)}</p></article>`).join("");
+      }
+      state.loaded.botStatus = true;
+    } catch (error) {
+      if (handleAuthError(error)) return;
+      renderEmpty(refs.botWarnings, "Failed to load bot status.");
+      showToast(error.message || "Failed to load bot status.", true);
+    }
+  }
+
+  async function loadSettings(force = false) {
+    if (!force && state.loaded.settings) return;
+    try {
+      const payload = await requestJson("/api/admin/status", { auth: false });
+      const parts = [
+        `Telegram admin login: ${payload.telegram_auth_enabled ? "enabled" : "disabled"}`,
+        `Token sign-in: ${payload.token_auth_enabled ? "enabled" : "disabled"}`,
+        `Owner Telegram ID configured: ${payload.owner_telegram_id_configured ? "yes" : "no"}`,
+        `Allowlist count: ${formatNumber(payload.allowlist_count)}`,
+        `Admin data service: ${payload.service_enabled ? "enabled" : "disabled"}`,
+      ];
+      if (payload.owner_telegram_id) parts.push(`Owner ID: ${payload.owner_telegram_id}`);
+      if (!payload.service_enabled && payload.service_reason) parts.push(`Reason: ${payload.service_reason}`);
+      if (refs.statusInfo) refs.statusInfo.textContent = parts.join(" | ");
+      state.loaded.settings = true;
+    } catch (_error) {
+      if (refs.statusInfo) refs.statusInfo.textContent = "Failed to load settings status.";
+    }
+  }
+
+  async function loadLogs(force = false) {
+    if (!force && state.loaded.logs) return;
+    try {
+      const payload = await requestJson("/api/admin/logs", {
+        params: {
+          level: refs.logsLevel ? refs.logsLevel.value : "",
+          search: refs.logsSearch ? refs.logsSearch.value.trim() : "",
+          limit: refs.logsLimit ? refs.logsLimit.value : "200",
+        },
+      });
+      const items = Array.isArray(payload.items) ? payload.items : [];
+      if (refs.logsOutput) refs.logsOutput.textContent = items.length ? items.join("\n") : "No logs for current filters.";
+      state.loaded.logs = true;
+    } catch (error) {
+      if (handleAuthError(error)) return;
+      if (refs.logsOutput) refs.logsOutput.textContent = `Failed to load logs. ${error.message || ""}`;
+      showToast(error.message || "Failed to load logs.", true);
+    }
+  }
+
+  async function loadSection(name, force = false) {
+    if (name === "overview") return loadOverview(force);
+    if (name === "users") return loadUsers(force);
+    if (name === "conversations") return loadConversations(force);
+    if (name === "media") return loadMedia(force);
+    if (name === "referrals") return loadReferrals(force);
+    if (name === "engagement") return loadEngagement(force);
+    if (name === "bot-status") return loadBotStatus(force);
+    if (name === "settings") return loadSettings(force);
+    if (name === "logs") return loadLogs(force);
+    return Promise.resolve();
+  }
+  function bind() {
+    for (const button of refs.navButtons) {
+      button.addEventListener("click", async () => {
+        const name = button.dataset.section || "overview";
+        setSection(name);
+        document.body.classList.remove("sidebar-open");
+        await loadSection(name);
+      });
+    }
+
+    if (refs.menuToggle) refs.menuToggle.addEventListener("click", () => document.body.classList.toggle("sidebar-open"));
+    if (refs.telegramLoginBtn) refs.telegramLoginBtn.addEventListener("click", () => loginWithTelegramContext());
+    if (refs.tokenSigninBtn) refs.tokenSigninBtn.addEventListener("click", () => loginWithToken());
+    if (refs.tokenSigninInput) {
+      refs.tokenSigninInput.addEventListener("keydown", (event) => {
+        if (event.key === "Enter") {
+          event.preventDefault();
+          loginWithToken();
+        }
+      });
+    }
+
+    if (refs.logoutBtn) refs.logoutBtn.addEventListener("click", () => logout());
+    if (refs.settingsLogout) refs.settingsLogout.addEventListener("click", () => logout());
+    if (refs.refreshBtn) {
+      refs.refreshBtn.addEventListener("click", async () => {
+        const loadedKey = state.section === "bot-status" ? "botStatus" : state.section;
+        state.loaded[loadedKey] = false;
+        await loadSection(state.section, true);
+      });
+    }
+
+    if (refs.usersApply) refs.usersApply.addEventListener("click", async () => { resetPage("users"); state.loaded.users = false; await loadUsers(true); });
+    if (refs.convApply) refs.convApply.addEventListener("click", async () => { resetPage("conversations"); state.loaded.conversations = false; await loadConversations(true); });
+    if (refs.mediaApply) refs.mediaApply.addEventListener("click", async () => { resetPage("media"); state.loaded.media = false; await loadMedia(true); });
+    if (refs.refApply) refs.refApply.addEventListener("click", async () => { resetPage("referrals"); state.loaded.referrals = false; await loadReferrals(true); });
+    if (refs.engSave) refs.engSave.addEventListener("click", () => saveEngagement());
+    if (refs.botStatusRefresh) refs.botStatusRefresh.addEventListener("click", async () => { state.loaded.botStatus = false; await loadBotStatus(true); });
+    if (refs.logsApply) refs.logsApply.addEventListener("click", async () => { state.loaded.logs = false; await loadLogs(true); });
+
+    if (refs.usersPrev) refs.usersPrev.addEventListener("click", async () => { if (state.pages.users > 0) { state.pages.users -= 1; state.loaded.users = false; await loadUsers(true); } });
+    if (refs.usersNext) refs.usersNext.addEventListener("click", async () => { if (state.hasMore.users) { state.pages.users += 1; state.loaded.users = false; await loadUsers(true); } });
+
+    if (refs.convPrev) refs.convPrev.addEventListener("click", async () => { if (state.pages.conversations > 0) { state.pages.conversations -= 1; state.loaded.conversations = false; await loadConversations(true); } });
+    if (refs.convNext) refs.convNext.addEventListener("click", async () => { if (state.hasMore.conversations) { state.pages.conversations += 1; state.loaded.conversations = false; await loadConversations(true); } });
+
+    if (refs.mediaPrev) refs.mediaPrev.addEventListener("click", async () => { if (state.pages.media > 0) { state.pages.media -= 1; state.loaded.media = false; await loadMedia(true); } });
+    if (refs.mediaNext) refs.mediaNext.addEventListener("click", async () => { if (state.hasMore.media) { state.pages.media += 1; state.loaded.media = false; await loadMedia(true); } });
+
+    if (refs.refPrev) refs.refPrev.addEventListener("click", async () => { if (state.pages.referrals > 0) { state.pages.referrals -= 1; state.loaded.referrals = false; await loadReferrals(true); } });
+    if (refs.refNext) refs.refNext.addEventListener("click", async () => { if (state.hasMore.referrals) { state.pages.referrals += 1; state.loaded.referrals = false; await loadReferrals(true); } });
+
+    document.addEventListener("click", (event) => {
+      const target = event.target;
+      if (!(target instanceof HTMLElement)) return;
+      const button = target.closest(".copy-btn");
+      if (!button) return;
+      copyText(button.getAttribute("data-copy") || "");
+    });
+  }
+
+  async function init() {
+    setSection("overview");
+    bind();
+    await loadStatusConfig(true);
+    await loadSettings(true);
+
+    if (state.token) {
+      try {
+        await verifySession();
+        hideLogin();
+        await loadSection("overview", true);
+        return;
+      } catch (_error) {
+        state.token = "";
+        sessionStorage.removeItem(TOKEN_STORAGE_KEY);
+      }
+    }
+
+    try {
+      await verifySession();
+      hideLogin();
+      await loadSection("overview", true);
+      showToast("Admin session restored.");
+      return;
+    } catch (_error) {
+      showLogin();
+    }
+  }
+
+  window.onTelegramAuth = (user) => {
+    loginWithTelegramWidget(user);
+  };
+
+  window.addEventListener("DOMContentLoaded", init);
 })();

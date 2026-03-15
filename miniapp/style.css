@@ -835,11 +835,17 @@ select:focus {
 }
 
 .message-image,
+.message-video,
 .upload-preview img {
   width: 100%;
   border-radius: 18px;
   border: 1px solid rgba(86, 106, 123, 0.14);
   display: block;
+}
+
+.message-video {
+  background: #000;
+  max-height: 420px;
 }
 
 .message-audio {

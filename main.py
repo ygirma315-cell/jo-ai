@@ -48,8 +48,10 @@ from bot.services.ai_service import (
     ChatService,
     GeminiChatService,
     ImageGenerationService,
+    PollinationsMediaService,
     TextToSpeechService,
     build_enhanced_image_prompt,
+    build_enhanced_video_prompt,
 )
 from bot.services.supabase_client import build_supabase_config
 from bot.services.tracking_service import SupabaseTrackingService, TrackingIdentity, TrackingMedia
@@ -87,7 +89,52 @@ IMAGE_RATIO_TO_SIZE = {
 }
 IMAGE_SIZE_TO_RATIO = {value: key for key, value in IMAGE_RATIO_TO_SIZE.items()}
 IMAGE_ENDPOINT_TIMEOUT_SECONDS = 110
+VIDEO_ASPECT_RATIOS = ("16:9", "9:16")
+VIDEO_DEFAULT_ASPECT_RATIO = "16:9"
+VIDEO_DEFAULT_DURATION_SECONDS = 4
+VIDEO_ENDPOINT_TIMEOUT_SECONDS = 200
 GEMINI_TEMP_DISABLED = True
+
+IMAGE_MODEL_LABEL_JO = "JO AI Image Generate"
+IMAGE_MODEL_LABEL_CHAT_GBT = "Chat GBT"
+IMAGE_MODEL_LABEL_GROK_IMAGINE = "Grok Imagine"
+VIDEO_MODEL_LABEL_GROK_TEXT_TO_VIDEO = "Grok Text to Video"
+
+IMAGE_MODEL_OPTION_JO = "jo_ai_image_generate"
+IMAGE_MODEL_OPTION_CHAT_GBT = "chat_gbt"
+IMAGE_MODEL_OPTION_GROK_IMAGINE = "grok_imagine"
+VIDEO_MODEL_OPTION_GROK_TEXT_TO_VIDEO = "grok_text_to_video"
+
+IMAGE_MODEL_OPTION_LABELS: dict[str, str] = {
+    IMAGE_MODEL_OPTION_JO: IMAGE_MODEL_LABEL_JO,
+    IMAGE_MODEL_OPTION_CHAT_GBT: IMAGE_MODEL_LABEL_CHAT_GBT,
+    IMAGE_MODEL_OPTION_GROK_IMAGINE: IMAGE_MODEL_LABEL_GROK_IMAGINE,
+}
+IMAGE_MODEL_OPTION_ALIASES: dict[str, str] = {
+    IMAGE_MODEL_OPTION_JO: IMAGE_MODEL_OPTION_JO,
+    "jo_ai": IMAGE_MODEL_OPTION_JO,
+    "jo ai image generate": IMAGE_MODEL_OPTION_JO,
+    "image_generator": IMAGE_MODEL_OPTION_JO,
+    "image generator": IMAGE_MODEL_OPTION_JO,
+    IMAGE_MODEL_OPTION_CHAT_GBT: IMAGE_MODEL_OPTION_CHAT_GBT,
+    "chat gbt": IMAGE_MODEL_OPTION_CHAT_GBT,
+    "chatgbt": IMAGE_MODEL_OPTION_CHAT_GBT,
+    "gpt_image_1_mini": IMAGE_MODEL_OPTION_CHAT_GBT,
+    "gpt image 1 mini": IMAGE_MODEL_OPTION_CHAT_GBT,
+    "gpt-image-1-mini": IMAGE_MODEL_OPTION_CHAT_GBT,
+    IMAGE_MODEL_OPTION_GROK_IMAGINE: IMAGE_MODEL_OPTION_GROK_IMAGINE,
+    "grok imagine": IMAGE_MODEL_OPTION_GROK_IMAGINE,
+    "grok-imagine": IMAGE_MODEL_OPTION_GROK_IMAGINE,
+}
+VIDEO_MODEL_OPTION_LABELS: dict[str, str] = {
+    VIDEO_MODEL_OPTION_GROK_TEXT_TO_VIDEO: VIDEO_MODEL_LABEL_GROK_TEXT_TO_VIDEO,
+}
+VIDEO_MODEL_OPTION_ALIASES: dict[str, str] = {
+    VIDEO_MODEL_OPTION_GROK_TEXT_TO_VIDEO: VIDEO_MODEL_OPTION_GROK_TEXT_TO_VIDEO,
+    "grok text to video": VIDEO_MODEL_OPTION_GROK_TEXT_TO_VIDEO,
+    "grok-video": VIDEO_MODEL_OPTION_GROK_TEXT_TO_VIDEO,
+    "grok video": VIDEO_MODEL_OPTION_GROK_TEXT_TO_VIDEO,
+}
 OBSERVABLE_REQUEST_PATHS = frozenset(
     {
         "/ai",
@@ -96,6 +143,7 @@ OBSERVABLE_REQUEST_PATHS = frozenset(
         "/research",
         "/prompt",
         "/image",
+        "/video",
         "/vision",
         "/tts",
         "/telegram/webhook",
@@ -141,6 +189,8 @@ class ImageRequest(TrackingRequestBase):
     message: str | None = Field(default=None, max_length=4000)
     ratio: Literal["1:1", "16:9", "9:16"] | None = Field(default=None)
     size: str | None = Field(default=None, pattern=r"^\d+x\d+$")
+    model: str | None = Field(default=None, max_length=120)
+    image_model: str | None = Field(default=None, max_length=120)
 
     @model_validator(mode="after")
     def _validate_prompt(self) -> "ImageRequest":
@@ -286,43 +336,52 @@ class GeminiRequest(TrackingRequestBase):
         return IMAGE_RATIO_TO_SIZE[self.effective_ratio]
 
     @property
-    def effective_language(self) -> str:
-        value = (self.language or "en").strip().lower()
-        if value in {"en", "en-us", "english"}:
-            return "en"
-        if value in {"es", "es-es", "spanish"}:
-            return "es"
-        if value in {"fr", "fr-fr", "french"}:
-            return "fr"
-        return "en"
+    def effective_model_option(self) -> str:
+        return _resolve_image_model_option(self.model)
 
     @property
-    def effective_voice(self) -> str:
-        value = (self.voice or "female").strip().lower()
-        if value in {"male", "man"}:
-            return "male"
-        return "female"
+    def effective_model_option(self) -> str:
+        return _resolve_image_model_option(self.image_model or self.model)
+
+
+class VideoRequest(TrackingRequestBase):
+    prompt: str | None = Field(default=None, max_length=4000)
+    message: str | None = Field(default=None, max_length=4000)
+    model: str | None = Field(default=None, max_length=120)
+    video_model: str | None = Field(default=None, max_length=120)
+    duration_seconds: int | None = Field(default=None, ge=1, le=10)
+    duration: int | None = Field(default=None, ge=1, le=10)
+    aspect_ratio: Literal["16:9", "9:16"] | None = Field(default=None)
+    ratio: Literal["16:9", "9:16"] | None = Field(default=None)
+
+    @model_validator(mode="after")
+    def _validate_prompt(self) -> "VideoRequest":
+        if not self.prompt and not self.message:
+            raise ValueError("Either 'prompt' or 'message' must be provided.")
+        return self
 
     @property
-    def effective_emotion(self) -> str:
-        value = (self.emotion or "neutral").strip().lower()
-        aliases = {
-            "natural": "neutral",
-            "friendly": "neutral",
-            "happy": "cheerful",
-            "excited": "cheerful",
-            "bright": "cheerful",
-            "energetic": "cheerful",
-            "relaxed": "calm",
-            "soft": "calm",
-            "warm": "calm",
-            "formal": "serious",
-            "focused": "serious",
-            "deep": "serious",
-            "narrator": "serious",
-        }
-        value = aliases.get(value, value)
-        return value if value in {"neutral", "cheerful", "calm", "serious"} else "neutral"
+    def effective_prompt(self) -> str:
+        return self.prompt or self.message or ""
+
+    @property
+    def effective_model_option(self) -> str:
+        return _resolve_video_model_option(self.video_model or self.model)
+
+    @property
+    def effective_duration_seconds(self) -> int:
+        if isinstance(self.duration_seconds, int):
+            return max(1, min(10, self.duration_seconds))
+        if isinstance(self.duration, int):
+            return max(1, min(10, self.duration))
+        return VIDEO_DEFAULT_DURATION_SECONDS
+
+    @property
+    def effective_aspect_ratio(self) -> Literal["16:9", "9:16"]:
+        candidate = self.aspect_ratio or self.ratio
+        if candidate in VIDEO_ASPECT_RATIOS:
+            return candidate
+        return VIDEO_DEFAULT_ASPECT_RATIO  # type: ignore[return-value]
 
 
 class ReferralClaimRequest(TrackingRequestBase):
@@ -336,6 +395,10 @@ class EngagementConfigUpdateRequest(BaseModel):
     inactivity_minutes: int | None = Field(default=None, ge=30, le=10_080)
     cooldown_minutes: int | None = Field(default=None, ge=30, le=43_200)
     batch_size: int | None = Field(default=None, ge=1, le=500)
+
+
+class AdminTokenAuthRequest(BaseModel):
+    token: str = Field(min_length=1, max_length=512)
 
 
 def _read_env(name: str) -> str:
@@ -418,6 +481,24 @@ def _maybe_block_sensitive_request(*parts: str | None) -> JSONResponse | None:
     return None
 
 
+def _normalize_model_option(value: str | None) -> str:
+    return str(value or "").strip().lower().replace("-", "_").replace(" ", "_")
+
+
+def _resolve_image_model_option(value: str | None) -> str:
+    normalized = _normalize_model_option(value)
+    if not normalized:
+        return IMAGE_MODEL_OPTION_JO
+    return IMAGE_MODEL_OPTION_ALIASES.get(normalized, IMAGE_MODEL_OPTION_JO)
+
+
+def _resolve_video_model_option(value: str | None) -> str:
+    normalized = _normalize_model_option(value)
+    if not normalized:
+        return VIDEO_MODEL_OPTION_GROK_TEXT_TO_VIDEO
+    return VIDEO_MODEL_OPTION_ALIASES.get(normalized, VIDEO_MODEL_OPTION_GROK_TEXT_TO_VIDEO)
+
+
 def _compose_prompt_request(prompt_type: str, message: str) -> str:
     return (
         f"Prompt type: {prompt_type}\n"
@@ -460,13 +541,14 @@ def _prune_expired_admin_sessions(now_ts: float | None = None) -> None:
         _ADMIN_SESSION_TOKENS.pop(token, None)
 
 
-def _issue_admin_session_token(telegram_id: int) -> dict[str, Any]:
+def _issue_admin_session_token(telegram_id: int, *, auth_method: str) -> dict[str, Any]:
     now_ts = time.time()
     _prune_expired_admin_sessions(now_ts)
     token = secrets.token_urlsafe(32)
     expires_at = now_ts + ADMIN_SESSION_TOKEN_TTL_SECONDS
     _ADMIN_SESSION_TOKENS[token] = {
         "telegram_id": telegram_id,
+        "auth_method": str(auth_method or "").strip() or "unknown",
         "issued_at": now_ts,
         "expires_at": expires_at,
     }
@@ -474,6 +556,7 @@ def _issue_admin_session_token(telegram_id: int) -> dict[str, Any]:
         "token": token,
         "expires_at": datetime.fromtimestamp(expires_at, tz=timezone.utc).isoformat(),
         "telegram_id": telegram_id,
+        "auth_method": str(auth_method or "").strip() or "unknown",
         "ttl_seconds": ADMIN_SESSION_TOKEN_TTL_SECONDS,
     }
 
@@ -656,6 +739,18 @@ def _admin_allowlist() -> tuple[int, ...]:
     return (int(owner_id),) if owner_id else ()
 
 
+def _configured_admin_signin_token() -> str:
+    return str(get_settings().admin_signin_token or "").strip()
+
+
+def _validate_admin_signin_token(candidate: str) -> bool:
+    expected = _configured_admin_signin_token()
+    provided = str(candidate or "").strip()
+    if not expected or not provided:
+        return False
+    return secrets.compare_digest(provided, expected)
+
+
 def _is_admin_allowlisted(telegram_id: int | None) -> bool:
     owner_id = _admin_owner_telegram_id()
     if not telegram_id or not owner_id:
@@ -679,7 +774,7 @@ def _require_admin_access(request: Request) -> None:
         request.url.path,
         _request_id_from_request(request) or "unknown",
     )
-    raise HTTPException(status_code=401, detail="Admin session is required. Login with Telegram.")
+    raise HTTPException(status_code=401, detail="Admin session is required. Login with Telegram or admin token.")
 
 
 def _admin_error_response(request: Request, status_code: int, message: str) -> JSONResponse:
@@ -742,6 +837,39 @@ def _image_service() -> ImageGenerationService:
 
 
 @lru_cache(maxsize=1)
+def _pollinations_service() -> PollinationsMediaService:
+    settings = get_settings()
+    return PollinationsMediaService(
+        api_key=settings.pollinations_api_key,
+        base_url=settings.pollinations_base_url,
+        image_model_chat_gbt=settings.pollinations_image_model_chat_gbt,
+        image_model_grok_imagine=settings.pollinations_image_model_grok_imagine,
+        video_model_grok_text_to_video=settings.pollinations_video_model_grok_text_to_video,
+    )
+
+
+def _image_model_label(option: str) -> str:
+    return IMAGE_MODEL_OPTION_LABELS.get(option, IMAGE_MODEL_LABEL_JO)
+
+
+def _video_model_label(option: str) -> str:
+    return VIDEO_MODEL_OPTION_LABELS.get(option, VIDEO_MODEL_LABEL_GROK_TEXT_TO_VIDEO)
+
+
+def _image_model_id_for_option(settings, option: str) -> str:
+    if option == IMAGE_MODEL_OPTION_CHAT_GBT:
+        return settings.pollinations_image_model_chat_gbt
+    if option == IMAGE_MODEL_OPTION_GROK_IMAGINE:
+        return settings.pollinations_image_model_grok_imagine
+    return settings.image_model
+
+
+def _video_model_id_for_option(settings, option: str) -> str:
+    _ = option
+    return settings.pollinations_video_model_grok_text_to_video
+
+
+@lru_cache(maxsize=1)
 def _tts_service() -> TextToSpeechService:
     settings = get_settings()
     return TextToSpeechService(
@@ -791,6 +919,34 @@ def _persist_image_bytes_to_local_asset(
     filename = f"{prefix}_{int(time.time())}_{digest}.{extension}"
     asset_path = MEDIA_ASSETS_DIR / filename
     asset_path.write_bytes(image_bytes)
+    return f"/media/{filename}", f"local_file:{filename}"
+
+
+def _video_extension_for_mime(mime_type: str | None) -> str:
+    normalized = str(mime_type or "").strip().lower()
+    if normalized in {"video/mp4", "video/mpeg4"}:
+        return "mp4"
+    if normalized == "video/webm":
+        return "webm"
+    if normalized == "video/quicktime":
+        return "mov"
+    return "mp4"
+
+
+def _persist_video_bytes_to_local_asset(
+    video_bytes: bytes,
+    *,
+    prefix: str,
+    mime_type: str | None = None,
+) -> tuple[str, str]:
+    if not video_bytes:
+        raise BackendError("Video payload is empty.", status_code=400)
+    MEDIA_ASSETS_DIR.mkdir(parents=True, exist_ok=True)
+    digest = hashlib.sha256(video_bytes).hexdigest()[:16]
+    extension = _video_extension_for_mime(mime_type)
+    filename = f"{prefix}_{int(time.time())}_{digest}.{extension}"
+    asset_path = MEDIA_ASSETS_DIR / filename
+    asset_path.write_bytes(video_bytes)
     return f"/media/{filename}", f"local_file:{filename}"
 
 
@@ -909,7 +1065,7 @@ def _build_code_attachment_payload(output: str) -> dict[str, str] | None:
 def _extract_gemini_mode_and_message(payload: GeminiRequest) -> tuple[GeminiMode, str]:
     raw_message = str(payload.message or "").strip()
     explicit_mode = payload.effective_mode
-    command_match = re.match(r"^/(chat|image|img|video|voice|audio)\b\s*(.*)$", raw_message, flags=re.IGNORECASE)
+    command_match = re.match(r"^/(chat|image|img|voice|audio)\b\s*(.*)$", raw_message, flags=re.IGNORECASE)
     if command_match:
         command = command_match.group(1).strip().lower()
         mapped_mode: GeminiMode = (
@@ -917,8 +1073,6 @@ def _extract_gemini_mode_and_message(payload: GeminiRequest) -> tuple[GeminiMode
             if command in {"image", "img"}
             else "voice"
             if command in {"voice", "audio"}
-            else "video"
-            if command == "video"
             else "chat"
         )
         command_message = command_match.group(2).strip()
@@ -930,14 +1084,16 @@ def _extract_gemini_mode_and_message(payload: GeminiRequest) -> tuple[GeminiMode
     if explicit_mode == "voice" and not raw_message:
         return "voice", "Generate speech."
     if explicit_mode == "video" and not raw_message:
-        return "video", "Generate a short video concept."
+        return "chat", "Video generation has moved to the dedicated Video Generation mode."
+    if explicit_mode == "video":
+        return "chat", raw_message
     return explicit_mode, raw_message
 
 
 def _gemini_video_unavailable_message() -> str:
     return (
-        "Gemini video mode is not configured on this backend yet. "
-        "Use `/image your prompt` for image generation or `/voice your text` for audio."
+        "Video generation is now in the dedicated Video Generation feature. "
+        "Use `/image your prompt` for image generation or `/voice your text` for audio in Gemini."
     )
 
 
@@ -1072,6 +1228,94 @@ async def _generate_image(prompt: str, size: str, ratio: Literal["1:1", "16:9", 
         SAFE_SERVICE_UNAVAILABLE_MESSAGE,
         status_code=_status_code_for_ai_error(safe_message),
     ) from last_error
+
+
+async def _generate_pollinations_image(*, prompt: str, size: str, model: str) -> dict[str, str]:
+    max_attempts = 2
+    last_error: AIServiceError | None = None
+    for attempt in range(1, max_attempts + 1):
+        try:
+            generated = await _pollinations_service().generate_image(
+                prompt=prompt,
+                model=model,
+                size=size,
+                enhance=False,
+            )
+            if generated.image_bytes:
+                return {"image_base64": base64.b64encode(generated.image_bytes).decode("utf-8")}
+            if generated.image_url:
+                return {"image_url": generated.image_url}
+            raise AIServiceError("Image payload is missing.")
+        except AIServiceError as exc:
+            last_error = exc
+            logger.warning(
+                "Pollinations image generation failed | attempt=%s/%s error=%s",
+                attempt,
+                max_attempts,
+                str(exc)[:220] or SAFE_SERVICE_UNAVAILABLE_MESSAGE,
+            )
+            if attempt < max_attempts:
+                await asyncio.sleep(0.7 * attempt)
+                continue
+
+    safe_message = str(last_error or "").strip() or SAFE_SERVICE_UNAVAILABLE_MESSAGE
+    lowered = safe_message.lower()
+    if "timed out" in lowered or "timeout" in lowered:
+        raise BackendError("Image generation timed out. Please retry.", status_code=504) from last_error
+    raise BackendError(SAFE_SERVICE_UNAVAILABLE_MESSAGE, status_code=_status_code_for_ai_error(safe_message)) from last_error
+
+
+async def _generate_pollinations_video(
+    *,
+    prompt: str,
+    model: str,
+    duration_seconds: int,
+    aspect_ratio: Literal["16:9", "9:16"],
+) -> dict[str, str]:
+    max_attempts = 2
+    last_error: AIServiceError | None = None
+    for attempt in range(1, max_attempts + 1):
+        try:
+            generated = await _pollinations_service().generate_video(
+                prompt=prompt,
+                model=model,
+                duration_seconds=duration_seconds,
+                aspect_ratio=aspect_ratio,
+                enhance=False,
+            )
+            if generated.video_bytes:
+                persisted_url, _storage_path = _persist_video_bytes_to_local_asset(
+                    generated.video_bytes,
+                    prefix="generated_video",
+                    mime_type=generated.mime_type,
+                )
+                return {
+                    "video_url": persisted_url,
+                    "video_mime_type": generated.mime_type or "video/mp4",
+                }
+            if generated.video_url:
+                return {
+                    "video_url": generated.video_url,
+                    "video_mime_type": generated.mime_type or "video/mp4",
+                }
+            raise AIServiceError("Video payload is missing.")
+        except AIServiceError as exc:
+            last_error = exc
+            logger.warning(
+                "Pollinations video generation failed | attempt=%s/%s error=%s",
+                attempt,
+                max_attempts,
+                str(exc)[:220] or SAFE_SERVICE_UNAVAILABLE_MESSAGE,
+            )
+            if attempt < max_attempts:
+                await asyncio.sleep(1.0 * attempt)
+                continue
+
+    safe_message = str(last_error or "").strip() or SAFE_SERVICE_UNAVAILABLE_MESSAGE
+    lowered = safe_message.lower()
+    if "timed out" in lowered or "timeout" in lowered:
+        raise BackendError("Video generation timed out. Please retry.", status_code=504) from last_error
+    raise BackendError(SAFE_SERVICE_UNAVAILABLE_MESSAGE, status_code=_status_code_for_ai_error(safe_message)) from last_error
 
 
 async def _generate_tts(
@@ -1688,8 +1932,9 @@ async def _startup() -> None:
     )
     admin_service = _admin_service()
     logger.info(
-        "ADMIN DASHBOARD CONFIG | telegram_auth_only=%s allowlist_count=%s owner_telegram_id_set=%s frontend_present=%s service_enabled=%s",
-        True,
+        "ADMIN DASHBOARD CONFIG | telegram_auth_enabled=%s token_auth_enabled=%s allowlist_count=%s owner_telegram_id_set=%s frontend_present=%s service_enabled=%s",
+        bool(_admin_allowlist()),
+        bool(_configured_admin_signin_token()),
         len(_admin_allowlist()),
         bool(_admin_owner_telegram_id()),
         ADMIN_FRONTEND_DIR.exists(),
@@ -1877,10 +2122,12 @@ def admin_status() -> dict[str, Any]:
     service = _admin_service()
     allowlist = _admin_allowlist()
     owner_id = _admin_owner_telegram_id()
+    token_auth_enabled = bool(_configured_admin_signin_token())
     return {
         "ok": True,
         "auth_required": True,
         "telegram_auth_enabled": bool(allowlist),
+        "token_auth_enabled": token_auth_enabled,
         "telegram_id_shortcut_enabled": bool(owner_id),
         "allowlist_count": len(allowlist),
         "owner_telegram_id_configured": bool(owner_id),
@@ -1906,6 +2153,7 @@ def admin_auth_check(request: Request) -> JSONResponse:
                 "ok": True,
                 "version": VERSION,
                 "telegram_id": telegram_id,
+                "auth_method": str(session_payload.get("auth_method") or "unknown") if isinstance(session_payload, dict) else "unknown",
             },
         )
     except HTTPException as exc:
@@ -1938,7 +2186,7 @@ def _complete_admin_telegram_auth(request: Request, telegram_id: int | None, aut
         )
         return _admin_error_response(request, 403, "Telegram ID is not present in the bot database.")
 
-    session_payload = _issue_admin_session_token(int(telegram_id))
+    session_payload = _issue_admin_session_token(int(telegram_id), auth_method=auth_method)
     logger.info(
         "ADMIN TELEGRAM AUTH SUCCESS | request_id=%s telegram_id=%s auth_method=%s",
         _request_id_from_request(request) or "unknown",
@@ -1954,6 +2202,51 @@ def _complete_admin_telegram_auth(request: Request, telegram_id: int | None, aut
             "expires_at": session_payload["expires_at"],
             "ttl_seconds": session_payload["ttl_seconds"],
             "telegram_id": session_payload["telegram_id"],
+        },
+    )
+    _set_admin_session_cookie(response, str(session_payload["token"]), request=request)
+    return response
+
+
+def _complete_admin_token_auth(request: Request, raw_token: str) -> JSONResponse:
+    configured = _configured_admin_signin_token()
+    if not configured:
+        return _admin_error_response(request, 503, "Admin token sign-in is not configured.")
+    if not _validate_admin_signin_token(raw_token):
+        logger.warning(
+            "ADMIN TOKEN AUTH FAILED | request_id=%s reason=invalid_token",
+            _request_id_from_request(request) or "unknown",
+        )
+        return _admin_error_response(request, 401, "Invalid admin token.")
+
+    service = _admin_service()
+    if not service.enabled:
+        return _admin_error_response(request, 503, service.disabled_reason or "Admin data service is unavailable.")
+
+    owner_id = _admin_owner_telegram_id()
+    if owner_id and not service.is_known_telegram_user(int(owner_id)):
+        logger.warning(
+            "ADMIN TOKEN AUTH FAILED | request_id=%s owner_id=%s reason=owner_not_in_user_db",
+            _request_id_from_request(request) or "unknown",
+            owner_id,
+        )
+        return _admin_error_response(request, 403, "Admin owner Telegram ID is not present in the bot database.")
+
+    session_payload = _issue_admin_session_token(int(owner_id or 0), auth_method="token")
+    logger.info(
+        "ADMIN TOKEN AUTH SUCCESS | request_id=%s owner_id=%s",
+        _request_id_from_request(request) or "unknown",
+        owner_id or "unknown",
+    )
+    response = JSONResponse(
+        status_code=200,
+        content={
+            "ok": True,
+            "auth_method": "token",
+            "token": session_payload["token"],
+            "expires_at": session_payload["expires_at"],
+            "ttl_seconds": session_payload["ttl_seconds"],
+            "telegram_id": owner_id,
         },
     )
     _set_admin_session_cookie(response, str(session_payload["token"]), request=request)
@@ -1984,6 +2277,11 @@ async def admin_telegram_auth_widget(request: Request) -> JSONResponse:
     if telegram_id is None:
         return _admin_error_response(request, 401, "Telegram identity is missing or invalid.")
     return _complete_admin_telegram_auth(request, telegram_id, auth_method="telegram_widget")
+
+
+@app.post("/api/admin/auth/token")
+def admin_token_auth(request: Request, payload: AdminTokenAuthRequest) -> JSONResponse:
+    return _complete_admin_token_auth(request, payload.token)
 
 
 @app.post("/api/admin/auth/logout")
@@ -2294,6 +2592,12 @@ async def admin_media_proxy(request: Request, ref: str) -> Response:
             media_type = "image/webp"
         elif file_path.endswith(".gif"):
             media_type = "image/gif"
+        elif file_path.endswith(".mp4"):
+            media_type = "video/mp4"
+        elif file_path.endswith(".webm"):
+            media_type = "video/webm"
+        elif file_path.endswith(".mov"):
+            media_type = "video/quicktime"
         return Response(content=payload, media_type=media_type)
 
     raise HTTPException(status_code=400, detail="Unsupported media reference.")
@@ -2944,12 +3248,17 @@ async def image_endpoint(request: Request, payload: ImageRequest) -> JSONRespons
     conversation_id = _extract_conversation_id(request, identity, feature_used)
     referral_code = _extract_referral_code(request)
     user_prompt = payload.effective_prompt
+    image_model_option = payload.effective_model_option
+    image_model_label = _image_model_label(image_model_option)
+    image_model_id = _image_model_id_for_option(settings, image_model_option)
+    provider_source = "jo_ai" if image_model_option == IMAGE_MODEL_OPTION_JO else "pollinations"
     logger.info(
-        "API IMAGE START | request_id=%s user=%s prompt_len=%s ratio=%s",
+        "API IMAGE START | request_id=%s user=%s prompt_len=%s ratio=%s model=%s",
         request_id or "unknown",
         user_id,
         len(user_prompt or ""),
         payload.effective_ratio,
+        image_model_label,
     )
     refusal = _maybe_block_sensitive_request(payload.effective_prompt, payload.ratio)
     if refusal:
@@ -2958,11 +3267,11 @@ async def image_endpoint(request: Request, payload: ImageRequest) -> JSONRespons
             message_type="image",
             user_message=user_prompt,
             bot_reply=SAFE_INTERNAL_DETAILS_REFUSAL,
-            model_used=settings.image_model,
+            model_used=image_model_label,
             success=False,
             image_increment=1,
             frontend_source=frontend_source,
-            feature_used=feature_used,
+            feature_used=f"{feature_used}:{image_model_option}",
             conversation_id=conversation_id,
             text_content=user_prompt,
             mark_started=bool(identity),
@@ -2984,17 +3293,28 @@ async def image_endpoint(request: Request, payload: ImageRequest) -> JSONRespons
             prompt_hash,
             len(enhanced_prompt),
         )
-        result_payload = await asyncio.wait_for(
-            _generate_image(
-                prompt=enhanced_prompt,
-                size=payload.effective_size,
-                ratio=payload.effective_ratio,
-            ),
-            timeout=IMAGE_ENDPOINT_TIMEOUT_SECONDS,
-        )
+        if image_model_option == IMAGE_MODEL_OPTION_JO:
+            result_payload = await asyncio.wait_for(
+                _generate_image(
+                    prompt=enhanced_prompt,
+                    size=payload.effective_size,
+                    ratio=payload.effective_ratio,
+                ),
+                timeout=IMAGE_ENDPOINT_TIMEOUT_SECONDS,
+            )
+        else:
+            result_payload = await asyncio.wait_for(
+                _generate_pollinations_image(
+                    prompt=enhanced_prompt,
+                    size=payload.effective_size,
+                    model=image_model_id,
+                ),
+                timeout=IMAGE_ENDPOINT_TIMEOUT_SECONDS,
+            )
         response_payload: dict[str, Any] = {
             "output": user_prompt,
             "ratio": payload.effective_ratio,
+            "model_label": image_model_label,
         }
         response_payload.update(result_payload)
         persisted_storage_path: str | None = None
@@ -3014,11 +3334,11 @@ async def image_endpoint(request: Request, payload: ImageRequest) -> JSONRespons
             message_type="image",
             user_message=user_prompt,
             bot_reply=str(response_payload.get("output", "Image generated successfully.")),
-            model_used=settings.image_model,
+            model_used=image_model_label,
             success=True,
             image_increment=1,
             frontend_source=frontend_source,
-            feature_used=feature_used,
+            feature_used=f"{feature_used}:{image_model_option}",
             conversation_id=conversation_id,
             text_content=str(response_payload.get("output", "Image generated successfully.")),
             media=TrackingMedia(
@@ -3029,7 +3349,7 @@ async def image_endpoint(request: Request, payload: ImageRequest) -> JSONRespons
                     or (None if str(response_payload.get("image_url") or "").strip() else "inline_base64:response")
                 ),
                 mime_type="image/png" if "image_base64" in response_payload else None,
-                provider_source="nvidia",
+                provider_source=provider_source,
                 media_origin="generated",
                 media_status="available" if ("image_url" in response_payload or "image_base64" in response_payload) else "missing",
                 media_error_reason=None if ("image_url" in response_payload or "image_base64" in response_payload) else "missing_image_payload",
@@ -3053,16 +3373,16 @@ async def image_endpoint(request: Request, payload: ImageRequest) -> JSONRespons
             message_type="image",
             user_message=user_prompt,
             bot_reply=timeout_message,
-            model_used=settings.image_model,
+            model_used=image_model_label,
             success=False,
             image_increment=1,
             frontend_source=frontend_source,
-            feature_used=feature_used,
+            feature_used=f"{feature_used}:{image_model_option}",
             conversation_id=conversation_id,
             text_content=user_prompt,
             media=TrackingMedia(
                 media_type="image",
-                provider_source="nvidia",
+                provider_source=provider_source,
                 media_origin="generated",
                 media_status="failed",
                 media_error_reason="timeout",
@@ -3086,16 +3406,16 @@ async def image_endpoint(request: Request, payload: ImageRequest) -> JSONRespons
             message_type="image",
             user_message=user_prompt,
             bot_reply=exc.message,
-            model_used=settings.image_model,
+            model_used=image_model_label,
             success=False,
             image_increment=1,
             frontend_source=frontend_source,
-            feature_used=feature_used,
+            feature_used=f"{feature_used}:{image_model_option}",
             conversation_id=conversation_id,
             text_content=user_prompt,
             media=TrackingMedia(
                 media_type="image",
-                provider_source="nvidia",
+                provider_source=provider_source,
                 media_origin="generated",
                 media_status="failed",
                 media_error_reason=exc.message,
@@ -3115,13 +3435,173 @@ async def image_endpoint(request: Request, payload: ImageRequest) -> JSONRespons
             payload_response["request_id"] = request_id
         return JSONResponse(status_code=exc.status_code, content=payload_response)
     except Exception as exc:
-        logger.exception(
-            "API IMAGE FAILED | request_id=%s user=%s error=%s",
-            request_id or "unknown",
-            user_id,
-            exc,
+        logger.exception("API IMAGE FAILED | request_id=%s user=%s", request_id or "unknown", user_id)
+        payload_response = {"error": SAFE_SERVICE_UNAVAILABLE_MESSAGE}
+        if request_id:
+            payload_response["request_id"] = request_id
+        return JSONResponse(status_code=500, content=payload_response)
+
+
+@app.post("/video")
+@app.post("/api/video")
+async def video_endpoint(request: Request, payload: VideoRequest) -> JSONResponse:
+    request_id = _request_id_from_request(request)
+    identity = _resolve_tracking_identity(request, payload)
+    user_id = identity.telegram_id if identity else "unknown"
+    settings = get_settings()
+    frontend_source = _resolve_frontend_source(request)
+    feature_used = "video_generation"
+    conversation_id = _extract_conversation_id(request, identity, feature_used)
+    referral_code = _extract_referral_code(request)
+    user_prompt = payload.effective_prompt
+    video_model_option = payload.effective_model_option
+    video_model_label = _video_model_label(video_model_option)
+    video_model_id = _video_model_id_for_option(settings, video_model_option)
+    duration_seconds = payload.effective_duration_seconds
+    aspect_ratio = payload.effective_aspect_ratio
+
+    logger.info(
+        "API VIDEO START | request_id=%s user=%s prompt_len=%s duration=%s aspect_ratio=%s model=%s",
+        request_id or "unknown",
+        user_id,
+        len(user_prompt or ""),
+        duration_seconds,
+        aspect_ratio,
+        video_model_label,
+    )
+    refusal = _maybe_block_sensitive_request(user_prompt, aspect_ratio, str(duration_seconds))
+    if refusal:
+        await _track_api_action(
+            identity=identity,
+            message_type="video",
+            user_message=user_prompt,
+            bot_reply=SAFE_INTERNAL_DETAILS_REFUSAL,
+            model_used=video_model_label,
+            success=False,
+            message_increment=1,
+            frontend_source=frontend_source,
+            feature_used=f"{feature_used}:{video_model_option}",
+            conversation_id=conversation_id,
+            text_content=user_prompt,
+            mark_started=bool(identity),
+            referral_code=referral_code,
         )
-        raise
+        return refusal
+
+    try:
+        enhanced_prompt = build_enhanced_video_prompt(
+            user_prompt,
+            aspect_ratio=aspect_ratio,
+            duration_seconds=duration_seconds,
+        ) or user_prompt
+        result_payload = await asyncio.wait_for(
+            _generate_pollinations_video(
+                prompt=enhanced_prompt,
+                model=video_model_id,
+                duration_seconds=duration_seconds,
+                aspect_ratio=aspect_ratio,
+            ),
+            timeout=VIDEO_ENDPOINT_TIMEOUT_SECONDS,
+        )
+        response_payload: dict[str, Any] = {
+            "output": user_prompt,
+            "model_label": video_model_label,
+            "duration_seconds": duration_seconds,
+            "aspect_ratio": aspect_ratio,
+        }
+        response_payload.update(result_payload)
+        media_url = str(response_payload.get("video_url") or "").strip() or None
+        mime_type = str(response_payload.get("video_mime_type") or "").strip() or "video/mp4"
+        storage_path: str | None = None
+        if media_url and media_url.startswith("/media/"):
+            storage_path = f"local_file:{media_url.split('/', maxsplit=2)[-1]}"
+        await _track_api_action(
+            identity=identity,
+            message_type="video",
+            user_message=user_prompt,
+            bot_reply=str(response_payload.get("output", "Video generated successfully.")),
+            model_used=video_model_label,
+            success=True,
+            message_increment=1,
+            frontend_source=frontend_source,
+            feature_used=f"{feature_used}:{video_model_option}",
+            conversation_id=conversation_id,
+            text_content=str(response_payload.get("output", "Video generated successfully.")),
+            media=TrackingMedia(
+                media_type="video",
+                media_url=media_url,
+                storage_path=storage_path,
+                mime_type=mime_type,
+                provider_source="pollinations",
+                media_origin="generated",
+                media_status="available" if media_url else "missing",
+                media_error_reason=None if media_url else "missing_video_payload",
+            ),
+            mark_started=bool(identity),
+            referral_code=referral_code,
+        )
+        return JSONResponse(status_code=200, content=response_payload)
+    except asyncio.TimeoutError:
+        timeout_message = "Video generation timed out. Please retry."
+        await _track_api_action(
+            identity=identity,
+            message_type="video",
+            user_message=user_prompt,
+            bot_reply=timeout_message,
+            model_used=video_model_label,
+            success=False,
+            message_increment=1,
+            frontend_source=frontend_source,
+            feature_used=f"{feature_used}:{video_model_option}",
+            conversation_id=conversation_id,
+            text_content=user_prompt,
+            media=TrackingMedia(
+                media_type="video",
+                provider_source="pollinations",
+                media_origin="generated",
+                media_status="failed",
+                media_error_reason="timeout",
+            ),
+            mark_started=bool(identity),
+            referral_code=referral_code,
+        )
+        payload_response: dict[str, Any] = {"error": timeout_message}
+        if request_id:
+            payload_response["request_id"] = request_id
+        return JSONResponse(status_code=504, content=payload_response)
+    except BackendError as exc:
+        await _track_api_action(
+            identity=identity,
+            message_type="video",
+            user_message=user_prompt,
+            bot_reply=exc.message,
+            model_used=video_model_label,
+            success=False,
+            message_increment=1,
+            frontend_source=frontend_source,
+            feature_used=f"{feature_used}:{video_model_option}",
+            conversation_id=conversation_id,
+            text_content=user_prompt,
+            media=TrackingMedia(
+                media_type="video",
+                provider_source="pollinations",
+                media_origin="generated",
+                media_status="failed",
+                media_error_reason=exc.message,
+            ),
+            mark_started=bool(identity),
+            referral_code=referral_code,
+        )
+        payload_response = {"error": exc.message}
+        if request_id:
+            payload_response["request_id"] = request_id
+        return JSONResponse(status_code=exc.status_code, content=payload_response)
+    except Exception:
+        logger.exception("API VIDEO FAILED | request_id=%s user=%s", request_id or "unknown", user_id)
+        payload_response = {"error": SAFE_SERVICE_UNAVAILABLE_MESSAGE}
+        if request_id:
+            payload_response["request_id"] = request_id
+        return JSONResponse(status_code=500, content=payload_response)
 
 
 @app.post("/vision")

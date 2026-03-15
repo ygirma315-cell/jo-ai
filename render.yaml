@@ -16,6 +16,14 @@ services:
         value: meta/llama-3.1-8b-instruct
       - key: IMAGE_MODEL
         value: black-forest-labs/flux.1-dev
+      - key: POLLINATIONS_BASE_URL
+        value: https://gen.pollinations.ai
+      - key: POLLINATIONS_IMAGE_MODEL_CHAT_GBT
+        value: gpt-image-1-mini
+      - key: POLLINATIONS_IMAGE_MODEL_GROK_IMAGINE
+        value: grok-imagine
+      - key: POLLINATIONS_VIDEO_MODEL_GROK_TEXT_TO_VIDEO
+        value: grok-video
       - key: DEEPSEEK_MODEL
         value: deepseek-ai/deepseek-v3.2
       - key: KIMI_MODEL
@@ -47,6 +55,8 @@ services:
         sync: false
       - key: IMAGE_API_KEY
         sync: false
+      - key: POLLINATIONS_API_KEY
+        sync: false
       - key: DEEPSEEK_API_KEY
         sync: false
       - key: KIMI_API_KEY
@@ -61,6 +71,10 @@ services:
         generateValue: true
       - key: ADMIN_DASHBOARD_OWNER_TELEGRAM_ID
         value: "7799059248"
+      - key: ADMIN_SIGNIN_TOKEN
+        sync: false
+      - key: ADMIN_DASHBOARD_TOKEN
+        sync: false
       - key: ADMIN_DASHBOARD_ALLOWLIST_TELEGRAM_IDS
         value: "7799059248"
       - key: ADMIN_DASHBOARD_TELEGRAM_BOT_TOKEN

@@ -25,8 +25,8 @@ from bot.services.ai_service import (
     ChatService,
     GeminiChatService,
     ImageGenerationService,
+    PollinationsMediaService,
     TextToSpeechService,
-    VideoGenerationService,
 )
 from bot.services.session_manager import SessionManager
 from bot.services.tracking_service import SupabaseTrackingService
@@ -269,11 +269,17 @@ async def create_bot_runtime() -> BotRuntime:
         model=settings.image_model,
         base_url=settings.ai_base_url,
     )
+    dispatcher["pollinations_media_service"] = PollinationsMediaService(
+        api_key=settings.pollinations_api_key,
+        base_url=settings.pollinations_base_url,
+        image_model_chat_gbt=settings.pollinations_image_model_chat_gbt,
+        image_model_grok_imagine=settings.pollinations_image_model_grok_imagine,
+        video_model_grok_text_to_video=settings.pollinations_video_model_grok_text_to_video,
+    )
     dispatcher["tts_service"] = TextToSpeechService(
         api_key=settings.tts_api_key or settings.nvidia_api_key or settings.ai_api_key,
         function_id=settings.tts_function_id,
     )
-    dispatcher["video_generation_service"] = VideoGenerationService(api_key=settings.nvidia_api_key)
     tracking_service = SupabaseTrackingService(settings)
     dispatcher["tracking_service"] = tracking_service
     logger.info(
