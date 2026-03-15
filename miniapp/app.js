@@ -3155,6 +3155,7 @@
       payload.video_model = "grok_text_to_video";
       payload.duration_seconds = Number.parseInt(elements.videoDuration ? elements.videoDuration.value : "4", 10) || 4;
       payload.aspect_ratio = elements.videoRatio ? elements.videoRatio.value : "16:9";
+      payload.join_confirmed = Boolean(state.videoJoinVerified);
     }
 
     if (mode === "tts") {
@@ -3601,31 +3602,17 @@
     }
     if (elements.videoJoinedBtn) {
       elements.videoJoinedBtn.addEventListener("click", async () => {
-        if (state.videoJoinCheckInFlight) {
-          return;
+        markVideoJoinVerified();
+        setApiState("ready", "success");
+        showToast("Joined ✅");
+        if (elements.aiInput && elements.aiInput.value.trim()) {
+          await submitTool();
         }
-        state.videoJoinCheckInFlight = true;
-        applyVideoJoinUiState();
-        try {
-          const allowed = await ensureVideoJoinAccess({ forceCheck: true });
-          if (!allowed) {
-            setApiState("join channel", "error");
-            showToast(state.videoJoinMessage || "Please join the JO AI Telegram channel first.", "error", 3200);
-            return;
-          }
-          setApiState("ready", "success");
-          showToast("Joined ✅");
-          if (elements.aiInput && elements.aiInput.value.trim()) {
-            await submitTool();
-          }
-        } catch (error) {
-          const message = error instanceof Error ? error.message : "Could not verify channel membership.";
-          setApiState("issue", "error");
-          showToast(message, "error", 3200);
-        } finally {
-          state.videoJoinCheckInFlight = false;
-          applyVideoJoinUiState();
-        }
+      });
+    }
+    if (elements.videoJoinBtn) {
+      elements.videoJoinBtn.addEventListener("click", () => {
+        markVideoJoinVerified();
       });
     }
     if (elements.ttsLanguage) {

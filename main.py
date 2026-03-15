@@ -386,6 +386,7 @@ class VideoRequest(TrackingRequestBase):
     message: str | None = Field(default=None, max_length=4000)
     model: str | None = Field(default=None, max_length=120)
     video_model: str | None = Field(default=None, max_length=120)
+    join_confirmed: bool | None = Field(default=None)
     duration_seconds: int | None = Field(default=None, ge=1, le=10)
     duration: int | None = Field(default=None, ge=1, le=10)
     aspect_ratio: Literal["16:9", "9:16"] | None = Field(default=None)
@@ -3609,6 +3610,7 @@ async def video_endpoint(request: Request, payload: VideoRequest) -> JSONRespons
     feature_used = "video_generation"
     conversation_id = _extract_conversation_id(request, identity, feature_used)
     referral_code = _extract_referral_code(request)
+    manual_join_confirmed = bool(payload.join_confirmed)
     user_prompt = payload.effective_prompt
     video_model_option = payload.effective_model_option
     video_model_label = _video_model_label(video_model_option)
@@ -3625,12 +3627,12 @@ async def video_endpoint(request: Request, payload: VideoRequest) -> JSONRespons
         aspect_ratio,
         video_model_label,
     )
-    if identity is None:
+    if identity is None and not manual_join_confirmed:
         return JSONResponse(status_code=401, content=_video_join_required_payload(request_id=request_id))
 
     join_required_message = _video_join_required_text()
 
-    if not await _is_video_generation_allowed(identity.telegram_id):
+    if identity is not None and not manual_join_confirmed and not await _is_video_generation_allowed(identity.telegram_id):
         await _track_api_action(
             identity=identity,
             message_type="video",
