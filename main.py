@@ -1444,6 +1444,18 @@ def _video_join_required_text() -> str:
     )
 
 
+def _video_join_required_payload(*, request_id: str | None = None) -> dict[str, Any]:
+    payload: dict[str, Any] = {
+        "error": _video_join_required_text(),
+        "join_required": True,
+        "join_url": VIDEO_JOIN_CHANNEL_URL,
+        "joined": False,
+    }
+    if request_id:
+        payload["request_id"] = request_id
+    return payload
+
+
 async def _is_video_generation_allowed(telegram_id: int) -> bool:
     runtime = _get_bot_runtime()
     if runtime is None:
@@ -3537,6 +3549,28 @@ async def image_endpoint(request: Request, payload: ImageRequest) -> JSONRespons
         return JSONResponse(status_code=500, content=payload_response)
 
 
+@app.post("/video/join-status")
+@app.post("/api/video/join-status")
+async def video_join_status_endpoint(request: Request, payload: TrackingRequestBase) -> JSONResponse:
+    request_id = _request_id_from_request(request)
+    identity = _resolve_tracking_identity(request, payload)
+    if identity is None:
+        return JSONResponse(status_code=401, content=_video_join_required_payload(request_id=request_id))
+
+    if await _is_video_generation_allowed(identity.telegram_id):
+        payload_response: dict[str, Any] = {
+            "joined": True,
+            "join_required": False,
+            "join_url": VIDEO_JOIN_CHANNEL_URL,
+            "message": "Joined ✅",
+        }
+        if request_id:
+            payload_response["request_id"] = request_id
+        return JSONResponse(status_code=200, content=payload_response)
+
+    return JSONResponse(status_code=200, content=_video_join_required_payload(request_id=request_id))
+
+
 @app.post("/video")
 @app.post("/api/video")
 async def video_endpoint(request: Request, payload: VideoRequest) -> JSONResponse:
@@ -3564,12 +3598,10 @@ async def video_endpoint(request: Request, payload: VideoRequest) -> JSONRespons
         aspect_ratio,
         video_model_label,
     )
-    join_required_message = _video_join_required_text()
     if identity is None:
-        payload_response: dict[str, Any] = {"error": join_required_message}
-        if request_id:
-            payload_response["request_id"] = request_id
-        return JSONResponse(status_code=401, content=payload_response)
+        return JSONResponse(status_code=401, content=_video_join_required_payload(request_id=request_id))
+
+    join_required_message = _video_join_required_text()
 
     if not await _is_video_generation_allowed(identity.telegram_id):
         await _track_api_action(
@@ -3587,10 +3619,7 @@ async def video_endpoint(request: Request, payload: VideoRequest) -> JSONRespons
             mark_started=True,
             referral_code=referral_code,
         )
-        payload_response = {"error": join_required_message}
-        if request_id:
-            payload_response["request_id"] = request_id
-        return JSONResponse(status_code=403, content=payload_response)
+        return JSONResponse(status_code=403, content=_video_join_required_payload(request_id=request_id))
 
     refusal = _maybe_block_sensitive_request(user_prompt, aspect_ratio, str(duration_seconds))
     if refusal:

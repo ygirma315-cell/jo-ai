@@ -1636,6 +1636,26 @@ body.tool-page .version-badge {
   min-width: 0;
 }
 
+.tool-page .video-join-gate {
+  flex: 1 1 100%;
+  display: grid;
+  gap: 8px;
+  padding: 10px 12px;
+  border: 1px dashed rgba(15, 118, 110, 0.35);
+  border-radius: 14px;
+  background: rgba(15, 118, 110, 0.06);
+}
+
+.tool-page .video-join-gate .hint {
+  margin: 0;
+}
+
+.tool-page .video-join-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
 .tool-page .composer-upload {
   flex: 1 1 100%;
   min-width: 0;

@@ -12,6 +12,7 @@
   const CONVERSATION_STORAGE_PREFIX = "jo_conversation_";
   const FRONTEND_VERSION = "v1.6.1";
   const SITE_BASE_URL = "https://ygirma315-cell.github.io/jo-ai/";
+  const VIDEO_JOIN_CHANNEL_URL = "https://t.me/JO_AI_CHAT_BOT";
   const MAX_HISTORY_ITEMS = 18;
   const MAX_UPLOAD_BYTES = 8 * 1024 * 1024;
   const MAX_CODE_UPLOAD_BYTES = 1_500_000;
@@ -282,6 +283,11 @@
     loadingTimer: null,
     loadingIndex: 0,
     pendingId: "",
+    videoJoinVerified: false,
+    videoJoinRequired: false,
+    videoJoinMessage: "",
+    videoJoinUrl: VIDEO_JOIN_CHANNEL_URL,
+    videoJoinCheckInFlight: false,
     history: [],
     lastOutputText: "",
     lastImageDataUrl: "",
@@ -467,6 +473,10 @@
       videoDuration: byId("videoDuration"),
       videoRatioWrap: byId("videoRatioWrap"),
       videoRatio: byId("videoRatio"),
+      videoJoinGate: byId("videoJoinGate"),
+      videoJoinMessage: byId("videoJoinMessage"),
+      videoJoinBtn: byId("videoJoinBtn"),
+      videoJoinedBtn: byId("videoJoinedBtn"),
       ttsLanguageWrap: byId("ttsLanguageWrap"),
       ttsLanguage: byId("ttsLanguage"),
       ttsVoiceWrap: byId("ttsVoiceWrap"),
@@ -1536,6 +1546,53 @@
     }
   }
 
+  function isVideoToolMode() {
+    return getToolId() === "video";
+  }
+
+  function isVideoJoinRequiredMessage(text) {
+    return /join the jo ai channel/i.test(String(text || ""));
+  }
+
+  function applyVideoJoinUiState() {
+    if (!elements.videoJoinGate) {
+      return;
+    }
+
+    const shouldShow = isVideoToolMode() && state.videoJoinRequired;
+    elements.videoJoinGate.hidden = !shouldShow;
+    if (!shouldShow) {
+      return;
+    }
+
+    if (elements.videoJoinMessage) {
+      elements.videoJoinMessage.textContent =
+        state.videoJoinMessage || "Please join the JO AI Telegram channel to unlock video generation.";
+    }
+    if (elements.videoJoinBtn) {
+      elements.videoJoinBtn.href = state.videoJoinUrl || VIDEO_JOIN_CHANNEL_URL;
+    }
+    if (elements.videoJoinedBtn) {
+      elements.videoJoinedBtn.disabled = state.videoJoinCheckInFlight;
+    }
+  }
+
+  function markVideoJoinRequired(message, joinUrl) {
+    state.videoJoinVerified = false;
+    state.videoJoinRequired = true;
+    state.videoJoinMessage = String(message || "").trim() || "Please join the JO AI channel first to use Video Generation.";
+    state.videoJoinUrl = String(joinUrl || "").trim() || VIDEO_JOIN_CHANNEL_URL;
+    applyVideoJoinUiState();
+  }
+
+  function markVideoJoinVerified() {
+    state.videoJoinVerified = true;
+    state.videoJoinRequired = false;
+    state.videoJoinMessage = "";
+    state.videoJoinUrl = VIDEO_JOIN_CHANNEL_URL;
+    applyVideoJoinUiState();
+  }
+
   function syncOutputButtons() {
     if (elements.copyBtn) {
       elements.copyBtn.disabled = state.isBusy || !state.lastOutputText;
@@ -2195,6 +2252,7 @@
       elements.uploadInfo.textContent = "No image selected.";
     }
     clearKimiPreview();
+    applyVideoJoinUiState();
     setApiState("idle", "muted");
     setLoadingHint("Ready when you are.");
     updateSendButtonState();
@@ -2446,6 +2504,96 @@
     }
   }
 
+  function extractVideoJoinInfoFromPayload(data, fallbackMessage = "") {
+    const joinUrl =
+      data && typeof data.join_url === "string" && data.join_url.trim()
+        ? data.join_url.trim()
+        : VIDEO_JOIN_CHANNEL_URL;
+    const messageCandidates = [
+      data && typeof data.message === "string" ? data.message : "",
+      data && typeof data.error === "string" ? data.error : "",
+      fallbackMessage,
+    ];
+    const resolvedMessage =
+      messageCandidates.map((value) => String(value || "").trim()).find(Boolean) ||
+      "Please join the JO AI channel first to use Video Generation.";
+    const joinRequired = Boolean(data && data.join_required === true) || isVideoJoinRequiredMessage(resolvedMessage);
+    return { joinRequired, message: resolvedMessage, joinUrl };
+  }
+
+  async function requestVideoJoinStatus(apiBase) {
+    const trackingPayload = { ...buildTrackingPayloadFields(), frontend_source: "mini_app" };
+    const headers = buildTrackingHeaders();
+    const attempts = ["/api/video/join-status", "/video/join-status"];
+    let lastError = "";
+
+    for (const path of attempts) {
+      try {
+        const { response, data, requestId } = await fetchJsonWithTimeout(
+          `${apiBase}${path}`,
+          {
+            method: "POST",
+            headers: { ...headers },
+            body: JSON.stringify(trackingPayload),
+          },
+          12000
+        );
+
+        if (response.ok) {
+          const joinInfo = extractVideoJoinInfoFromPayload(data);
+          if (data && data.joined === true) {
+            return { joined: true, message: "Joined ✅", joinUrl: joinInfo.joinUrl };
+          }
+          if (joinInfo.joinRequired || (data && data.joined === false)) {
+            return { joined: false, message: joinInfo.message, joinUrl: joinInfo.joinUrl };
+          }
+          return { joined: true, message: "Joined ✅", joinUrl: joinInfo.joinUrl };
+        }
+
+        if ([404, 405, 501].includes(response.status)) {
+          continue;
+        }
+
+        const backendMessage = extractBackendErrorMessage(data, response.status);
+        const joinInfo = extractVideoJoinInfoFromPayload(data, backendMessage);
+        if (requestId && !joinInfo.message.includes("request ")) {
+          joinInfo.message = `${joinInfo.message} (request ${requestId})`;
+        }
+        return { joined: false, message: joinInfo.message, joinUrl: joinInfo.joinUrl };
+      } catch (error) {
+        lastError = error instanceof Error ? error.message : String(error || "");
+      }
+    }
+
+    throw new Error(lastError || "Could not verify channel membership right now.");
+  }
+
+  async function ensureVideoJoinAccess(options = {}) {
+    if (!isVideoToolMode()) {
+      return true;
+    }
+
+    const forceCheck = options && options.forceCheck === true;
+    if (state.videoJoinVerified && !forceCheck) {
+      markVideoJoinVerified();
+      return true;
+    }
+
+    const apiBase = await resolveApiBase();
+    if (!apiBase) {
+      throw new Error("The assistant is not ready yet.");
+    }
+
+    const status = await requestVideoJoinStatus(apiBase);
+    if (status.joined) {
+      markVideoJoinVerified();
+      return true;
+    }
+
+    markVideoJoinRequired(status.message, status.joinUrl);
+    return false;
+  }
+
   function endpointAttempts(mode, payload) {
     const basePayload = { ...payload };
     const trackingFields = {};
@@ -2682,6 +2830,15 @@
               lastServerMessage = backendMessage;
             }
 
+            if (mode === "video" && data && data.join_required === true) {
+              const joinInfo = extractVideoJoinInfoFromPayload(data, backendMessage);
+              const joinError = new Error(joinInfo.message);
+              joinError.join_required = true;
+              joinError.join_url = joinInfo.joinUrl;
+              joinError.request_id = requestId || "";
+              throw joinError;
+            }
+
             console.warn("[JO AI Mini App] request.http_error", {
               mode,
               path: attempt.path,
@@ -2702,6 +2859,9 @@
 
             throw new Error(backendMessage || `Request failed with status ${response.status}.`);
           } catch (error) {
+            if (error && typeof error === "object" && error.join_required === true) {
+              throw error;
+            }
             const message = error instanceof Error ? error.message : String(error);
             const timeoutHit = isTimeoutMessage(message);
             const networkHit = isLikelyNetworkMessage(message);
@@ -2859,6 +3019,11 @@
     if (elements.kimiImageWrap) {
       elements.kimiImageWrap.hidden = !config.needsUpload;
     }
+    if (!isVideoToolMode()) {
+      state.videoJoinRequired = false;
+      state.videoJoinMessage = "";
+    }
+    applyVideoJoinUiState();
     resizeComposerInput(true);
     updateSendButtonState();
   }
@@ -3131,8 +3296,25 @@
       return;
     }
 
+    const mode = getToolId();
+    if (mode === "video") {
+      try {
+        const allowed = await ensureVideoJoinAccess();
+        if (!allowed) {
+          setApiState("join channel", "error");
+          showToast(state.videoJoinMessage || "Please join the JO AI Telegram channel first.", "error", 3200);
+          return;
+        }
+      } catch (error) {
+        const message = error instanceof Error ? error.message : "Could not verify channel membership.";
+        setApiState("issue", "error");
+        showToast(message, "error", 3200);
+        return;
+      }
+    }
+
     console.info("[JO AI Mini App] submit.start", {
-      mode: getToolId(),
+      mode,
       payload: summarizePayloadForLog(payload),
     });
 
@@ -3173,7 +3355,7 @@
     scrollHistoryToBottom(true);
 
     try {
-      const data = await requestWithFallback(getToolId(), payload);
+      const data = await requestWithFallback(mode, payload);
       if (data && typeof data.error === "string" && data.error.trim()) {
         throw new Error(data.error.trim());
       }
@@ -3249,14 +3431,14 @@
         videoMimeType,
         audioDataUrl,
         audioFileName,
-        autoPlayAudio: getToolId() === "gpt_audio" && Boolean(audioDataUrl),
+        autoPlayAudio: mode === "gpt_audio" && Boolean(audioDataUrl),
         codeFileDataUrl,
         codeFileName,
         timestamp: Date.now(),
       });
 
       console.info("[JO AI Mini App] submit.success", {
-        mode: getToolId(),
+        mode,
         endpoint: data && typeof data._endpoint === "string" ? data._endpoint : "",
         request_id: data && typeof data._request_id === "string" ? data._request_id : "",
         has_image: Boolean(imageDataUrl),
@@ -3265,22 +3447,35 @@
         has_code_file: Boolean(codeFileDataUrl),
       });
 
+      if (mode === "video") {
+        markVideoJoinVerified();
+      }
       setApiState("ready", "success");
       showToast("Response ready.");
     } catch (error) {
       const message = error instanceof Error ? error.message : "The assistant could not complete this request.";
+      const joinRequired =
+        mode === "video" &&
+        (Boolean(error && typeof error === "object" && error.join_required === true) || isVideoJoinRequiredMessage(message));
+      if (joinRequired) {
+        const joinUrl =
+          error && typeof error === "object" && typeof error.join_url === "string" && error.join_url.trim()
+            ? error.join_url.trim()
+            : VIDEO_JOIN_CHANNEL_URL;
+        markVideoJoinRequired(message, joinUrl);
+      }
       console.error("[JO AI Mini App] submit.failed", {
-        mode: getToolId(),
+        mode,
         message,
         details: error && typeof error === "object" && "details" in error ? error.details : [],
       });
       replacePendingMessage({
         id: createId(),
         role: "assistant",
-        text: `Request failed\n\n${message}`,
+        text: joinRequired ? message : `Request failed\n\n${message}`,
         timestamp: Date.now(),
       });
-      setApiState("issue", "error");
+      setApiState(joinRequired ? "join channel" : "issue", "error");
       showToast(message, "error", 3200);
     } finally {
       setBusy(false);
@@ -3404,6 +3599,35 @@
     if (elements.videoRatio) {
       elements.videoRatio.addEventListener("change", updateSendButtonState);
     }
+    if (elements.videoJoinedBtn) {
+      elements.videoJoinedBtn.addEventListener("click", async () => {
+        if (state.videoJoinCheckInFlight) {
+          return;
+        }
+        state.videoJoinCheckInFlight = true;
+        applyVideoJoinUiState();
+        try {
+          const allowed = await ensureVideoJoinAccess({ forceCheck: true });
+          if (!allowed) {
+            setApiState("join channel", "error");
+            showToast(state.videoJoinMessage || "Please join the JO AI Telegram channel first.", "error", 3200);
+            return;
+          }
+          setApiState("ready", "success");
+          showToast("Joined ✅");
+          if (elements.aiInput && elements.aiInput.value.trim()) {
+            await submitTool();
+          }
+        } catch (error) {
+          const message = error instanceof Error ? error.message : "Could not verify channel membership.";
+          setApiState("issue", "error");
+          showToast(message, "error", 3200);
+        } finally {
+          state.videoJoinCheckInFlight = false;
+          applyVideoJoinUiState();
+        }
+      });
+    }
     if (elements.ttsLanguage) {
       elements.ttsLanguage.addEventListener("change", updateSendButtonState);
     }
@@ -3428,6 +3652,7 @@
 
     bindComposerViewportBehavior();
     resizeComposerInput(true);
+    applyVideoJoinUiState();
     updateSendButtonState();
   }
   function initHomePage() {

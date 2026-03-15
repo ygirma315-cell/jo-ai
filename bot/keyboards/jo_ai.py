@@ -102,8 +102,9 @@ def video_options_keyboard(
     for label, token in ratio_options:
         prefix = "✅ " if label == ratio else ""
         builder.button(text=f"{prefix}{label}", callback_data=f"joaivid:ratio:{token}")
+    builder.button(text="🎬 Generate Video", callback_data="joaivid:generate")
     _append_back_main(builder, "joai:video")
-    builder.adjust(3, 2, 2)
+    builder.adjust(3, 2, 1, 2)
     return builder.as_markup()
 
 

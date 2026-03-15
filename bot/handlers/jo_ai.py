@@ -12,7 +12,7 @@ from typing import Literal
 from aiogram import F, Router
 from aiogram.filters import Command
 from aiogram.exceptions import TelegramBadRequest
-from aiogram.types import BufferedInputFile, CallbackQuery, InlineKeyboardMarkup, Message
+from aiogram.types import BufferedInputFile, CallbackQuery, InlineKeyboardButton, InlineKeyboardMarkup, Message
 from aiogram.utils.chat_action import ChatActionSender
 
 from bot.constants import (
@@ -171,6 +171,16 @@ def _video_join_required_text() -> str:
         "Please join the JO AI channel first to use Video Generation.\n"
         f"Join here: {VIDEO_JOIN_CHANNEL_URL}\n"
         "After joining, try Video Generation again."
+    )
+
+
+def _video_join_required_keyboard() -> InlineKeyboardMarkup:
+    return InlineKeyboardMarkup(
+        inline_keyboard=[
+            [InlineKeyboardButton(text="✈️ Join JO AI Channel", url=VIDEO_JOIN_CHANNEL_URL)],
+            [InlineKeyboardButton(text="Joined ✅", callback_data="joaivid:joined_check")],
+            [InlineKeyboardButton(text="⬅️ Back", callback_data="joai:menu")],
+        ]
     )
 
 
@@ -509,6 +519,22 @@ def _tts_text_reply_keyboard() -> InlineKeyboardMarkup:
     return _feature_reply_keyboard("joaitts:style_menu")
 
 
+async def _send_step_message(
+    message: Message,
+    text: str,
+    *,
+    reply_markup: InlineKeyboardMarkup | None = None,
+) -> None:
+    if bool(getattr(getattr(message, "from_user", None), "is_bot", False)):
+        try:
+            await message.edit_text(text, reply_markup=reply_markup)
+            return
+        except TelegramBadRequest as exc:
+            if "message is not modified" in str(exc).lower():
+                return
+    await message.answer(text, reply_markup=reply_markup)
+
+
 async def _send_chat_intro(message: Message) -> None:
     await message.answer(
         "<b>Step 1: JO AI Chat is active</b>\n\n"
@@ -579,7 +605,8 @@ async def _send_deep_analysis_intro(message: Message) -> None:
 
 
 async def _send_prompt_type_step(message: Message) -> None:
-    await message.answer(
+    await _send_step_message(
+        message,
         "<b>Prompt Generator is active</b>\n\n"
         "Step 1/2: Tell me the prompt type.\n"
         "Examples: ad copy, YouTube script, study guide, image prompt.",
@@ -588,7 +615,8 @@ async def _send_prompt_type_step(message: Message) -> None:
 
 
 async def _send_prompt_details_step(message: Message) -> None:
-    await message.answer(
+    await _send_step_message(
+        message,
         "Prompt type saved.\n\n"
         "Step 2/2: Describe what you want for that prompt type.\n"
         "Include audience, tone, goal, and constraints if possible.",
@@ -597,7 +625,8 @@ async def _send_prompt_details_step(message: Message) -> None:
 
 
 async def _send_image_intro(message: Message) -> None:
-    await message.answer(
+    await _send_step_message(
+        message,
         "<b>Image Generation is active</b>\n\n"
         "Step 1/2: Choose an image model.\n"
         "Options:\n"
@@ -610,7 +639,8 @@ async def _send_image_intro(message: Message) -> None:
 
 async def _send_image_ratio_step(message: Message, model_label: str | None = None) -> None:
     intro = f"Model <b>{html.escape(model_label)}</b> selected.\n\n" if model_label else ""
-    await message.answer(
+    await _send_step_message(
+        message,
         f"{intro}Step 2/2: Choose an aspect ratio.\n"
         "Available ratios: 1:1, 16:9, 9:16.\n\n"
         "After selecting a ratio, send your image prompt.",
@@ -619,7 +649,8 @@ async def _send_image_ratio_step(message: Message, model_label: str | None = Non
 
 
 async def _send_image_prompt_step(message: Message, ratio_label: str, model_label: str) -> None:
-    await message.answer(
+    await _send_step_message(
+        message,
         f"Model <b>{html.escape(model_label)}</b> with ratio <b>{html.escape(ratio_label)}</b> selected.\n\n"
         "Now send the image prompt.",
         reply_markup=_image_prompt_reply_keyboard(),
@@ -632,10 +663,11 @@ async def _send_video_intro(
     duration_seconds: int = DEFAULT_VIDEO_DURATION_SECONDS,
     aspect_ratio: str = DEFAULT_VIDEO_ASPECT_RATIO,
 ) -> None:
-    await message.answer(
+    await _send_step_message(
+        message,
         "<b>Video Generation is active</b>\n\n"
         f"Mode: <b>{VIDEO_MODEL_LABEL_GROK_TEXT_TO_VIDEO}</b>\n"
-        "Set duration and aspect ratio, then send your prompt.",
+        "Set duration and aspect ratio, then tap <b>Generate Video</b>.",
         reply_markup=video_options_keyboard(duration_seconds, aspect_ratio),
     )
 
@@ -646,15 +678,26 @@ async def _send_video_prompt_step(
     duration_seconds: int,
     aspect_ratio: str,
 ) -> None:
-    await message.answer(
+    await _send_step_message(
+        message,
+        "Joined ✅\n\n"
         f"Duration <b>{duration_seconds}s</b> and ratio <b>{html.escape(aspect_ratio)}</b> selected.\n\n"
         "Send your video prompt now.",
         reply_markup=_video_prompt_reply_keyboard(),
     )
 
 
+async def _send_video_join_required_step(message: Message) -> None:
+    await _send_step_message(
+        message,
+        _video_join_required_text(),
+        reply_markup=_video_join_required_keyboard(),
+    )
+
+
 async def _send_tts_language_step(message: Message) -> None:
-    await message.answer(
+    await _send_step_message(
+        message,
         "<b>Text-to-Speech is active</b>\n\n"
         "Step 1/4: Choose a language.\n"
         "After male or female, you'll get several voice-style choices.\n"
@@ -665,7 +708,8 @@ async def _send_tts_language_step(message: Message) -> None:
 
 async def _send_tts_voice_step(message: Message, language_label: str | None = None) -> None:
     intro = f"<b>{html.escape(language_label)}</b> selected.\n\n" if language_label else ""
-    await message.answer(
+    await _send_step_message(
+        message,
         f"{intro}Step 2/4: Choose male or female.",
         reply_markup=tts_voice_keyboard(),
     )
@@ -673,14 +717,16 @@ async def _send_tts_voice_step(message: Message, language_label: str | None = No
 
 async def _send_tts_style_step(message: Message, voice: str, voice_label: str | None = None) -> None:
     intro = f"Voice <b>{html.escape(voice_label)}</b> selected.\n\n" if voice_label else ""
-    await message.answer(
+    await _send_step_message(
+        message,
         f"{intro}Step 3/4: Choose a voice style.",
         reply_markup=tts_style_keyboard(_tts_style_choices(voice)),
     )
 
 
 async def _send_tts_text_step(message: Message, style_label: str) -> None:
-    await message.answer(
+    await _send_step_message(
+        message,
         f"Style <b>{html.escape(style_label)}</b> selected.\n\n"
         "Step 4/4: Send the text you want me to convert to speech.",
         reply_markup=_tts_text_reply_keyboard(),
@@ -803,7 +849,7 @@ async def _activate_mode(
         return
     if mode == JoAIMode.VIDEO:
         if not await _is_video_generation_allowed(message.bot, user_id):
-            await message.answer(_video_join_required_text(), reply_markup=jo_chat_keyboard("joai:menu"))
+            await _send_video_join_required_step(message)
             return
         selected_duration = DEFAULT_VIDEO_DURATION_SECONDS
         selected_ratio = DEFAULT_VIDEO_ASPECT_RATIO
@@ -1732,7 +1778,8 @@ async def image_show_model_menu(query: CallbackQuery, session_manager: SessionMa
 
     await query.answer()
     if isinstance(query.message, Message):
-        await query.message.answer(
+        await _send_step_message(
+            query.message,
             "<b>Select an image model</b>\n\n"
             "Choose one option below. Provider internals stay hidden.",
             reply_markup=image_model_keyboard(selected_model),
@@ -1812,6 +1859,13 @@ async def video_show_options_menu(query: CallbackQuery, session_manager: Session
         else:
             session.jo_ai_video_aspect_ratio = DEFAULT_VIDEO_ASPECT_RATIO
 
+    bot_instance = query.message.bot if isinstance(query.message, Message) else query.bot
+    if not await _is_video_generation_allowed(bot_instance, query.from_user.id):
+        await query.answer("Join the channel to unlock video generation.", show_alert=True)
+        if isinstance(query.message, Message):
+            await _send_video_join_required_step(query.message)
+        return
+
     await query.answer()
     if isinstance(query.message, Message):
         await _send_video_intro(
@@ -1853,7 +1907,7 @@ async def choose_video_duration(query: CallbackQuery, session_manager: SessionMa
 
     await query.answer(f"Duration {duration_seconds}s selected.")
     if isinstance(query.message, Message):
-        await _send_video_prompt_step(
+        await _send_video_intro(
             query.message,
             duration_seconds=duration_seconds,
             aspect_ratio=aspect_ratio,
@@ -1888,10 +1942,84 @@ async def choose_video_ratio(query: CallbackQuery, session_manager: SessionManag
 
     await query.answer(f"Ratio {ratio} selected.")
     if isinstance(query.message, Message):
-        await _send_video_prompt_step(
+        await _send_video_intro(
             query.message,
             duration_seconds=duration_seconds,
             aspect_ratio=ratio,
+        )
+
+
+@router.callback_query(F.data == "joaivid:generate")
+async def prepare_video_generation(query: CallbackQuery, session_manager: SessionManager) -> None:
+    if not query.from_user:
+        await query.answer()
+        return
+
+    duration_seconds = DEFAULT_VIDEO_DURATION_SECONDS
+    aspect_ratio = DEFAULT_VIDEO_ASPECT_RATIO
+    async with session_manager.lock(query.from_user.id) as session:
+        if session.active_feature != Feature.JO_AI or session.jo_ai_mode != JoAIMode.VIDEO:
+            await query.answer("Video session expired. Send /video again.", show_alert=True)
+            return
+        if session.jo_ai_video_duration in VIDEO_DURATION_OPTIONS:
+            duration_seconds = int(session.jo_ai_video_duration)
+        else:
+            session.jo_ai_video_duration = DEFAULT_VIDEO_DURATION_SECONDS
+        if session.jo_ai_video_aspect_ratio in VIDEO_ASPECT_RATIO_OPTIONS:
+            aspect_ratio = str(session.jo_ai_video_aspect_ratio)
+        else:
+            session.jo_ai_video_aspect_ratio = DEFAULT_VIDEO_ASPECT_RATIO
+
+    bot_instance = query.message.bot if isinstance(query.message, Message) else query.bot
+    if not await _is_video_generation_allowed(bot_instance, query.from_user.id):
+        await query.answer("Join required before generation.", show_alert=True)
+        if isinstance(query.message, Message):
+            await _send_video_join_required_step(query.message)
+        return
+
+    await query.answer("Joined ✅")
+    if isinstance(query.message, Message):
+        await _send_video_prompt_step(
+            query.message,
+            duration_seconds=duration_seconds,
+            aspect_ratio=aspect_ratio,
+        )
+
+
+@router.callback_query(F.data == "joaivid:joined_check")
+async def check_video_join_after_button(query: CallbackQuery, session_manager: SessionManager) -> None:
+    if not query.from_user:
+        await query.answer()
+        return
+
+    duration_seconds = DEFAULT_VIDEO_DURATION_SECONDS
+    aspect_ratio = DEFAULT_VIDEO_ASPECT_RATIO
+    async with session_manager.lock(query.from_user.id) as session:
+        if session.active_feature != Feature.JO_AI or session.jo_ai_mode != JoAIMode.VIDEO:
+            await query.answer("Video session expired. Send /video again.", show_alert=True)
+            return
+        if session.jo_ai_video_duration in VIDEO_DURATION_OPTIONS:
+            duration_seconds = int(session.jo_ai_video_duration)
+        else:
+            session.jo_ai_video_duration = DEFAULT_VIDEO_DURATION_SECONDS
+        if session.jo_ai_video_aspect_ratio in VIDEO_ASPECT_RATIO_OPTIONS:
+            aspect_ratio = str(session.jo_ai_video_aspect_ratio)
+        else:
+            session.jo_ai_video_aspect_ratio = DEFAULT_VIDEO_ASPECT_RATIO
+
+    bot_instance = query.message.bot if isinstance(query.message, Message) else query.bot
+    if not await _is_video_generation_allowed(bot_instance, query.from_user.id):
+        await query.answer("Still not joined. Please join then tap Joined ✅.", show_alert=True)
+        if isinstance(query.message, Message):
+            await _send_video_join_required_step(query.message)
+        return
+
+    await query.answer("Joined ✅")
+    if isinstance(query.message, Message):
+        await _send_video_prompt_step(
+            query.message,
+            duration_seconds=duration_seconds,
+            aspect_ratio=aspect_ratio,
         )
 
 
@@ -3785,7 +3913,7 @@ async def _process_video_message(
     feature_used = "video_generation:grok_text_to_video"
     if message.from_user and not await _is_video_generation_allowed(message.bot, message.from_user.id):
         reply_text = _video_join_required_text()
-        await message.answer(reply_text, reply_markup=_video_prompt_reply_keyboard())
+        await _send_video_join_required_step(message)
         await _track_telegram_action(
             tracking_service=tracking_service,
             message=message,
