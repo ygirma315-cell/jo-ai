@@ -183,7 +183,7 @@
     }
     refs.toast.hidden = false;
     refs.toast.textContent = String(message || "Done.");
-    refs.toast.style.background = isError ? "#8f1d14" : "#16202b";
+    refs.toast.style.background = isError ? "#8a1f39" : "#143868";
     clearTimeout(showToast._timer);
     showToast._timer = setTimeout(() => {
       refs.toast.hidden = true;
@@ -195,7 +195,9 @@
       return;
     }
     refs.authChip.textContent = authorized ? "Authorized" : "Locked";
-    refs.authChip.style.background = authorized ? "#e5f7ee" : "#f3f4f6";
+    refs.authChip.style.background = authorized ? "#0f4b3b" : "#1b2b47";
+    refs.authChip.style.color = authorized ? "#d8ffea" : "#c3d3f3";
+    refs.authChip.style.borderColor = authorized ? "#1d6f58" : "#375789";
   }
 
   function showLogin(errorMessage = "") {
@@ -650,11 +652,12 @@
           const selectedClass = Number(state.selectedUserId || 0) === Number(row.telegram_id) ? " selected" : "";
           const openButton = `<button class="btn small user-open-btn" data-user-id="${escapeHtml(row.telegram_id)}">Open</button>`;
           const warnButton = `<button class="btn small btn-warning user-action-btn" data-user-id="${escapeHtml(row.telegram_id)}" data-action="warn">Warn</button>`;
+          const messageButton = `<button class="btn small user-action-btn" data-user-id="${escapeHtml(row.telegram_id)}" data-action="message">Message</button>`;
           const actionButtons = row.is_blocked
             ? `<button class="btn small user-action-btn" data-user-id="${escapeHtml(row.telegram_id)}" data-action="unblock">Unblock</button>`
             : `<button class="btn small btn-danger user-action-btn" data-user-id="${escapeHtml(row.telegram_id)}" data-action="block">Block</button>`;
           const kickButton = `<button class="btn small btn-danger user-action-btn" data-user-id="${escapeHtml(row.telegram_id)}" data-action="kick">Kick</button>`;
-          return `<article class="list-item${selectedClass}" data-user-id="${escapeHtml(row.telegram_id)}"><div class="row-head"><h4>${escapeHtml(userLabel(row))}</h4><span class="chip ${chipClass}">${chipLabel}</span></div><div class="list-meta"><span>First seen: ${escapeHtml(formatDateTime(row.first_seen_at))}</span><span>Last seen: ${escapeHtml(formatDateTime(row.last_seen_at))}</span><span>Started: ${row.has_started ? "yes" : "no"}</span><span>Messages: ${escapeHtml(formatNumber(row.total_messages))}</span><span>Images: ${escapeHtml(formatNumber(row.total_images))}</span><span>Unreachable: ${escapeHtml(formatNumber(row.unreachable_count))}</span><span>Referral code: ${escapeHtml(row.referral_code || "-")}</span><span>Referred by: ${escapeHtml(row.referred_by || "-")}</span></div><div class="toolbar wrap">${openButton}${warnButton}${actionButtons}${kickButton}</div>${row.last_delivery_error ? `<p class="error">Last delivery error: ${escapeHtml(row.last_delivery_error)}</p>` : ""}</article>`;
+          return `<article class="list-item${selectedClass}" data-user-id="${escapeHtml(row.telegram_id)}"><div class="row-head"><h4>${escapeHtml(userLabel(row))}</h4><span class="chip ${chipClass}">${chipLabel}</span></div><div class="list-meta"><span>First seen: ${escapeHtml(formatDateTime(row.first_seen_at))}</span><span>Last seen: ${escapeHtml(formatDateTime(row.last_seen_at))}</span><span>Started: ${row.has_started ? "yes" : "no"}</span><span>Messages: ${escapeHtml(formatNumber(row.total_messages))}</span><span>Images: ${escapeHtml(formatNumber(row.total_images))}</span><span>Unreachable: ${escapeHtml(formatNumber(row.unreachable_count))}</span><span>Referral code: ${escapeHtml(row.referral_code || "-")}</span><span>Referred by: ${escapeHtml(row.referred_by || "-")}</span></div><div class="toolbar wrap">${openButton}${warnButton}${messageButton}${actionButtons}${kickButton}</div>${row.last_delivery_error ? `<p class="error">Last delivery error: ${escapeHtml(row.last_delivery_error)}</p>` : ""}</article>`;
         }).join("");
       }
 
@@ -750,6 +753,55 @@
     }
   }
 
+  async function sendCustomMessageToUser(userId, messageText) {
+    const parsedId = Number(userId || state.selectedUserId || 0);
+    const message = String(messageText || "").trim();
+    if (!parsedId) {
+      showToast("Select a user first.", true);
+      return false;
+    }
+    if (!message) {
+      showToast("Message cannot be empty.", true);
+      return false;
+    }
+    await requestJson(`/api/admin/users/${encodeURIComponent(String(parsedId))}/message`, {
+      method: "POST",
+      body: { message },
+    });
+    return true;
+  }
+
+  async function sendCustomMessagePrompt(userId) {
+    const parsedId = Number(userId || state.selectedUserId || 0);
+    if (!parsedId) {
+      showToast("Select a user first.", true);
+      return;
+    }
+    const selectedId = Number(state.selectedUserId || 0);
+    const draft = refs.userDirectMessage && selectedId === parsedId ? refs.userDirectMessage.value.trim() : "";
+    const entered = window.prompt(`Enter a custom message for user ${parsedId}:`, draft);
+    if (entered === null) return;
+    const message = String(entered || "").trim();
+    if (!message) {
+      showToast("Message cannot be empty.", true);
+      return;
+    }
+    try {
+      const sent = await sendCustomMessageToUser(parsedId, message);
+      if (!sent) return;
+      if (refs.userDirectMessage && selectedId === parsedId) refs.userDirectMessage.value = "";
+      showToast("Custom message sent.");
+      state.loaded.users = false;
+      await Promise.all([
+        loadUsers(true),
+        loadUserProfile(parsedId, true),
+      ]);
+    } catch (error) {
+      if (handleAuthError(error)) return;
+      showToast(error.message || "Failed to send custom message.", true);
+    }
+  }
+
   async function sendDirectMessageToSelectedUser() {
     const parsedId = Number(state.selectedUserId || 0);
     if (!parsedId) {
@@ -762,16 +814,18 @@
       return;
     }
     try {
-      await requestJson(`/api/admin/users/${encodeURIComponent(String(parsedId))}/message`, {
-        method: "POST",
-        body: { message },
-      });
+      const sent = await sendCustomMessageToUser(parsedId, message);
+      if (!sent) return;
       if (refs.userDirectMessage) refs.userDirectMessage.value = "";
-      showToast("Direct message sent.");
-      await loadUserProfile(parsedId, true);
+      showToast("Custom message sent.");
+      state.loaded.users = false;
+      await Promise.all([
+        loadUsers(true),
+        loadUserProfile(parsedId, true),
+      ]);
     } catch (error) {
       if (handleAuthError(error)) return;
-      showToast(error.message || "Failed to send direct message.", true);
+      showToast(error.message || "Failed to send custom message.", true);
     }
   }
 
@@ -1149,6 +1203,8 @@
         if (userId > 0 && action) {
           if (action === "warn") {
             sendWarningToUser(userId);
+          } else if (action === "message") {
+            sendCustomMessagePrompt(userId);
           } else {
             runUserAccessAction(action, userId);
           }

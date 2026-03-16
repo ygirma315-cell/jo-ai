@@ -7,8 +7,8 @@
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
   <link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Sans:wght@400;500;600;700&display=swap" rel="stylesheet">
-  <link rel="stylesheet" href="/admin/static/style.css?v=2.3.0">
-  <script src="/admin/static/app.js?v=2.3.0" defer></script>
+  <link rel="stylesheet" href="/admin/static/style.css?v=2.4.0">
+  <script src="/admin/static/app.js?v=2.4.0" defer></script>
 </head>
 <body>
   <div id="loginOverlay" class="login-overlay">
@@ -92,7 +92,7 @@
       <section id="section-users" class="section">
         <article class="card">
           <h3>User Management</h3>
-          <p class="muted">Search users, open profile details, send direct messages, warn, block, unblock, or kick from one place.</p>
+          <p class="muted">Search users, open profile details, send custom messages, warn, block, unblock, or kick from one place.</p>
         </article>
         <div class="toolbar">
           <input id="usersSearch" type="search" placeholder="Search username or Telegram ID">
@@ -129,10 +129,10 @@
               <button id="userUnblockBtn" class="btn" type="button" disabled>Unblock</button>
               <button id="userKickBtn" class="btn btn-danger" type="button" disabled>Kick</button>
             </div>
-            <label for="userDirectMessage">Direct message</label>
-            <textarea id="userDirectMessage" rows="4" placeholder="Write a custom message to this user." disabled></textarea>
+            <label for="userDirectMessage">Custom message</label>
+            <textarea id="userDirectMessage" rows="4" placeholder="Write any custom message you want to send." disabled></textarea>
             <div class="toolbar">
-              <button id="userSendMessageBtn" class="btn btn-primary" type="button" disabled>Send Message</button>
+              <button id="userSendMessageBtn" class="btn btn-primary" type="button" disabled>Send Custom Message</button>
             </div>
             <h4>Recent user activity</h4>
             <div id="userProfileActivity" class="list"></div>
