@@ -16,18 +16,17 @@ router = Router(name="common")
 
 WELCOME_TEXT = (
     "🤖 <b>Welcome to JO AI Assistant</b>\n\n"
-    "Pick a lane and let's move:\n"
-    "• 💬 AI chat and smart answers\n"
-    "• 💠 Gemini mode (temporarily disabled)\n"
-    "• ⚡ Code generation and debugging\n"
-    "• 🔍 Research and deeper analysis\n"
-    "• 🎨 Image generation and vision help\n"
-    "• 🎬 Video generation\n"
-    "• 🔊 Text-to-Speech output\n"
-    "• 🎧 GPT Audio responses\n"
-    "• 🔗 Referral links\n"
-    "• 🚀 Mini App access from Telegram\n\n"
-    "Tap a menu button below or send a message when you're ready."
+    "Use the menu to choose a mode:\n"
+    "• 💬 Chat\n"
+    "• ⚡ Code\n"
+    "• 🔍 Research\n"
+    "• 🎨 Image and vision\n"
+    "• 🎬 Video\n"
+    "• 🔊 Text-to-Speech\n"
+    "• 🎧 GPT Audio\n"
+    "• 🔗 Referral tools\n"
+    "• 🚀 Mini App access\n\n"
+    "Send any message to begin."
 )
 
 HELP_TEXT = (
@@ -144,20 +143,23 @@ async def handle_start(
         )
 
     transition = await session_manager.switch_feature(message.from_user.id, Feature.NONE)
+    sections: list[str] = []
     if transition.notice:
-        await message.answer(transition.notice, reply_markup=main_menu_keyboard(miniapp_url))
-    await message.answer(WELCOME_TEXT, reply_markup=main_menu_keyboard(miniapp_url))
-    await message.answer(format_release_summary_html(runtime_info), reply_markup=main_menu_keyboard(miniapp_url))
-    await message.answer(
-        "<b>Quick Start</b>\n\n"
-        "- Tap <b>AI Tools</b> first to open chat, code, research, prompts, images, vision, or speech.\n"
-        "- Tap <b>Open App</b> to launch the Mini App directly from Telegram.\n"
-        "- Tap <b>Version</b> for public build info.\n\n"
-        "Ask me anything when you're ready.",
-        reply_markup=main_menu_keyboard(miniapp_url),
+        sections.append(transition.notice)
+    sections.append(WELCOME_TEXT)
+    sections.append(
+        "<b>Quick Start</b>\n"
+        "1) Tap <b>AI Tools</b> to choose chat, code, research, prompts, image, video, or audio.\n"
+        "2) Tap <b>Open App</b> to launch the Mini App.\n"
+        "3) Tap <b>Version</b> for public build details."
     )
     if referral_code:
-        await message.answer("✅ Referral detected and applied.", reply_markup=main_menu_keyboard(miniapp_url))
+        sections.append("✅ Referral detected and applied.")
+    sections.append(format_release_summary_html(runtime_info))
+    await message.answer(
+        "\n\n".join(part for part in sections if part.strip()),
+        reply_markup=main_menu_keyboard(miniapp_url),
+    )
 
 
 @router.message(Command("restart"))

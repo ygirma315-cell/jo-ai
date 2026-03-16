@@ -8,6 +8,7 @@
   const SECTION_TITLES = {
     overview: "Overview",
     users: "Users",
+    safety: "Safety",
     conversations: "Conversations",
     media: "Media",
     referrals: "Referrals",
@@ -20,12 +21,13 @@
   const state = {
     token: sessionStorage.getItem(TOKEN_STORAGE_KEY) || "",
     section: "overview",
-    pages: { users: 0, conversations: 0, media: 0, referrals: 0 },
-    hasMore: { users: false, conversations: false, media: false, referrals: false },
-    totals: { users: 0, conversations: 0, media: 0, referrals: 0 },
+    pages: { users: 0, safety: 0, conversations: 0, media: 0, referrals: 0 },
+    hasMore: { users: false, safety: false, conversations: false, media: false, referrals: false },
+    totals: { users: 0, safety: 0, conversations: 0, media: 0, referrals: 0 },
     loaded: {
       overview: false,
       users: false,
+      safety: false,
       conversations: false,
       media: false,
       referrals: false,
@@ -35,6 +37,8 @@
       logs: false,
     },
     statusConfig: null,
+    selectedUserId: null,
+    userProfile: null,
   };
 
   function byId(id) {
@@ -69,6 +73,25 @@
     usersPrev: byId("usersPrev"),
     usersNext: byId("usersNext"),
     usersPageInfo: byId("usersPageInfo"),
+    userProfileTitle: byId("userProfileTitle"),
+    userProfileChip: byId("userProfileChip"),
+    userProfileHint: byId("userProfileHint"),
+    userProfileMeta: byId("userProfileMeta"),
+    userActionReason: byId("userActionReason"),
+    userBlockBtn: byId("userBlockBtn"),
+    userUnblockBtn: byId("userUnblockBtn"),
+    userKickBtn: byId("userKickBtn"),
+    userDirectMessage: byId("userDirectMessage"),
+    userSendMessageBtn: byId("userSendMessageBtn"),
+    userProfileActivity: byId("userProfileActivity"),
+
+    safetySearch: byId("safetySearch"),
+    safetyApply: byId("safetyApply"),
+    safetySummary: byId("safetySummary"),
+    safetyList: byId("safetyList"),
+    safetyPrev: byId("safetyPrev"),
+    safetyNext: byId("safetyNext"),
+    safetyPageInfo: byId("safetyPageInfo"),
 
     convSearch: byId("convSearch"),
     convType: byId("convType"),
@@ -322,6 +345,7 @@
     const totalPages = Math.max(1, Math.ceil(total / PAGE_SIZE));
     return `Page ${currentPage} / ${totalPages} (${formatNumber(total)} total)`;
   }
+
   async function copyText(value) {
     const text = String(value || "");
     if (!text) {
@@ -333,6 +357,88 @@
       return;
     }
     showToast("Copy is not available in this browser.", true);
+  }
+
+  function setUserControlsEnabled(enabled) {
+    const allow = Boolean(enabled);
+    if (refs.userBlockBtn) refs.userBlockBtn.disabled = !allow;
+    if (refs.userUnblockBtn) refs.userUnblockBtn.disabled = !allow;
+    if (refs.userKickBtn) refs.userKickBtn.disabled = !allow;
+    if (refs.userDirectMessage) refs.userDirectMessage.disabled = !allow;
+    if (refs.userSendMessageBtn) refs.userSendMessageBtn.disabled = !allow;
+  }
+
+  function renderUserProfileEmpty(message = "Select a user from the list to view details and actions.") {
+    state.userProfile = null;
+    if (refs.userProfileTitle) refs.userProfileTitle.textContent = "User Profile";
+    if (refs.userProfileChip) {
+      refs.userProfileChip.textContent = "No user selected";
+      refs.userProfileChip.className = "chip muted-chip";
+    }
+    if (refs.userProfileHint) refs.userProfileHint.textContent = message;
+    if (refs.userProfileMeta) refs.userProfileMeta.innerHTML = "";
+    if (refs.userProfileActivity) renderEmpty(refs.userProfileActivity, "No user activity yet.");
+    if (refs.userDirectMessage) refs.userDirectMessage.value = "";
+    setUserControlsEnabled(false);
+  }
+
+  function setSelectedUserRow() {
+    if (!refs.usersList) return;
+    const selectedId = Number(state.selectedUserId || 0);
+    const cards = refs.usersList.querySelectorAll(".list-item[data-user-id]");
+    for (const card of cards) {
+      const rowId = Number(card.getAttribute("data-user-id") || "0");
+      card.classList.toggle("selected", selectedId > 0 && rowId === selectedId);
+    }
+  }
+
+  function renderUserProfile(profilePayload) {
+    const profile = profilePayload && typeof profilePayload === "object" ? profilePayload.user : null;
+    const summary = profilePayload && typeof profilePayload === "object" ? profilePayload.summary || {} : {};
+    const activityItems = profilePayload && typeof profilePayload === "object" && Array.isArray(profilePayload.recent_activity)
+      ? profilePayload.recent_activity
+      : [];
+    if (!profile || !profile.telegram_id) {
+      renderUserProfileEmpty("Unable to load user profile.");
+      return;
+    }
+    state.userProfile = profilePayload;
+    if (refs.userProfileTitle) refs.userProfileTitle.textContent = userLabel(profile);
+    if (refs.userProfileChip) {
+      const chipClass = profile.is_blocked ? "danger-chip" : profile.is_active ? "ok-chip" : "muted-chip";
+      const chipLabel = profile.is_blocked ? profile.status || "blocked" : profile.is_active ? "active" : profile.status || "inactive";
+      refs.userProfileChip.textContent = chipLabel;
+      refs.userProfileChip.className = `chip ${chipClass}`;
+    }
+    if (refs.userProfileHint) {
+      refs.userProfileHint.textContent = `Blocked prompts: ${formatNumber(summary.blocked_prompt_count)} | Recent records: ${formatNumber(summary.recent_activity_count)}`;
+    }
+    if (refs.userProfileMeta) {
+      refs.userProfileMeta.innerHTML = [
+        `Telegram ID: ${escapeHtml(profile.telegram_id)}`,
+        `Status: ${escapeHtml(profile.status || "-")}`,
+        `First seen: ${escapeHtml(formatDateTime(profile.first_seen_at))}`,
+        `Last seen: ${escapeHtml(formatDateTime(profile.last_seen_at))}`,
+        `Messages: ${escapeHtml(formatNumber(profile.total_messages))}`,
+        `Images: ${escapeHtml(formatNumber(profile.total_images))}`,
+        `Unreachable: ${escapeHtml(formatNumber(profile.unreachable_count))}`,
+        `Referral code: ${escapeHtml(profile.referral_code || "-")}`,
+      ].map((item) => `<span>${item}</span>`).join("");
+    }
+
+    if (!activityItems.length) {
+      renderEmpty(refs.userProfileActivity, "No recent user activity.");
+    } else if (refs.userProfileActivity) {
+      refs.userProfileActivity.innerHTML = activityItems.map((row) => {
+        const preview = row.user_message || row.text_content || row.bot_reply || "-";
+        return `<article class=\"list-item\"><div class=\"row-head\"><h4>${escapeHtml(row.feature_used || row.message_type || "-")}</h4><span class=\"chip ${row.success ? "ok-chip" : "danger-chip"}\">${row.success ? "success" : "failed"}</span></div><p>${escapeHtml(preview)}</p><div class=\"list-meta\"><span>${escapeHtml(formatDateTime(row.created_at))}</span><span>Type: ${escapeHtml(row.message_type || "-")}</span><span>Frontend: ${escapeHtml(row.frontend_source || "-")}</span></div></article>`;
+      }).join("");
+    }
+    setUserControlsEnabled(true);
+    if (refs.userBlockBtn) refs.userBlockBtn.disabled = Boolean(profile.is_blocked);
+    if (refs.userUnblockBtn) refs.userUnblockBtn.disabled = !Boolean(profile.is_blocked);
+    if (refs.userKickBtn) refs.userKickBtn.disabled = String(profile.status || "").toLowerCase() === "kicked";
+    setSelectedUserRow();
   }
 
   async function loadStatusConfig(force = false) {
@@ -473,6 +579,8 @@
     }
     state.token = "";
     sessionStorage.removeItem(TOKEN_STORAGE_KEY);
+    state.selectedUserId = null;
+    renderUserProfileEmpty();
     showLogin("Logged out.");
     showToast("Logged out.");
   }
@@ -533,7 +641,13 @@
         refs.usersList.innerHTML = items.map((row) => {
           const chipClass = row.is_blocked ? "danger-chip" : row.is_active ? "ok-chip" : "muted-chip";
           const chipLabel = row.is_blocked ? "blocked" : row.is_active ? "active" : "inactive";
-          return `<article class="list-item"><div class="row-head"><h4>${escapeHtml(userLabel(row))}</h4><span class="chip ${chipClass}">${chipLabel}</span></div><div class="list-meta"><span>First seen: ${escapeHtml(formatDateTime(row.first_seen_at))}</span><span>Last seen: ${escapeHtml(formatDateTime(row.last_seen_at))}</span><span>Started: ${row.has_started ? "yes" : "no"}</span><span>Messages: ${escapeHtml(formatNumber(row.total_messages))}</span><span>Images: ${escapeHtml(formatNumber(row.total_images))}</span><span>Unreachable: ${escapeHtml(formatNumber(row.unreachable_count))}</span><span>Referral code: ${escapeHtml(row.referral_code || "-")}</span><span>Referred by: ${escapeHtml(row.referred_by || "-")}</span></div>${row.last_delivery_error ? `<p class="error">Last delivery error: ${escapeHtml(row.last_delivery_error)}</p>` : ""}</article>`;
+          const selectedClass = Number(state.selectedUserId || 0) === Number(row.telegram_id) ? " selected" : "";
+          const openButton = `<button class="btn small user-open-btn" data-user-id="${escapeHtml(row.telegram_id)}">Open</button>`;
+          const actionButtons = row.is_blocked
+            ? `<button class="btn small user-action-btn" data-user-id="${escapeHtml(row.telegram_id)}" data-action="unblock">Unblock</button>`
+            : `<button class="btn small btn-danger user-action-btn" data-user-id="${escapeHtml(row.telegram_id)}" data-action="block">Block</button>`;
+          const kickButton = `<button class="btn small btn-danger user-action-btn" data-user-id="${escapeHtml(row.telegram_id)}" data-action="kick">Kick</button>`;
+          return `<article class="list-item${selectedClass}" data-user-id="${escapeHtml(row.telegram_id)}"><div class="row-head"><h4>${escapeHtml(userLabel(row))}</h4><span class="chip ${chipClass}">${chipLabel}</span></div><div class="list-meta"><span>First seen: ${escapeHtml(formatDateTime(row.first_seen_at))}</span><span>Last seen: ${escapeHtml(formatDateTime(row.last_seen_at))}</span><span>Started: ${row.has_started ? "yes" : "no"}</span><span>Messages: ${escapeHtml(formatNumber(row.total_messages))}</span><span>Images: ${escapeHtml(formatNumber(row.total_images))}</span><span>Unreachable: ${escapeHtml(formatNumber(row.unreachable_count))}</span><span>Referral code: ${escapeHtml(row.referral_code || "-")}</span><span>Referred by: ${escapeHtml(row.referred_by || "-")}</span></div><div class="toolbar wrap">${openButton}${actionButtons}${kickButton}</div>${row.last_delivery_error ? `<p class="error">Last delivery error: ${escapeHtml(row.last_delivery_error)}</p>` : ""}</article>`;
         }).join("");
       }
 
@@ -541,12 +655,133 @@
       if (refs.usersPrev) refs.usersPrev.disabled = state.pages.users <= 0;
       if (refs.usersNext) refs.usersNext.disabled = !state.hasMore.users;
       state.loaded.users = true;
+      setSelectedUserRow();
     } catch (error) {
       if (handleAuthError(error)) return;
       renderEmpty(refs.usersList, "Failed to load users.");
       showToast(error.message || "Failed to load users.", true);
     }
   }
+
+  async function loadUserProfile(userId, force = false) {
+    const parsedId = Number(userId || 0);
+    if (!parsedId) {
+      renderUserProfileEmpty();
+      return;
+    }
+    if (!force && state.userProfile && Number(state.userProfile.user?.telegram_id || 0) === parsedId) {
+      return;
+    }
+    try {
+      const payload = await requestJson(`/api/admin/users/${encodeURIComponent(String(parsedId))}`);
+      state.selectedUserId = parsedId;
+      renderUserProfile(payload);
+      setSelectedUserRow();
+    } catch (error) {
+      if (handleAuthError(error)) return;
+      renderUserProfileEmpty("Failed to load user profile.");
+      showToast(error.message || "Failed to load user profile.", true);
+    }
+  }
+
+  async function runUserAccessAction(action, userId) {
+    const parsedId = Number(userId || state.selectedUserId || 0);
+    if (!parsedId) {
+      showToast("Select a user first.", true);
+      return;
+    }
+    const actionLabel = String(action || "").trim().toLowerCase();
+    if (!["block", "unblock", "kick"].includes(actionLabel)) {
+      showToast("Unsupported action.", true);
+      return;
+    }
+    const confirmed = window.confirm(`Confirm ${actionLabel} for user ${parsedId}?`);
+    if (!confirmed) return;
+
+    const reason = refs.userActionReason ? refs.userActionReason.value.trim() : "";
+    try {
+      await requestJson(`/api/admin/users/${encodeURIComponent(String(parsedId))}/${actionLabel}`, {
+        method: "POST",
+        body: { reason },
+      });
+      showToast(`User ${actionLabel} action applied.`);
+      state.loaded.users = false;
+      await Promise.all([
+        loadUsers(true),
+        loadUserProfile(parsedId, true),
+      ]);
+    } catch (error) {
+      if (handleAuthError(error)) return;
+      showToast(error.message || `Failed to ${actionLabel} user.`, true);
+    }
+  }
+
+  async function sendDirectMessageToSelectedUser() {
+    const parsedId = Number(state.selectedUserId || 0);
+    if (!parsedId) {
+      showToast("Select a user first.", true);
+      return;
+    }
+    const message = refs.userDirectMessage ? refs.userDirectMessage.value.trim() : "";
+    if (!message) {
+      showToast("Write a message first.", true);
+      return;
+    }
+    try {
+      await requestJson(`/api/admin/users/${encodeURIComponent(String(parsedId))}/message`, {
+        method: "POST",
+        body: { message },
+      });
+      if (refs.userDirectMessage) refs.userDirectMessage.value = "";
+      showToast("Direct message sent.");
+      await loadUserProfile(parsedId, true);
+    } catch (error) {
+      if (handleAuthError(error)) return;
+      showToast(error.message || "Failed to send direct message.", true);
+    }
+  }
+
+  async function loadSafety(force = false) {
+    if (!force && state.loaded.safety) return;
+    try {
+      const payload = await requestJson("/api/admin/moderation", {
+        params: {
+          limit: PAGE_SIZE,
+          offset: state.pages.safety * PAGE_SIZE,
+          search: refs.safetySearch ? refs.safetySearch.value.trim() : "",
+        },
+      });
+      const summary = payload.summary || {};
+      const items = Array.isArray(payload.items) ? payload.items : [];
+      state.totals.safety = Number(payload.total || 0);
+      state.hasMore.safety = Boolean(payload.has_more);
+
+      if (refs.safetySummary) {
+        refs.safetySummary.innerHTML = [
+          metricCard("Total blocked", formatNumber(summary.total_blocked)),
+          metricCard("Blocked 24h", formatNumber(summary.blocked_last_24h)),
+          metricCard("Blocked 7d", formatNumber(summary.blocked_last_7d)),
+        ].join("");
+      }
+      if (!items.length) {
+        renderEmpty(refs.safetyList, "No moderation blocks found.");
+      } else if (refs.safetyList) {
+        refs.safetyList.innerHTML = items.map((row) => {
+          const copyTextValue = row.prompt || "";
+          return `<article class="list-item"><div class="row-head"><h4>${escapeHtml(userLabel(row))}</h4><button class="btn small copy-btn" data-copy="${escapeHtml(copyTextValue)}">Copy prompt</button></div><p>${escapeHtml(row.prompt || "-")}</p><div class="list-meta"><span>${escapeHtml(formatDateTime(row.created_at))}</span><span>Reason: ${escapeHtml(row.moderation_reason || "-")}</span><span>Feature: ${escapeHtml(row.feature_used || "-")}</span><span>Model: ${escapeHtml(row.model_used || "-")}</span><span>Frontend: ${escapeHtml(row.frontend_source || "-")}</span></div></article>`;
+        }).join("");
+      }
+      if (refs.safetyPageInfo) refs.safetyPageInfo.textContent = pageInfo("safety", state.totals.safety);
+      if (refs.safetyPrev) refs.safetyPrev.disabled = state.pages.safety <= 0;
+      if (refs.safetyNext) refs.safetyNext.disabled = !state.hasMore.safety;
+      state.loaded.safety = true;
+    } catch (error) {
+      if (handleAuthError(error)) return;
+      renderEmpty(refs.safetyList, "Failed to load moderation logs.");
+      showToast(error.message || "Failed to load moderation logs.", true);
+    }
+  }
+
   async function loadConversations(force = false) {
     if (!force && state.loaded.conversations) return;
     try {
@@ -789,6 +1024,7 @@
   async function loadSection(name, force = false) {
     if (name === "overview") return loadOverview(force);
     if (name === "users") return loadUsers(force);
+    if (name === "safety") return loadSafety(force);
     if (name === "conversations") return loadConversations(force);
     if (name === "media") return loadMedia(force);
     if (name === "referrals") return loadReferrals(force);
@@ -831,6 +1067,7 @@
     }
 
     if (refs.usersApply) refs.usersApply.addEventListener("click", async () => { resetPage("users"); state.loaded.users = false; await loadUsers(true); });
+    if (refs.safetyApply) refs.safetyApply.addEventListener("click", async () => { resetPage("safety"); state.loaded.safety = false; await loadSafety(true); });
     if (refs.convApply) refs.convApply.addEventListener("click", async () => { resetPage("conversations"); state.loaded.conversations = false; await loadConversations(true); });
     if (refs.mediaApply) refs.mediaApply.addEventListener("click", async () => { resetPage("media"); state.loaded.media = false; await loadMedia(true); });
     if (refs.refApply) refs.refApply.addEventListener("click", async () => { resetPage("referrals"); state.loaded.referrals = false; await loadReferrals(true); });
@@ -840,6 +1077,8 @@
 
     if (refs.usersPrev) refs.usersPrev.addEventListener("click", async () => { if (state.pages.users > 0) { state.pages.users -= 1; state.loaded.users = false; await loadUsers(true); } });
     if (refs.usersNext) refs.usersNext.addEventListener("click", async () => { if (state.hasMore.users) { state.pages.users += 1; state.loaded.users = false; await loadUsers(true); } });
+    if (refs.safetyPrev) refs.safetyPrev.addEventListener("click", async () => { if (state.pages.safety > 0) { state.pages.safety -= 1; state.loaded.safety = false; await loadSafety(true); } });
+    if (refs.safetyNext) refs.safetyNext.addEventListener("click", async () => { if (state.hasMore.safety) { state.pages.safety += 1; state.loaded.safety = false; await loadSafety(true); } });
 
     if (refs.convPrev) refs.convPrev.addEventListener("click", async () => { if (state.pages.conversations > 0) { state.pages.conversations -= 1; state.loaded.conversations = false; await loadConversations(true); } });
     if (refs.convNext) refs.convNext.addEventListener("click", async () => { if (state.hasMore.conversations) { state.pages.conversations += 1; state.loaded.conversations = false; await loadConversations(true); } });
@@ -850,9 +1089,43 @@
     if (refs.refPrev) refs.refPrev.addEventListener("click", async () => { if (state.pages.referrals > 0) { state.pages.referrals -= 1; state.loaded.referrals = false; await loadReferrals(true); } });
     if (refs.refNext) refs.refNext.addEventListener("click", async () => { if (state.hasMore.referrals) { state.pages.referrals += 1; state.loaded.referrals = false; await loadReferrals(true); } });
 
+    if (refs.userBlockBtn) refs.userBlockBtn.addEventListener("click", async () => runUserAccessAction("block"));
+    if (refs.userUnblockBtn) refs.userUnblockBtn.addEventListener("click", async () => runUserAccessAction("unblock"));
+    if (refs.userKickBtn) refs.userKickBtn.addEventListener("click", async () => runUserAccessAction("kick"));
+    if (refs.userSendMessageBtn) refs.userSendMessageBtn.addEventListener("click", async () => sendDirectMessageToSelectedUser());
+
     document.addEventListener("click", (event) => {
       const target = event.target;
       if (!(target instanceof HTMLElement)) return;
+
+      const openButton = target.closest(".user-open-btn");
+      if (openButton instanceof HTMLElement) {
+        const userId = Number(openButton.getAttribute("data-user-id") || "0");
+        if (userId > 0) {
+          loadUserProfile(userId, true);
+        }
+        return;
+      }
+
+      const actionButton = target.closest(".user-action-btn");
+      if (actionButton instanceof HTMLElement) {
+        const action = String(actionButton.getAttribute("data-action") || "").trim().toLowerCase();
+        const userId = Number(actionButton.getAttribute("data-user-id") || "0");
+        if (userId > 0 && action) {
+          runUserAccessAction(action, userId);
+        }
+        return;
+      }
+
+      const userCard = target.closest(".list-item[data-user-id]");
+      if (userCard instanceof HTMLElement && userCard.parentElement === refs.usersList) {
+        const userId = Number(userCard.getAttribute("data-user-id") || "0");
+        if (userId > 0) {
+          loadUserProfile(userId, true);
+        }
+        return;
+      }
+
       const button = target.closest(".copy-btn");
       if (!button) return;
       copyText(button.getAttribute("data-copy") || "");
@@ -862,6 +1135,7 @@
   async function init() {
     setSection("overview");
     bind();
+    renderUserProfileEmpty();
     await loadStatusConfig(true);
     await loadSettings(true);
 

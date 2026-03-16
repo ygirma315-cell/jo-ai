@@ -570,6 +570,77 @@ class SupabaseAdminService:
             "has_more": page_offset + len(items) < total,
         }
 
+    def _serialize_user_row(self, row: dict[str, Any], *, active_days: int = 7) -> dict[str, Any]:
+        telegram_id = _safe_int(row.get("telegram_id"))
+        active_window_days = _clamp(active_days, 1, 60)
+        active_cutoff = datetime.now(timezone.utc) - timedelta(days=active_window_days)
+        last_seen = _parse_timestamp(row.get("last_seen_at"))
+        is_blocked = bool(row.get("is_blocked"))
+        status_raw = str(row.get("status") or "").strip().lower()
+        status = status_raw or ("blocked" if is_blocked else ("active" if bool(row.get("is_active", True)) else "inactive"))
+        is_recently_active = bool(last_seen and last_seen >= active_cutoff)
+        return {
+            "telegram_id": telegram_id,
+            "scope": "group" if telegram_id < 0 else "private",
+            "username": row.get("username"),
+            "first_name": row.get("first_name"),
+            "last_name": row.get("last_name"),
+            "first_seen_at": row.get("first_seen_at"),
+            "last_seen_at": row.get("last_seen_at"),
+            "total_messages": max(0, _safe_int(row.get("total_messages"))),
+            "total_images": max(0, _safe_int(row.get("total_images"))),
+            "is_active": is_recently_active,
+            "has_started": bool(row.get("has_started")),
+            "started_at": row.get("started_at"),
+            "status": status,
+            "is_blocked": is_blocked,
+            "blocked_at": row.get("blocked_at"),
+            "unreachable_count": max(0, _safe_int(row.get("unreachable_count"))),
+            "last_delivery_error": row.get("last_delivery_error"),
+            "referral_code": row.get("referral_code"),
+            "referred_by": _safe_int(row.get("referred_by")),
+            "started_via_referral": row.get("started_via_referral"),
+            "last_engagement_sent_at": row.get("last_engagement_sent_at"),
+            "engagement_count": max(0, _safe_int(row.get("engagement_count"))),
+        }
+
+    def _record_admin_history_event(
+        self,
+        *,
+        telegram_id: int,
+        message_type: str,
+        feature_used: str,
+        user_message: str,
+        bot_reply: str,
+        success: bool,
+        actor_telegram_id: int | None = None,
+    ) -> None:
+        client, config = self._ensure_ready()
+        actor_id = _safe_int(actor_telegram_id)
+        actor_suffix = f" (admin:{actor_id})" if actor_id > 0 else ""
+        payload = {
+            "telegram_id": int(telegram_id),
+            "message_type": str(message_type or "admin_action").strip()[:64],
+            "user_message": str(user_message or "").strip()[:16000] or None,
+            "bot_reply": f"{str(bot_reply or '').strip()[:3000]}{actor_suffix}"[:16000] or None,
+            "model_used": None,
+            "success": bool(success),
+            "created_at": datetime.now(timezone.utc).isoformat(),
+            "frontend_source": "admin_dashboard",
+            "feature_used": str(feature_used or "admin").strip()[:64] or "admin",
+            "conversation_id": f"{int(telegram_id)}:admin_dashboard",
+            "text_content": str(user_message or bot_reply or "").strip()[:16000] or None,
+        }
+        try:
+            client.table(config.history_table).insert(payload, returning="minimal").execute()
+        except Exception:
+            logger.warning(
+                "ADMIN HISTORY EVENT INSERT FAILED user=%s type=%s",
+                telegram_id,
+                message_type,
+                exc_info=True,
+            )
+
     def get_users(
         self,
         *,
@@ -610,38 +681,10 @@ class SupabaseAdminService:
 
         response = query.order("last_seen_at", desc=True).range(page_offset, page_offset + page_limit - 1).execute()
         rows = _response_rows(response)
-        active_cutoff = datetime.now(timezone.utc) - timedelta(days=active_window_days)
 
         items: list[dict[str, Any]] = []
         for row in rows:
-            telegram_id = _safe_int(row.get("telegram_id"))
-            last_seen = _parse_timestamp(row.get("last_seen_at"))
-            items.append(
-                {
-                    "telegram_id": telegram_id,
-                    "scope": "group" if telegram_id < 0 else "private",
-                    "username": row.get("username"),
-                    "first_name": row.get("first_name"),
-                    "last_name": row.get("last_name"),
-                    "first_seen_at": row.get("first_seen_at"),
-                    "last_seen_at": row.get("last_seen_at"),
-                    "total_messages": max(0, _safe_int(row.get("total_messages"))),
-                    "total_images": max(0, _safe_int(row.get("total_images"))),
-                    "is_active": bool(last_seen and last_seen >= active_cutoff),
-                    "has_started": bool(row.get("has_started")),
-                    "started_at": row.get("started_at"),
-                    "status": row.get("status") or ("active" if bool(row.get("is_active", True)) else "inactive"),
-                    "is_blocked": bool(row.get("is_blocked")),
-                    "blocked_at": row.get("blocked_at"),
-                    "unreachable_count": max(0, _safe_int(row.get("unreachable_count"))),
-                    "last_delivery_error": row.get("last_delivery_error"),
-                    "referral_code": row.get("referral_code"),
-                    "referred_by": _safe_int(row.get("referred_by")),
-                    "started_via_referral": row.get("started_via_referral"),
-                    "last_engagement_sent_at": row.get("last_engagement_sent_at"),
-                    "engagement_count": max(0, _safe_int(row.get("engagement_count"))),
-                }
-            )
+            items.append(self._serialize_user_row(row, active_days=active_window_days))
 
         total = _response_count(response)
         return {
@@ -650,6 +693,274 @@ class SupabaseAdminService:
             "limit": page_limit,
             "offset": page_offset,
             "active_window_days": active_window_days,
+            "has_more": page_offset + len(items) < total,
+        }
+
+    def get_user_profile(self, *, telegram_id: int, activity_limit: int = 25) -> dict[str, Any]:
+        client, config = self._ensure_ready()
+        user_id = int(telegram_id or 0)
+        if user_id == 0:
+            raise ValueError("Invalid Telegram ID.")
+
+        user_response = (
+            client.table(config.users_table)
+            .select(
+                (
+                    "telegram_id,username,first_name,last_name,first_seen_at,last_seen_at,total_messages,total_images,"
+                    "has_started,started_at,is_active,status,is_blocked,blocked_at,unreachable_count,last_delivery_error,"
+                    "referral_code,referred_by,started_via_referral,last_engagement_sent_at,engagement_count"
+                )
+            )
+            .eq("telegram_id", user_id)
+            .limit(1)
+            .execute()
+        )
+        user_rows = _response_rows(user_response)
+        if not user_rows:
+            raise LookupError("User not found.")
+        user_row = user_rows[0]
+
+        safe_limit = _clamp(activity_limit, 5, 80)
+        activity_response = (
+            client.table(config.history_table)
+            .select(
+                (
+                    "id,telegram_id,message_type,user_message,bot_reply,model_used,success,created_at,frontend_source,"
+                    "feature_used,conversation_id,text_content,media_type,media_url,storage_path,mime_type,media_status,media_error_reason"
+                )
+            )
+            .eq("telegram_id", user_id)
+            .order("created_at", desc=True)
+            .limit(safe_limit)
+            .execute()
+        )
+        activity_rows = _response_rows(activity_response)
+        recent_activity: list[dict[str, Any]] = []
+        for row in activity_rows:
+            recent_activity.append(
+                {
+                    "id": row.get("id"),
+                    "telegram_id": user_id,
+                    "message_type": row.get("message_type"),
+                    "user_message": row.get("user_message"),
+                    "bot_reply": row.get("bot_reply"),
+                    "model_used": row.get("model_used"),
+                    "success": bool(row.get("success")),
+                    "created_at": row.get("created_at"),
+                    "frontend_source": row.get("frontend_source") or "unknown",
+                    "feature_used": row.get("feature_used") or row.get("message_type"),
+                    "conversation_id": row.get("conversation_id"),
+                    "text_content": row.get("text_content") or row.get("user_message"),
+                    "media_type": row.get("media_type"),
+                    "media_url": row.get("media_url"),
+                    "storage_path": row.get("storage_path"),
+                    "preview_ref": _media_preview_ref(row.get("media_url"), row.get("storage_path")),
+                    "mime_type": row.get("mime_type"),
+                    "media_status": row.get("media_status"),
+                    "media_error_reason": row.get("media_error_reason"),
+                }
+            )
+
+        blocked_count_response = (
+            client.table(config.history_table)
+            .select("id", count="exact")
+            .eq("telegram_id", user_id)
+            .eq("media_status", "blocked")
+            .limit(1)
+            .execute()
+        )
+        return {
+            "user": self._serialize_user_row(user_row, active_days=7),
+            "summary": {
+                "recent_activity_count": len(recent_activity),
+                "blocked_prompt_count": _response_count(blocked_count_response),
+            },
+            "recent_activity": recent_activity,
+        }
+
+    def set_user_access(
+        self,
+        *,
+        telegram_id: int,
+        action: str,
+        reason: str | None = None,
+        actor_telegram_id: int | None = None,
+    ) -> dict[str, Any]:
+        client, config = self._ensure_ready()
+        user_id = int(telegram_id or 0)
+        if user_id == 0:
+            raise ValueError("Invalid Telegram ID.")
+        normalized_action = str(action or "").strip().lower()
+        if normalized_action not in {"block", "unblock", "kick"}:
+            raise ValueError("Unsupported user access action.")
+
+        existing_response = (
+            client.table(config.users_table)
+            .select("telegram_id")
+            .eq("telegram_id", user_id)
+            .limit(1)
+            .execute()
+        )
+        if not _response_rows(existing_response):
+            raise LookupError("User not found.")
+
+        now_iso = datetime.now(timezone.utc).isoformat()
+        reason_text = str(reason or "").strip()[:300]
+        if normalized_action == "unblock":
+            update_payload = {
+                "is_blocked": False,
+                "is_active": True,
+                "status": "active",
+                "blocked_at": None,
+                "last_delivery_error": None,
+            }
+            action_note = "User access restored by admin."
+        elif normalized_action == "kick":
+            update_payload = {
+                "is_blocked": True,
+                "is_active": False,
+                "status": "kicked",
+                "blocked_at": now_iso,
+                "last_delivery_error": reason_text or "Access removed by admin.",
+            }
+            action_note = "User access removed (kick)."
+        else:
+            update_payload = {
+                "is_blocked": True,
+                "is_active": False,
+                "status": "blocked",
+                "blocked_at": now_iso,
+                "last_delivery_error": reason_text or "Blocked by admin.",
+            }
+            action_note = "User blocked by admin."
+
+        client.table(config.users_table).update(update_payload).eq("telegram_id", user_id).execute()
+        updated = self.get_user_profile(telegram_id=user_id, activity_limit=12)
+        self._record_admin_history_event(
+            telegram_id=user_id,
+            message_type="admin_user_control",
+            feature_used=f"admin_user_{normalized_action}",
+            user_message=f"action={normalized_action} reason={reason_text or '-'}",
+            bot_reply=action_note,
+            success=True,
+            actor_telegram_id=actor_telegram_id,
+        )
+        return {
+            "ok": True,
+            "action": normalized_action,
+            "reason": reason_text or None,
+            "user": updated.get("user"),
+        }
+
+    def log_admin_direct_message(
+        self,
+        *,
+        telegram_id: int,
+        message: str,
+        delivered: bool,
+        actor_telegram_id: int | None = None,
+        error: str | None = None,
+    ) -> None:
+        safe_message = str(message or "").strip()[:2000]
+        status_note = "Admin direct message delivered." if delivered else f"Admin direct message failed: {str(error or 'unknown').strip()[:240]}"
+        self._record_admin_history_event(
+            telegram_id=int(telegram_id),
+            message_type="admin_direct_message",
+            feature_used="admin_direct_message",
+            user_message=safe_message,
+            bot_reply=status_note,
+            success=bool(delivered),
+            actor_telegram_id=actor_telegram_id,
+        )
+
+    def get_moderation_blocks(
+        self,
+        *,
+        limit: int = 25,
+        offset: int = 0,
+        search: str | None = None,
+    ) -> dict[str, Any]:
+        client, config = self._ensure_ready()
+        page_limit = _clamp(limit, 1, 100)
+        page_offset = max(0, int(offset))
+        search_term = str(search or "").strip()
+
+        query = (
+            client.table(config.history_table)
+            .select(
+                (
+                    "id,telegram_id,message_type,user_message,bot_reply,model_used,success,created_at,frontend_source,"
+                    "feature_used,conversation_id,text_content,media_type,media_status,media_error_reason"
+                ),
+                count="exact",
+            )
+            .eq("media_status", "blocked")
+        )
+        if search_term:
+            numeric_id = _safe_int(search_term, default=0)
+            if search_term.lstrip("-").isdigit() and numeric_id != 0:
+                query = query.eq("telegram_id", numeric_id)
+            else:
+                matching_ids = self._search_user_ids(search_term)
+                if matching_ids:
+                    query = query.in_("telegram_id", matching_ids)
+                else:
+                    query = query.ilike("user_message", f"%{search_term}%")
+
+        response = query.order("created_at", desc=True).range(page_offset, page_offset + page_limit - 1).execute()
+        rows = _response_rows(response)
+        users_map = self._load_users_map([_safe_int(item.get("telegram_id")) for item in rows])
+
+        items: list[dict[str, Any]] = []
+        for row in rows:
+            telegram_id = _safe_int(row.get("telegram_id"))
+            user = users_map.get(telegram_id, {})
+            items.append(
+                {
+                    "id": row.get("id"),
+                    "telegram_id": telegram_id,
+                    "username": user.get("username"),
+                    "first_name": user.get("first_name"),
+                    "last_name": user.get("last_name"),
+                    "message_type": row.get("message_type"),
+                    "feature_used": row.get("feature_used"),
+                    "model_used": row.get("model_used"),
+                    "created_at": row.get("created_at"),
+                    "prompt": row.get("user_message") or row.get("text_content"),
+                    "moderation_reason": row.get("media_error_reason") or row.get("bot_reply") or "blocked",
+                    "frontend_source": row.get("frontend_source") or "unknown",
+                    "conversation_id": row.get("conversation_id"),
+                }
+            )
+
+        now_utc = datetime.now(timezone.utc)
+        last_24h_response = (
+            client.table(config.history_table)
+            .select("id", count="exact")
+            .eq("media_status", "blocked")
+            .gte("created_at", (now_utc - timedelta(days=1)).isoformat())
+            .limit(1)
+            .execute()
+        )
+        last_7d_response = (
+            client.table(config.history_table)
+            .select("id", count="exact")
+            .eq("media_status", "blocked")
+            .gte("created_at", (now_utc - timedelta(days=7)).isoformat())
+            .limit(1)
+            .execute()
+        )
+        total = _response_count(response)
+        return {
+            "summary": {
+                "total_blocked": total,
+                "blocked_last_24h": _response_count(last_24h_response),
+                "blocked_last_7d": _response_count(last_7d_response),
+            },
+            "items": items,
+            "total": total,
+            "limit": page_limit,
+            "offset": page_offset,
             "has_more": page_offset + len(items) < total,
         }
 

@@ -7,8 +7,8 @@
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
   <link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Sans:wght@400;500;600;700&display=swap" rel="stylesheet">
-  <link rel="stylesheet" href="/admin/static/style.css?v=2.2.0">
-  <script src="/admin/static/app.js?v=2.2.0" defer></script>
+  <link rel="stylesheet" href="/admin/static/style.css?v=2.3.0">
+  <script src="/admin/static/app.js?v=2.3.0" defer></script>
 </head>
 <body>
   <div id="loginOverlay" class="login-overlay">
@@ -48,6 +48,7 @@
       <nav class="nav" id="nav">
         <button class="nav-btn active" data-section="overview">Overview</button>
         <button class="nav-btn" data-section="users">Users</button>
+        <button class="nav-btn" data-section="safety">Safety</button>
         <button class="nav-btn" data-section="conversations">Conversations</button>
         <button class="nav-btn" data-section="media">Media</button>
         <button class="nav-btn" data-section="referrals">Referrals</button>
@@ -70,6 +71,7 @@
       <nav class="section-tabs" aria-label="Admin sections">
         <button class="section-tab active" data-section="overview">Overview</button>
         <button class="section-tab" data-section="users">Users</button>
+        <button class="section-tab" data-section="safety">Safety</button>
         <button class="section-tab" data-section="conversations">Conversations</button>
         <button class="section-tab" data-section="media">Media</button>
         <button class="section-tab" data-section="referrals">Referrals</button>
@@ -97,11 +99,51 @@
           </select>
           <button id="usersApply" class="btn">Apply</button>
         </div>
-        <div id="usersList" class="list"></div>
+        <div class="users-layout">
+          <article class="card">
+            <div id="usersList" class="list"></div>
+            <div class="pager">
+              <button id="usersPrev" class="btn">Prev</button>
+              <span id="usersPageInfo"></span>
+              <button id="usersNext" class="btn">Next</button>
+            </div>
+          </article>
+          <article id="userProfileCard" class="card user-profile-card">
+            <div class="row-head">
+              <h3 id="userProfileTitle">User Profile</h3>
+              <span id="userProfileChip" class="chip muted-chip">No user selected</span>
+            </div>
+            <p id="userProfileHint" class="muted">Select a user from the list to view details and actions.</p>
+            <div id="userProfileMeta" class="list-meta"></div>
+            <label for="userActionReason">Admin action reason (optional)</label>
+            <input id="userActionReason" type="text" placeholder="Reason for block / kick / unblock">
+            <div class="toolbar wrap">
+              <button id="userBlockBtn" class="btn btn-danger" type="button" disabled>Block</button>
+              <button id="userUnblockBtn" class="btn" type="button" disabled>Unblock</button>
+              <button id="userKickBtn" class="btn btn-danger" type="button" disabled>Kick</button>
+            </div>
+            <label for="userDirectMessage">Direct message</label>
+            <textarea id="userDirectMessage" rows="4" placeholder="Write a custom message to this user." disabled></textarea>
+            <div class="toolbar">
+              <button id="userSendMessageBtn" class="btn btn-primary" type="button" disabled>Send Message</button>
+            </div>
+            <h4>Recent user activity</h4>
+            <div id="userProfileActivity" class="list"></div>
+          </article>
+        </div>
+      </section>
+
+      <section id="section-safety" class="section">
+        <div class="toolbar">
+          <input id="safetySearch" type="search" placeholder="Search user or blocked prompt">
+          <button id="safetyApply" class="btn">Apply</button>
+        </div>
+        <div class="card-grid" id="safetySummary"></div>
+        <div id="safetyList" class="list"></div>
         <div class="pager">
-          <button id="usersPrev" class="btn">Prev</button>
-          <span id="usersPageInfo"></span>
-          <button id="usersNext" class="btn">Next</button>
+          <button id="safetyPrev" class="btn">Prev</button>
+          <span id="safetyPageInfo"></span>
+          <button id="safetyNext" class="btn">Next</button>
         </div>
       </section>
 

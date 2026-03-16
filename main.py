@@ -53,6 +53,11 @@ from bot.services.ai_service import (
     build_enhanced_image_prompt,
     build_enhanced_video_prompt,
 )
+from bot.safety import (
+    grok_safety_reason_code,
+    grok_safety_warning_text,
+    moderate_grok_generation_prompt,
+)
 from bot.services.supabase_client import build_supabase_config
 from bot.services.tracking_service import SupabaseTrackingService, TrackingIdentity, TrackingMedia
 from bot.security import (
@@ -178,6 +183,7 @@ ADMIN_SESSION_COOKIE_SAMESITE = "lax"
 ADMIN_SESSION_COOKIE_SECURE = True
 KEEPALIVE_MIN_LOOP_SECONDS = 30
 _ADMIN_SESSION_TOKENS: dict[str, dict[str, Any]] = {}
+ACCESS_RESTRICTED_MESSAGE = "Your access to JO AI is currently restricted. Contact support for help."
 
 
 class BackendError(RuntimeError):
@@ -437,6 +443,14 @@ class EngagementConfigUpdateRequest(BaseModel):
 
 class AdminTokenAuthRequest(BaseModel):
     token: str = Field(min_length=1, max_length=512)
+
+
+class AdminUserActionRequest(BaseModel):
+    reason: str | None = Field(default=None, max_length=300)
+
+
+class AdminUserMessageRequest(BaseModel):
+    message: str = Field(min_length=1, max_length=2000)
 
 
 def _read_env(name: str) -> str:
@@ -1626,6 +1640,17 @@ def _extract_conversation_id(request: Request, identity: TrackingIdentity | None
     return f"{identity.telegram_id}:{feature_used}:{datetime.now(timezone.utc).date().isoformat()}"
 
 
+def _admin_actor_telegram_id(request: Request) -> int | None:
+    session_payload = _admin_session_payload(_extract_admin_token(request))
+    if not isinstance(session_payload, dict):
+        return None
+    try:
+        candidate = int(session_payload.get("telegram_id") or 0)
+    except (TypeError, ValueError):
+        return None
+    return candidate if candidate > 0 else None
+
+
 @lru_cache(maxsize=1)
 def _tracking_service() -> SupabaseTrackingService:
     service = SupabaseTrackingService(get_settings())
@@ -1639,6 +1664,53 @@ def _tracking_service() -> SupabaseTrackingService:
             service.disabled_reason or "unknown",
         )
     return service
+
+
+def _restricted_access_response(request: Request) -> JSONResponse:
+    payload: dict[str, Any] = {"error": ACCESS_RESTRICTED_MESSAGE, "access_restricted": True}
+    request_id = _request_id_from_request(request)
+    if request_id:
+        payload["request_id"] = request_id
+    return JSONResponse(status_code=403, content=payload)
+
+
+async def _maybe_reject_restricted_identity(request: Request, identity: TrackingIdentity | None) -> JSONResponse | None:
+    if identity is None:
+        return None
+    service = _tracking_service()
+    if not service.enabled:
+        return None
+    try:
+        restricted = await service.is_user_access_restricted(identity.telegram_id)
+    except Exception:
+        logger.warning(
+            "USER ACCESS CHECK FAILED | request_id=%s user=%s",
+            _request_id_from_request(request) or "unknown",
+            identity.telegram_id,
+            exc_info=True,
+        )
+        return None
+    if not restricted:
+        return None
+    logger.warning(
+        "API ACCESS DENIED | request_id=%s path=%s user=%s",
+        _request_id_from_request(request) or "unknown",
+        request.url.path,
+        identity.telegram_id,
+    )
+    return _restricted_access_response(request)
+
+
+def _grok_safety_block_response(request: Request, media_type: Literal["image", "video"]) -> JSONResponse:
+    payload: dict[str, Any] = {
+        "output": grok_safety_warning_text(media_type),
+        "blocked": True,
+        "reason": "safety_policy",
+    }
+    request_id = _request_id_from_request(request)
+    if request_id:
+        payload["request_id"] = request_id
+    return JSONResponse(status_code=200, content=payload)
 
 
 def _text_model_used(mode: TextMode) -> str:
@@ -2153,6 +2225,9 @@ async def referral_me(request: Request) -> JSONResponse:
     identity = _resolve_tracking_identity(request)
     if identity is None:
         return JSONResponse(status_code=401, content={"error": "Telegram identity is required."})
+    access_denied = await _maybe_reject_restricted_identity(request, identity)
+    if access_denied:
+        return access_denied
 
     frontend_source = _resolve_frontend_source(request)
     service = _tracking_service()
@@ -2182,6 +2257,9 @@ async def referral_claim(request: Request, payload: ReferralClaimRequest) -> JSO
     identity = _resolve_tracking_identity(request, payload)
     if identity is None:
         return JSONResponse(status_code=401, content={"error": "Telegram identity is required."})
+    access_denied = await _maybe_reject_restricted_identity(request, identity)
+    if access_denied:
+        return access_denied
 
     frontend_source = (
         str(payload.frontend_source or "").strip().lower() or _resolve_frontend_source(request)
@@ -2490,6 +2568,195 @@ async def admin_users(
     except Exception as exc:
         logger.exception("ADMIN USERS FAILED | request_id=%s error=%s", _request_id_from_request(request), exc)
         return _admin_error_response(request, 500, "Failed to load users.")
+
+
+@app.get("/api/admin/users/{telegram_id}")
+async def admin_user_profile(request: Request, telegram_id: int) -> JSONResponse:
+    try:
+        service = _require_admin_service(request)
+        payload = await asyncio.to_thread(
+            service.get_user_profile,
+            telegram_id=int(telegram_id),
+            activity_limit=25,
+        )
+        return JSONResponse(status_code=200, content=payload)
+    except LookupError:
+        return _admin_error_response(request, 404, "User not found.")
+    except ValueError as exc:
+        return _admin_error_response(request, 400, str(exc))
+    except HTTPException as exc:
+        return _admin_error_response(request, exc.status_code, str(exc.detail))
+    except Exception as exc:
+        logger.exception("ADMIN USER PROFILE FAILED | request_id=%s error=%s", _request_id_from_request(request), exc)
+        return _admin_error_response(request, 500, "Failed to load user profile.")
+
+
+@app.post("/api/admin/users/{telegram_id}/block")
+async def admin_block_user(
+    request: Request,
+    telegram_id: int,
+    payload: AdminUserActionRequest | None = None,
+) -> JSONResponse:
+    try:
+        service = _require_admin_service(request)
+        actor_id = _admin_actor_telegram_id(request)
+        updated = await asyncio.to_thread(
+            service.set_user_access,
+            telegram_id=int(telegram_id),
+            action="block",
+            reason=(payload.reason if payload else None),
+            actor_telegram_id=actor_id,
+        )
+        return JSONResponse(status_code=200, content=updated)
+    except LookupError:
+        return _admin_error_response(request, 404, "User not found.")
+    except ValueError as exc:
+        return _admin_error_response(request, 400, str(exc))
+    except HTTPException as exc:
+        return _admin_error_response(request, exc.status_code, str(exc.detail))
+    except Exception as exc:
+        logger.exception("ADMIN USER BLOCK FAILED | request_id=%s error=%s", _request_id_from_request(request), exc)
+        return _admin_error_response(request, 500, "Failed to block user.")
+
+
+@app.post("/api/admin/users/{telegram_id}/unblock")
+async def admin_unblock_user(
+    request: Request,
+    telegram_id: int,
+    payload: AdminUserActionRequest | None = None,
+) -> JSONResponse:
+    try:
+        service = _require_admin_service(request)
+        actor_id = _admin_actor_telegram_id(request)
+        updated = await asyncio.to_thread(
+            service.set_user_access,
+            telegram_id=int(telegram_id),
+            action="unblock",
+            reason=(payload.reason if payload else None),
+            actor_telegram_id=actor_id,
+        )
+        return JSONResponse(status_code=200, content=updated)
+    except LookupError:
+        return _admin_error_response(request, 404, "User not found.")
+    except ValueError as exc:
+        return _admin_error_response(request, 400, str(exc))
+    except HTTPException as exc:
+        return _admin_error_response(request, exc.status_code, str(exc.detail))
+    except Exception as exc:
+        logger.exception("ADMIN USER UNBLOCK FAILED | request_id=%s error=%s", _request_id_from_request(request), exc)
+        return _admin_error_response(request, 500, "Failed to unblock user.")
+
+
+@app.post("/api/admin/users/{telegram_id}/kick")
+async def admin_kick_user(
+    request: Request,
+    telegram_id: int,
+    payload: AdminUserActionRequest | None = None,
+) -> JSONResponse:
+    try:
+        service = _require_admin_service(request)
+        actor_id = _admin_actor_telegram_id(request)
+        updated = await asyncio.to_thread(
+            service.set_user_access,
+            telegram_id=int(telegram_id),
+            action="kick",
+            reason=(payload.reason if payload else None),
+            actor_telegram_id=actor_id,
+        )
+        return JSONResponse(status_code=200, content=updated)
+    except LookupError:
+        return _admin_error_response(request, 404, "User not found.")
+    except ValueError as exc:
+        return _admin_error_response(request, 400, str(exc))
+    except HTTPException as exc:
+        return _admin_error_response(request, exc.status_code, str(exc.detail))
+    except Exception as exc:
+        logger.exception("ADMIN USER KICK FAILED | request_id=%s error=%s", _request_id_from_request(request), exc)
+        return _admin_error_response(request, 500, "Failed to kick user.")
+
+
+@app.post("/api/admin/users/{telegram_id}/message")
+async def admin_message_user(request: Request, telegram_id: int, payload: AdminUserMessageRequest) -> JSONResponse:
+    try:
+        service = _require_admin_service(request)
+        runtime = _get_bot_runtime()
+        if runtime is None:
+            return _admin_error_response(request, 503, "Bot runtime is not ready.")
+        target_user_id = int(telegram_id)
+        try:
+            await asyncio.to_thread(service.get_user_profile, telegram_id=target_user_id, activity_limit=5)
+        except LookupError:
+            return _admin_error_response(request, 404, "User not found.")
+        message_text = str(payload.message or "").strip()
+        if not message_text:
+            return _admin_error_response(request, 400, "Message text is required.")
+
+        actor_id = _admin_actor_telegram_id(request)
+        tracking_service = _tracking_service()
+        delivery_error: str | None = None
+        delivered = False
+        try:
+            await runtime.bot.send_message(chat_id=target_user_id, text=message_text)
+            delivered = True
+            if tracking_service.enabled:
+                await tracking_service.mark_delivery_success(target_user_id)
+        except (TelegramForbiddenError, TelegramBadRequest) as exc:
+            delivery_error = str(exc)
+            if tracking_service.enabled:
+                await tracking_service.mark_delivery_failure(
+                    target_user_id,
+                    delivery_error,
+                    blocked=_is_blocked_delivery_error(exc),
+                )
+        except TelegramNetworkError as exc:
+            delivery_error = str(exc)
+        except Exception as exc:
+            delivery_error = str(exc)
+
+        await asyncio.to_thread(
+            service.log_admin_direct_message,
+            telegram_id=target_user_id,
+            message=message_text,
+            delivered=delivered,
+            actor_telegram_id=actor_id,
+            error=delivery_error,
+        )
+
+        if delivered:
+            return JSONResponse(status_code=200, content={"ok": True, "delivered": True})
+        return _admin_error_response(
+            request,
+            502,
+            f"Failed to deliver message. {delivery_error or 'User may be unreachable.'}",
+        )
+    except HTTPException as exc:
+        return _admin_error_response(request, exc.status_code, str(exc.detail))
+    except Exception as exc:
+        logger.exception("ADMIN USER MESSAGE FAILED | request_id=%s error=%s", _request_id_from_request(request), exc)
+        return _admin_error_response(request, 500, "Failed to send direct message.")
+
+
+@app.get("/api/admin/moderation")
+async def admin_moderation(
+    request: Request,
+    limit: int = 25,
+    offset: int = 0,
+    search: str | None = None,
+) -> JSONResponse:
+    try:
+        service = _require_admin_service(request)
+        payload = await asyncio.to_thread(
+            service.get_moderation_blocks,
+            limit=max(1, min(100, int(limit))),
+            offset=max(0, int(offset)),
+            search=search,
+        )
+        return JSONResponse(status_code=200, content=payload)
+    except HTTPException as exc:
+        return _admin_error_response(request, exc.status_code, str(exc.detail))
+    except Exception as exc:
+        logger.exception("ADMIN MODERATION FAILED | request_id=%s error=%s", _request_id_from_request(request), exc)
+        return _admin_error_response(request, 500, "Failed to load moderation logs.")
 
 
 @app.get("/api/admin/media")
@@ -2965,6 +3232,9 @@ async def _handle_text_mode_request(
         user_id,
         len(message or ""),
     )
+    access_denied = await _maybe_reject_restricted_identity(request, identity)
+    if access_denied:
+        return access_denied
 
     refusal = _maybe_block_sensitive_request(message, prompt_type)
     if refusal:
@@ -3106,6 +3376,9 @@ async def gemini_endpoint(request: Request, payload: GeminiRequest) -> JSONRespo
     feature_used = f"gemini_{gemini_mode}"
     conversation_id = _extract_conversation_id(request, identity, feature_used)
     tracking_model = str(payload.model or settings.gemini_model).strip() or settings.gemini_model
+    access_denied = await _maybe_reject_restricted_identity(request, identity)
+    if access_denied:
+        return access_denied
 
     if GEMINI_TEMP_DISABLED:
         disabled_message = (
@@ -3367,6 +3640,10 @@ async def image_endpoint(request: Request, payload: ImageRequest) -> JSONRespons
         payload.effective_ratio,
         image_model_label,
     )
+    access_denied = await _maybe_reject_restricted_identity(request, identity)
+    if access_denied:
+        return access_denied
+
     refusal = _maybe_block_sensitive_request(payload.effective_prompt, payload.ratio)
     if refusal:
         await _track_api_action(
@@ -3390,6 +3667,41 @@ async def image_endpoint(request: Request, payload: ImageRequest) -> JSONRespons
             user_id,
         )
         return refusal
+
+    if image_model_option == IMAGE_MODEL_OPTION_GROK_IMAGINE:
+        moderation_result = moderate_grok_generation_prompt(user_prompt)
+        if moderation_result.blocked:
+            block_reason = grok_safety_reason_code(moderation_result)
+            block_message = grok_safety_warning_text("image")
+            await _track_api_action(
+                identity=identity,
+                message_type="image",
+                user_message=user_prompt,
+                bot_reply=block_message,
+                model_used=image_model_label,
+                success=False,
+                image_increment=1,
+                frontend_source=frontend_source,
+                feature_used=f"{feature_used}:{image_model_option}:safety_blocked",
+                conversation_id=conversation_id,
+                text_content=user_prompt,
+                media=TrackingMedia(
+                    media_type="image",
+                    provider_source=provider_source,
+                    media_origin="generated",
+                    media_status="blocked",
+                    media_error_reason=block_reason,
+                ),
+                mark_started=bool(identity),
+                referral_code=referral_code,
+            )
+            logger.info(
+                "API IMAGE SAFETY BLOCK | request_id=%s user=%s reason=%s",
+                request_id or "unknown",
+                user_id,
+                block_reason or "grok_safety_block",
+            )
+            return _grok_safety_block_response(request, "image")
     try:
         enhanced_prompt = build_enhanced_image_prompt(user_prompt, ratio=payload.effective_ratio)
         prompt_hash = hashlib.sha256(user_prompt.encode("utf-8")).hexdigest()[:12]
@@ -3587,6 +3899,10 @@ async def video_endpoint(request: Request, payload: VideoRequest) -> JSONRespons
         aspect_ratio,
         video_model_label,
     )
+    access_denied = await _maybe_reject_restricted_identity(request, identity)
+    if access_denied:
+        return access_denied
+
     if identity is None and not manual_join_verified:
         return JSONResponse(status_code=401, content=_video_join_required_payload(request_id=request_id))
 
@@ -3628,6 +3944,40 @@ async def video_endpoint(request: Request, payload: VideoRequest) -> JSONRespons
             referral_code=referral_code,
         )
         return refusal
+
+    moderation_result = moderate_grok_generation_prompt(user_prompt)
+    if moderation_result.blocked:
+        block_reason = grok_safety_reason_code(moderation_result)
+        block_message = grok_safety_warning_text("video")
+        await _track_api_action(
+            identity=identity,
+            message_type="video",
+            user_message=user_prompt,
+            bot_reply=block_message,
+            model_used=video_model_label,
+            success=False,
+            message_increment=1,
+            frontend_source=frontend_source,
+            feature_used=f"{feature_used}:{video_model_option}:safety_blocked",
+            conversation_id=conversation_id,
+            text_content=user_prompt,
+            media=TrackingMedia(
+                media_type="video",
+                provider_source="pollinations",
+                media_origin="generated",
+                media_status="blocked",
+                media_error_reason=block_reason,
+            ),
+            mark_started=bool(identity),
+            referral_code=referral_code,
+        )
+        logger.info(
+            "API VIDEO SAFETY BLOCK | request_id=%s user=%s reason=%s",
+            request_id or "unknown",
+            user_id,
+            block_reason or "grok_safety_block",
+        )
+        return _grok_safety_block_response(request, "video")
 
     try:
         enhanced_prompt = build_enhanced_video_prompt(
@@ -3751,6 +4101,9 @@ async def vision_endpoint(request: Request, payload: VisionDescribeRequest) -> J
     request_id = _request_id_from_request(request)
     identity = _resolve_tracking_identity(request, payload)
     user_id = identity.telegram_id if identity else "unknown"
+    access_denied = await _maybe_reject_restricted_identity(request, identity)
+    if access_denied:
+        return access_denied
     settings = get_settings()
     frontend_source = _resolve_frontend_source(request)
     feature_used = "image_vision"
@@ -3909,6 +4262,9 @@ async def gpt_audio_endpoint(request: Request, payload: GPTAudioRequest) -> JSON
     request_id = _request_id_from_request(request)
     identity = _resolve_tracking_identity(request, payload)
     user_id = identity.telegram_id if identity else "unknown"
+    access_denied = await _maybe_reject_restricted_identity(request, identity)
+    if access_denied:
+        return access_denied
     frontend_source = _resolve_frontend_source(request)
     feature_used = "gpt_audio"
     conversation_id = _extract_conversation_id(request, identity, feature_used)
@@ -4069,6 +4425,9 @@ async def tts_endpoint(request: Request, payload: TTSRequest) -> JSONResponse:
     request_id = _request_id_from_request(request)
     identity = _resolve_tracking_identity(request, payload)
     user_id = identity.telegram_id if identity else "unknown"
+    access_denied = await _maybe_reject_restricted_identity(request, identity)
+    if access_denied:
+        return access_denied
     settings = get_settings()
     frontend_source = _resolve_frontend_source(request)
     feature_used = "text_to_speech"

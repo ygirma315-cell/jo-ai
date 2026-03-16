@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from contextlib import suppress
 import logging
 from typing import Any, Awaitable, Callable
 
@@ -8,8 +9,11 @@ from aiogram.types import CallbackQuery, Message, TelegramObject
 
 from bot.models.session import Feature
 from bot.services.session_manager import SessionManager
+from bot.services.tracking_service import SupabaseTrackingService
 
 logger = logging.getLogger(__name__)
+BLOCKED_ACCESS_NOTICE = "Your access to this bot is currently restricted. Contact support for help."
+BLOCKED_ACCESS_ALERT = "Access restricted."
 
 
 class UserActionLoggingMiddleware(BaseMiddleware):
@@ -37,6 +41,33 @@ class UserActionLoggingMiddleware(BaseMiddleware):
             first_name = event.from_user.first_name
             action = "callback"
             payload = event.data or ""
+
+        tracking_service = data.get("tracking_service")
+        if (
+            user_id is not None
+            and isinstance(tracking_service, SupabaseTrackingService)
+            and tracking_service.enabled
+        ):
+            try:
+                restricted = await tracking_service.is_user_access_restricted(int(user_id))
+            except Exception:
+                logger.warning("USER ACCESS CHECK FAILED user_id=%s", user_id, exc_info=True)
+                restricted = False
+            if restricted:
+                logger.warning(
+                    "BLOCKED USER ACCESS DENIED | user_id=%s username=%s action=%s",
+                    user_id,
+                    username,
+                    action,
+                )
+                if isinstance(event, Message):
+                    await event.answer(BLOCKED_ACCESS_NOTICE)
+                elif isinstance(event, CallbackQuery):
+                    with suppress(Exception):
+                        await event.answer(BLOCKED_ACCESS_ALERT, show_alert=True)
+                    if isinstance(event.message, Message):
+                        await event.message.answer(BLOCKED_ACCESS_NOTICE)
+                return None
 
         session_manager: SessionManager | None = data.get("session_manager")
         feature: Feature | None = None

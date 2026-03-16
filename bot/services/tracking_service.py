@@ -17,6 +17,7 @@ from bot.services.supabase_client import SupabaseConfig, build_supabase_config
 logger = logging.getLogger(__name__)
 TrackingBackend = Literal["postgres", "supabase_http", "disabled"]
 FrontendSource = Literal["telegram_bot", "mini_app", "website", "api", "unknown"]
+BLOCKED_ACCESS_STATUSES = frozenset({"blocked", "kicked"})
 
 
 @dataclass(slots=True)
@@ -553,11 +554,20 @@ class SupabaseTrackingService:
                                 total_images = coalesce(u.total_images, 0) + excluded.total_images,
                                 has_started = coalesce(u.has_started, false) or coalesce(excluded.has_started, false),
                                 started_at = coalesce(u.started_at, excluded.started_at),
-                                is_active = true,
-                                status = 'active',
-                                is_blocked = false,
-                                blocked_at = null,
-                                last_delivery_error = null,
+                                is_active = case when coalesce(u.is_blocked, false) then false else true end,
+                                status = case
+                                    when coalesce(u.is_blocked, false) then coalesce(nullif(u.status, ''), 'blocked')
+                                    else 'active'
+                                end,
+                                is_blocked = coalesce(u.is_blocked, false),
+                                blocked_at = case
+                                    when coalesce(u.is_blocked, false) then coalesce(u.blocked_at, timezone('utc', now()))
+                                    else null
+                                end,
+                                last_delivery_error = case
+                                    when coalesce(u.is_blocked, false) then u.last_delivery_error
+                                    else null
+                                end,
                                 last_frontend_source = coalesce(excluded.last_frontend_source, u.last_frontend_source),
                                 referral_code = excluded.referral_code,
                                 started_via_referral = coalesce(u.started_via_referral, excluded.started_via_referral),
@@ -736,12 +746,21 @@ class SupabaseTrackingService:
         existing_has_started = bool(existing_user.get("has_started")) if existing_user else False
         existing_started_at = existing_user.get("started_at") if existing_user else None
         existing_referred_by = _safe_non_negative_int(existing_user.get("referred_by") if existing_user else 0)
+        existing_is_blocked = bool(existing_user.get("is_blocked")) if existing_user else False
+        existing_status = str(existing_user.get("status") or "").strip().lower() if existing_user else ""
+        existing_blocked_at = existing_user.get("blocked_at") if existing_user else None
         _ = referral_code
         effective_referral_code = _referral_code_for_user(identity.telegram_id)
         started_referral_value = _sanitize_referral_code(started_via_referral)
         resolved_referred_by = existing_referred_by if existing_referred_by > 0 else 0
         if started_referral_value and (resolved_referred_by <= 0):
             resolved_referred_by = self._resolve_referrer_telegram_id(started_referral_value, identity.telegram_id) or 0
+
+        user_is_restricted = existing_is_blocked or existing_status in BLOCKED_ACCESS_STATUSES
+        resolved_is_blocked = bool(user_is_restricted)
+        resolved_status = "kicked" if existing_status == "kicked" else ("blocked" if user_is_restricted else "active")
+        resolved_blocked_at = existing_blocked_at or (_utc_now_iso() if user_is_restricted else None)
+        resolved_is_active = False if user_is_restricted else True
 
         username = _clean_text(identity.username, max_len=128) or _clean_text(
             existing_user.get("username") if existing_user else None,
@@ -766,11 +785,11 @@ class SupabaseTrackingService:
             "total_images": current_images + image_increment,
             "has_started": bool(mark_started or existing_has_started),
             "started_at": existing_started_at or (_utc_now_iso() if mark_started else None),
-            "is_active": True,
-            "status": "active",
-            "is_blocked": False,
-            "blocked_at": None,
-            "last_delivery_error": None,
+            "is_active": resolved_is_active,
+            "status": resolved_status,
+            "is_blocked": resolved_is_blocked,
+            "blocked_at": resolved_blocked_at,
+            "last_delivery_error": existing_user.get("last_delivery_error") if user_is_restricted and existing_user else None,
             "last_frontend_source": _clean_text(frontend_source, max_len=40),
             "referral_code": effective_referral_code,
             "started_via_referral": started_referral_value,
@@ -874,6 +893,9 @@ class SupabaseTrackingService:
                                     referred_by,
                                     referral_code,
                                     started_via_referral,
+                                    status,
+                                    is_blocked,
+                                    blocked_at,
                                     unreachable_count,
                                     engagement_count
                                 from {users}
@@ -896,8 +918,11 @@ class SupabaseTrackingService:
                         "referred_by": row[7],
                         "referral_code": row[8],
                         "started_via_referral": row[9],
-                        "unreachable_count": row[10],
-                        "engagement_count": row[11],
+                        "status": row[10],
+                        "is_blocked": row[11],
+                        "blocked_at": row[12],
+                        "unreachable_count": row[13],
+                        "engagement_count": row[14],
                     }
             except Exception:
                 logger.warning("USER PREFETCH FAILED backend=postgres user=%s", telegram_id, exc_info=True)
@@ -912,7 +937,7 @@ class SupabaseTrackingService:
             (
                 "username,first_name,last_name,total_messages,total_images,"
                 "has_started,started_at,referred_by,referral_code,started_via_referral,"
-                "unreachable_count,engagement_count"
+                "status,is_blocked,blocked_at,unreachable_count,engagement_count,last_delivery_error"
             ),
             count="exact",
         ).eq("telegram_id", telegram_id).limit(1).execute()
@@ -990,6 +1015,12 @@ class SupabaseTrackingService:
             )
         return None
 
+    async def is_user_access_restricted(self, telegram_id: int) -> bool:
+        user_id = int(telegram_id or 0)
+        if user_id <= 0 or not self.enabled:
+            return False
+        return await asyncio.to_thread(self._is_user_access_restricted_sync, user_id)
+
     async def mark_delivery_failure(self, telegram_id: int, reason: str, *, blocked: bool = False) -> None:
         user_id = int(telegram_id or 0)
         if user_id <= 0 or not self.enabled:
@@ -1034,6 +1065,67 @@ class SupabaseTrackingService:
         if not self.enabled:
             return _referral_code_for_user(identity.telegram_id)
         return await asyncio.to_thread(self._ensure_referral_code_sync, identity, frontend_source)
+
+    def _is_user_access_restricted_sync(self, telegram_id: int) -> bool:
+        if self._backend == "postgres" and self._postgres_config is not None:
+            connection = open_postgres_connection(self._postgres_config)
+            if connection is None:
+                return False
+            try:
+                with connection:
+                    with connection.cursor() as cursor:
+                        cursor.execute(
+                            sql.SQL(
+                                """
+                                select is_blocked, status
+                                from {users}
+                                where telegram_id = %s
+                                limit 1
+                                """
+                            ).format(users=sql.Identifier(self._postgres_config.users_table)),
+                            (telegram_id,),
+                        )
+                        row = cursor.fetchone()
+                if not row:
+                    return False
+                is_blocked = bool(row[0])
+                status = str(row[1] or "").strip().lower()
+                return bool(is_blocked or status in BLOCKED_ACCESS_STATUSES)
+            except Exception:
+                logger.warning(
+                    "USER ACCESS CHECK FAILED backend=postgres user=%s",
+                    telegram_id,
+                    exc_info=True,
+                )
+                return False
+            finally:
+                with suppress(Exception):
+                    connection.close()
+
+        if self._supabase_client is None or self._supabase_config is None:
+            return False
+        try:
+            response = (
+                self._supabase_client.table(self._supabase_config.users_table)
+                .select("is_blocked,status")
+                .eq("telegram_id", telegram_id)
+                .limit(1)
+                .execute()
+            )
+            data = getattr(response, "data", None)
+            if not isinstance(data, list) or not data or not isinstance(data[0], dict):
+                return False
+            row = data[0]
+            is_blocked = bool(row.get("is_blocked"))
+            status = str(row.get("status") or "").strip().lower()
+            return bool(is_blocked or status in BLOCKED_ACCESS_STATUSES)
+        except Exception:
+            logger.warning(
+                "USER ACCESS CHECK FAILED backend=supabase_http user=%s",
+                telegram_id,
+                exc_info=True,
+            )
+            return False
 
     def _mark_delivery_failure_sync(self, telegram_id: int, reason: str, blocked: bool) -> None:
         if self._backend == "postgres" and self._postgres_config is not None:
@@ -1097,10 +1189,15 @@ class SupabaseTrackingService:
                                 """
                                 update {users}
                                 set
-                                    is_active = true,
-                                    status = 'active',
-                                    is_blocked = false,
-                                    blocked_at = null,
+                                    is_active = case when coalesce(is_blocked, false) then false else true end,
+                                    status = case
+                                        when coalesce(is_blocked, false) then coalesce(nullif(status, ''), 'blocked')
+                                        else 'active'
+                                    end,
+                                    blocked_at = case
+                                        when coalesce(is_blocked, false) then blocked_at
+                                        else null
+                                    end,
                                     last_delivery_error = null,
                                     last_seen_at = timezone('utc', now())
                                 where telegram_id = %s
@@ -1118,12 +1215,19 @@ class SupabaseTrackingService:
         if self._supabase_client is None or self._supabase_config is None:
             return
         try:
+            existing = self._fetch_existing_user_row(telegram_id) or {}
+            user_is_blocked = bool(existing.get("is_blocked"))
+            current_status = str(existing.get("status") or "").strip().lower()
+            resolved_status = (
+                "kicked"
+                if current_status == "kicked"
+                else ("blocked" if user_is_blocked else "active")
+            )
             self._supabase_client.table(self._supabase_config.users_table).update(
                 {
-                    "is_active": True,
-                    "status": "active",
-                    "is_blocked": False,
-                    "blocked_at": None,
+                    "is_active": False if user_is_blocked else True,
+                    "status": resolved_status,
+                    "blocked_at": existing.get("blocked_at") if user_is_blocked else None,
                     "last_delivery_error": None,
                     "last_seen_at": _utc_now_iso(),
                 }

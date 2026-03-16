@@ -48,6 +48,11 @@ from bot.keyboards.jo_ai import (
 )
 from bot.keyboards.menu import main_menu_keyboard
 from bot.models.session import Feature, JoAIMode
+from bot.safety import (
+    grok_safety_reason_code,
+    grok_safety_warning_html,
+    moderate_grok_generation_prompt,
+)
 from bot.security import (
     BRANDING_LINE,
     DEVELOPER_HANDLE,
@@ -1094,6 +1099,10 @@ def _image_request_blocked_text() -> str:
         "This prompt asks for internal or backend details, so I did not send it to the image generator.\n"
         "Rewrite it as a visual description only and send it again."
     )
+
+
+def _grok_safety_blocked_text(media_type: Literal["image", "video"]) -> str:
+    return grok_safety_warning_html(media_type)
 
 
 def _image_generation_failed_text(
@@ -3548,6 +3557,32 @@ async def _process_image_message(
         )
         return
 
+    if model_option == IMAGE_MODEL_OPTION_GROK_IMAGINE:
+        moderation_result = moderate_grok_generation_prompt(user_text)
+        if moderation_result.blocked:
+            block_reason = grok_safety_reason_code(moderation_result)
+            reply_text = _grok_safety_blocked_text("image")
+            await message.answer(reply_text, reply_markup=_image_prompt_reply_keyboard())
+            await _track_telegram_action(
+                tracking_service=tracking_service,
+                message=message,
+                message_type="image",
+                user_message=user_text,
+                bot_reply=reply_text,
+                model_used=model_label,
+                success=False,
+                image_increment=1,
+                feature_used=f"{feature_used}:safety_blocked",
+                media=TrackingMedia(
+                    media_type="image",
+                    provider_source=provider_source,
+                    media_origin="generated",
+                    media_status="blocked",
+                    media_error_reason=block_reason,
+                ),
+            )
+            return
+
     await _maybe_send_engagement(message)
     enhanced_prompt = build_enhanced_image_prompt(user_text, ratio=ratio_label) or user_text
     prompt_hash = hashlib.sha256(user_text.encode("utf-8")).hexdigest()[:12]
@@ -3960,6 +3995,31 @@ async def _process_video_message(
             success=False,
             message_increment=1,
             feature_used=feature_used,
+        )
+        return
+
+    moderation_result = moderate_grok_generation_prompt(user_text)
+    if moderation_result.blocked:
+        block_reason = grok_safety_reason_code(moderation_result)
+        reply_text = _grok_safety_blocked_text("video")
+        await message.answer(reply_text, reply_markup=_video_prompt_reply_keyboard())
+        await _track_telegram_action(
+            tracking_service=tracking_service,
+            message=message,
+            message_type="video",
+            user_message=user_text,
+            bot_reply=reply_text,
+            model_used=model_used,
+            success=False,
+            message_increment=1,
+            feature_used=f"{feature_used}:safety_blocked",
+            media=TrackingMedia(
+                media_type="video",
+                provider_source="pollinations",
+                media_origin="generated",
+                media_status="blocked",
+                media_error_reason=block_reason,
+            ),
         )
         return
 
