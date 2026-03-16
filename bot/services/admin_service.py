@@ -769,11 +769,20 @@ class SupabaseAdminService:
             .limit(1)
             .execute()
         )
+        warnings_count_response = (
+            client.table(config.history_table)
+            .select("id", count="exact")
+            .eq("telegram_id", user_id)
+            .eq("message_type", "admin_warn")
+            .limit(1)
+            .execute()
+        )
         return {
             "user": self._serialize_user_row(user_row, active_days=7),
             "summary": {
                 "recent_activity_count": len(recent_activity),
                 "blocked_prompt_count": _response_count(blocked_count_response),
+                "warnings_sent_count": _response_count(warnings_count_response),
             },
             "recent_activity": recent_activity,
         }
@@ -868,6 +877,27 @@ class SupabaseAdminService:
             message_type="admin_direct_message",
             feature_used="admin_direct_message",
             user_message=safe_message,
+            bot_reply=status_note,
+            success=bool(delivered),
+            actor_telegram_id=actor_telegram_id,
+        )
+
+    def log_admin_warning(
+        self,
+        *,
+        telegram_id: int,
+        warning_text: str,
+        delivered: bool,
+        actor_telegram_id: int | None = None,
+        error: str | None = None,
+    ) -> None:
+        safe_warning = str(warning_text or "").strip()[:1500]
+        status_note = "Admin warning delivered." if delivered else f"Admin warning delivery failed: {str(error or 'unknown').strip()[:240]}"
+        self._record_admin_history_event(
+            telegram_id=int(telegram_id),
+            message_type="admin_warn",
+            feature_used="admin_user_warn",
+            user_message=safe_warning,
             bot_reply=status_note,
             success=bool(delivered),
             actor_telegram_id=actor_telegram_id,

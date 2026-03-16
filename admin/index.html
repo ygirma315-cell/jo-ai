@@ -47,7 +47,7 @@
       </div>
       <nav class="nav" id="nav">
         <button class="nav-btn active" data-section="overview">Overview</button>
-        <button class="nav-btn" data-section="users">Users</button>
+        <button class="nav-btn" data-section="users">User Management</button>
         <button class="nav-btn" data-section="safety">Safety</button>
         <button class="nav-btn" data-section="conversations">Conversations</button>
         <button class="nav-btn" data-section="media">Media</button>
@@ -70,7 +70,7 @@
       </header>
       <nav class="section-tabs" aria-label="Admin sections">
         <button class="section-tab active" data-section="overview">Overview</button>
-        <button class="section-tab" data-section="users">Users</button>
+        <button class="section-tab" data-section="users">User Management</button>
         <button class="section-tab" data-section="safety">Safety</button>
         <button class="section-tab" data-section="conversations">Conversations</button>
         <button class="section-tab" data-section="media">Media</button>
@@ -90,6 +90,10 @@
       </section>
 
       <section id="section-users" class="section">
+        <article class="card">
+          <h3>User Management</h3>
+          <p class="muted">Search users, open profile details, send direct messages, warn, block, unblock, or kick from one place.</p>
+        </article>
         <div class="toolbar">
           <input id="usersSearch" type="search" placeholder="Search username or Telegram ID">
           <select id="usersActiveWindow">
@@ -117,7 +121,10 @@
             <div id="userProfileMeta" class="list-meta"></div>
             <label for="userActionReason">Admin action reason (optional)</label>
             <input id="userActionReason" type="text" placeholder="Reason for block / kick / unblock">
+            <label for="userWarnMessage">Warning message (optional)</label>
+            <textarea id="userWarnMessage" rows="3" placeholder="Default warning will be used if left empty." disabled></textarea>
             <div class="toolbar wrap">
+              <button id="userWarnBtn" class="btn btn-warning" type="button" disabled>Warn</button>
               <button id="userBlockBtn" class="btn btn-danger" type="button" disabled>Block</button>
               <button id="userUnblockBtn" class="btn" type="button" disabled>Unblock</button>
               <button id="userKickBtn" class="btn btn-danger" type="button" disabled>Kick</button>

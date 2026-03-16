@@ -444,6 +444,16 @@ textarea {
   background: var(--brand-strong);
 }
 
+.btn-warning {
+  border-color: #f7c948;
+  color: #7a4e00;
+  background: #fff8e1;
+}
+
+.btn-warning:hover {
+  background: #ffefbf;
+}
+
 .btn-danger {
   border-color: #f7b5ad;
   color: var(--danger);

@@ -7,7 +7,7 @@
 
   const SECTION_TITLES = {
     overview: "Overview",
-    users: "Users",
+    users: "User Management",
     safety: "Safety",
     conversations: "Conversations",
     media: "Media",
@@ -78,6 +78,8 @@
     userProfileHint: byId("userProfileHint"),
     userProfileMeta: byId("userProfileMeta"),
     userActionReason: byId("userActionReason"),
+    userWarnMessage: byId("userWarnMessage"),
+    userWarnBtn: byId("userWarnBtn"),
     userBlockBtn: byId("userBlockBtn"),
     userUnblockBtn: byId("userUnblockBtn"),
     userKickBtn: byId("userKickBtn"),
@@ -361,6 +363,8 @@
 
   function setUserControlsEnabled(enabled) {
     const allow = Boolean(enabled);
+    if (refs.userWarnBtn) refs.userWarnBtn.disabled = !allow;
+    if (refs.userWarnMessage) refs.userWarnMessage.disabled = !allow;
     if (refs.userBlockBtn) refs.userBlockBtn.disabled = !allow;
     if (refs.userUnblockBtn) refs.userUnblockBtn.disabled = !allow;
     if (refs.userKickBtn) refs.userKickBtn.disabled = !allow;
@@ -378,6 +382,7 @@
     if (refs.userProfileHint) refs.userProfileHint.textContent = message;
     if (refs.userProfileMeta) refs.userProfileMeta.innerHTML = "";
     if (refs.userProfileActivity) renderEmpty(refs.userProfileActivity, "No user activity yet.");
+    if (refs.userWarnMessage) refs.userWarnMessage.value = "";
     if (refs.userDirectMessage) refs.userDirectMessage.value = "";
     setUserControlsEnabled(false);
   }
@@ -411,7 +416,7 @@
       refs.userProfileChip.className = `chip ${chipClass}`;
     }
     if (refs.userProfileHint) {
-      refs.userProfileHint.textContent = `Blocked prompts: ${formatNumber(summary.blocked_prompt_count)} | Recent records: ${formatNumber(summary.recent_activity_count)}`;
+      refs.userProfileHint.textContent = `Warnings sent: ${formatNumber(summary.warnings_sent_count)} | Blocked prompts: ${formatNumber(summary.blocked_prompt_count)} | Recent records: ${formatNumber(summary.recent_activity_count)}`;
     }
     if (refs.userProfileMeta) {
       refs.userProfileMeta.innerHTML = [
@@ -435,6 +440,7 @@
       }).join("");
     }
     setUserControlsEnabled(true);
+    if (refs.userWarnBtn) refs.userWarnBtn.disabled = false;
     if (refs.userBlockBtn) refs.userBlockBtn.disabled = Boolean(profile.is_blocked);
     if (refs.userUnblockBtn) refs.userUnblockBtn.disabled = !Boolean(profile.is_blocked);
     if (refs.userKickBtn) refs.userKickBtn.disabled = String(profile.status || "").toLowerCase() === "kicked";
@@ -643,11 +649,12 @@
           const chipLabel = row.is_blocked ? "blocked" : row.is_active ? "active" : "inactive";
           const selectedClass = Number(state.selectedUserId || 0) === Number(row.telegram_id) ? " selected" : "";
           const openButton = `<button class="btn small user-open-btn" data-user-id="${escapeHtml(row.telegram_id)}">Open</button>`;
+          const warnButton = `<button class="btn small btn-warning user-action-btn" data-user-id="${escapeHtml(row.telegram_id)}" data-action="warn">Warn</button>`;
           const actionButtons = row.is_blocked
             ? `<button class="btn small user-action-btn" data-user-id="${escapeHtml(row.telegram_id)}" data-action="unblock">Unblock</button>`
             : `<button class="btn small btn-danger user-action-btn" data-user-id="${escapeHtml(row.telegram_id)}" data-action="block">Block</button>`;
           const kickButton = `<button class="btn small btn-danger user-action-btn" data-user-id="${escapeHtml(row.telegram_id)}" data-action="kick">Kick</button>`;
-          return `<article class="list-item${selectedClass}" data-user-id="${escapeHtml(row.telegram_id)}"><div class="row-head"><h4>${escapeHtml(userLabel(row))}</h4><span class="chip ${chipClass}">${chipLabel}</span></div><div class="list-meta"><span>First seen: ${escapeHtml(formatDateTime(row.first_seen_at))}</span><span>Last seen: ${escapeHtml(formatDateTime(row.last_seen_at))}</span><span>Started: ${row.has_started ? "yes" : "no"}</span><span>Messages: ${escapeHtml(formatNumber(row.total_messages))}</span><span>Images: ${escapeHtml(formatNumber(row.total_images))}</span><span>Unreachable: ${escapeHtml(formatNumber(row.unreachable_count))}</span><span>Referral code: ${escapeHtml(row.referral_code || "-")}</span><span>Referred by: ${escapeHtml(row.referred_by || "-")}</span></div><div class="toolbar wrap">${openButton}${actionButtons}${kickButton}</div>${row.last_delivery_error ? `<p class="error">Last delivery error: ${escapeHtml(row.last_delivery_error)}</p>` : ""}</article>`;
+          return `<article class="list-item${selectedClass}" data-user-id="${escapeHtml(row.telegram_id)}"><div class="row-head"><h4>${escapeHtml(userLabel(row))}</h4><span class="chip ${chipClass}">${chipLabel}</span></div><div class="list-meta"><span>First seen: ${escapeHtml(formatDateTime(row.first_seen_at))}</span><span>Last seen: ${escapeHtml(formatDateTime(row.last_seen_at))}</span><span>Started: ${row.has_started ? "yes" : "no"}</span><span>Messages: ${escapeHtml(formatNumber(row.total_messages))}</span><span>Images: ${escapeHtml(formatNumber(row.total_images))}</span><span>Unreachable: ${escapeHtml(formatNumber(row.unreachable_count))}</span><span>Referral code: ${escapeHtml(row.referral_code || "-")}</span><span>Referred by: ${escapeHtml(row.referred_by || "-")}</span></div><div class="toolbar wrap">${openButton}${warnButton}${actionButtons}${kickButton}</div>${row.last_delivery_error ? `<p class="error">Last delivery error: ${escapeHtml(row.last_delivery_error)}</p>` : ""}</article>`;
         }).join("");
       }
 
@@ -713,6 +720,33 @@
     } catch (error) {
       if (handleAuthError(error)) return;
       showToast(error.message || `Failed to ${actionLabel} user.`, true);
+    }
+  }
+
+  async function sendWarningToUser(userId) {
+    const parsedId = Number(userId || state.selectedUserId || 0);
+    if (!parsedId) {
+      showToast("Select a user first.", true);
+      return;
+    }
+    const customWarning = refs.userWarnMessage ? refs.userWarnMessage.value.trim() : "";
+    const confirmed = window.confirm(`Send warning to user ${parsedId}?`);
+    if (!confirmed) return;
+    try {
+      await requestJson(`/api/admin/users/${encodeURIComponent(String(parsedId))}/warn`, {
+        method: "POST",
+        body: { message: customWarning || null },
+      });
+      if (refs.userWarnMessage) refs.userWarnMessage.value = "";
+      showToast("Warning sent.");
+      state.loaded.users = false;
+      await Promise.all([
+        loadUsers(true),
+        loadUserProfile(parsedId, true),
+      ]);
+    } catch (error) {
+      if (handleAuthError(error)) return;
+      showToast(error.message || "Failed to send warning.", true);
     }
   }
 
@@ -1089,6 +1123,7 @@
     if (refs.refPrev) refs.refPrev.addEventListener("click", async () => { if (state.pages.referrals > 0) { state.pages.referrals -= 1; state.loaded.referrals = false; await loadReferrals(true); } });
     if (refs.refNext) refs.refNext.addEventListener("click", async () => { if (state.hasMore.referrals) { state.pages.referrals += 1; state.loaded.referrals = false; await loadReferrals(true); } });
 
+    if (refs.userWarnBtn) refs.userWarnBtn.addEventListener("click", async () => sendWarningToUser());
     if (refs.userBlockBtn) refs.userBlockBtn.addEventListener("click", async () => runUserAccessAction("block"));
     if (refs.userUnblockBtn) refs.userUnblockBtn.addEventListener("click", async () => runUserAccessAction("unblock"));
     if (refs.userKickBtn) refs.userKickBtn.addEventListener("click", async () => runUserAccessAction("kick"));
@@ -1112,7 +1147,11 @@
         const action = String(actionButton.getAttribute("data-action") || "").trim().toLowerCase();
         const userId = Number(actionButton.getAttribute("data-user-id") || "0");
         if (userId > 0 && action) {
-          runUserAccessAction(action, userId);
+          if (action === "warn") {
+            sendWarningToUser(userId);
+          } else {
+            runUserAccessAction(action, userId);
+          }
         }
         return;
       }

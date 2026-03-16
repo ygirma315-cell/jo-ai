@@ -453,6 +453,10 @@ class AdminUserMessageRequest(BaseModel):
     message: str = Field(min_length=1, max_length=2000)
 
 
+class AdminUserWarnRequest(BaseModel):
+    message: str | None = Field(default=None, max_length=1500)
+
+
 def _read_env(name: str) -> str:
     return os.getenv(name, "").strip()
 
@@ -2673,6 +2677,78 @@ async def admin_kick_user(
     except Exception as exc:
         logger.exception("ADMIN USER KICK FAILED | request_id=%s error=%s", _request_id_from_request(request), exc)
         return _admin_error_response(request, 500, "Failed to kick user.")
+
+
+@app.post("/api/admin/users/{telegram_id}/warn")
+async def admin_warn_user(
+    request: Request,
+    telegram_id: int,
+    payload: AdminUserWarnRequest | None = None,
+) -> JSONResponse:
+    try:
+        service = _require_admin_service(request)
+        runtime = _get_bot_runtime()
+        if runtime is None:
+            return _admin_error_response(request, 503, "Bot runtime is not ready.")
+        target_user_id = int(telegram_id)
+        try:
+            await asyncio.to_thread(service.get_user_profile, telegram_id=target_user_id, activity_limit=5)
+        except LookupError:
+            return _admin_error_response(request, 404, "User not found.")
+
+        warning_body = str((payload.message if payload else "") or "").strip()
+        if not warning_body:
+            warning_body = (
+                "Please follow JO AI usage rules. Repeated policy violations may result in restricted access."
+            )
+        warning_text = f"Admin warning:\n\n{warning_body}"
+
+        actor_id = _admin_actor_telegram_id(request)
+        tracking_service = _tracking_service()
+        delivery_error: str | None = None
+        delivered = False
+        try:
+            await runtime.bot.send_message(chat_id=target_user_id, text=warning_text)
+            delivered = True
+            if tracking_service.enabled:
+                await tracking_service.mark_delivery_success(target_user_id)
+        except (TelegramForbiddenError, TelegramBadRequest) as exc:
+            delivery_error = str(exc)
+            if tracking_service.enabled:
+                await tracking_service.mark_delivery_failure(
+                    target_user_id,
+                    delivery_error,
+                    blocked=_is_blocked_delivery_error(exc),
+                )
+        except TelegramNetworkError as exc:
+            delivery_error = str(exc)
+        except Exception as exc:
+            delivery_error = str(exc)
+
+        await asyncio.to_thread(
+            service.log_admin_warning,
+            telegram_id=target_user_id,
+            warning_text=warning_body,
+            delivered=delivered,
+            actor_telegram_id=actor_id,
+            error=delivery_error,
+        )
+
+        if delivered:
+            return JSONResponse(
+                status_code=200,
+                content={"ok": True, "delivered": True, "warning": warning_body},
+            )
+        return _admin_error_response(
+            request,
+            502,
+            f"Failed to deliver warning. {delivery_error or 'User may be unreachable.'}",
+        )
+    except HTTPException as exc:
+        return _admin_error_response(request, exc.status_code, str(exc.detail))
+    except Exception as exc:
+        logger.exception("ADMIN USER WARN FAILED | request_id=%s error=%s", _request_id_from_request(request), exc)
+        return _admin_error_response(request, 500, "Failed to warn user.")
 
 
 @app.post("/api/admin/users/{telegram_id}/message")
