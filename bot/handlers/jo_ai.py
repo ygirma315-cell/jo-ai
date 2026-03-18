@@ -115,25 +115,57 @@ IMAGE_MODEL_OPTION_JO = "joai_image_generate"
 IMAGE_MODEL_OPTION_CHAT_GBT = "chat_gbt"
 IMAGE_MODEL_OPTION_GROK_IMAGINE = "grok_imagine"
 DEFAULT_IMAGE_MODEL_OPTION = IMAGE_MODEL_OPTION_JO
+DEFAULT_POLLINATIONS_IMAGE_MODEL = "gptimage"
+
+POLLINATIONS_FREE_IMAGE_MODEL_OPTIONS: tuple[tuple[str, str], ...] = (
+    ("gptimage", "GPT Image Mini"),
+    ("flux", "Flux Schnell"),
+    ("zimage", "Z-Image Turbo"),
+    ("klein", "Flux 2 Klein"),
+    ("imagen-4", "Imagen 4"),
+    ("flux-2-dev", "Flux 2 Dev"),
+    ("grok-imagine", "Grok Imagine"),
+    ("dirtberry", "Dirtberry"),
+    ("dirtberry-pro", "Dirtberry Pro"),
+)
 
 IMAGE_MODEL_LABELS = {
     IMAGE_MODEL_OPTION_JO: "JO AI Image Generate",
     IMAGE_MODEL_OPTION_CHAT_GBT: "Chat GBT",
     IMAGE_MODEL_OPTION_GROK_IMAGINE: "Grok Imagine",
+    **{model_id: label for model_id, label in POLLINATIONS_FREE_IMAGE_MODEL_OPTIONS},
 }
 
-IMAGE_MODEL_ALIASES = {
-    IMAGE_MODEL_OPTION_JO: IMAGE_MODEL_OPTION_JO,
-    "jo ai image generate": IMAGE_MODEL_OPTION_JO,
-    "jo_ai_image_generate": IMAGE_MODEL_OPTION_JO,
-    "jo_ai": IMAGE_MODEL_OPTION_JO,
-    "joai": IMAGE_MODEL_OPTION_JO,
-    "chat gbt": IMAGE_MODEL_OPTION_CHAT_GBT,
-    "chat_gbt": IMAGE_MODEL_OPTION_CHAT_GBT,
-    IMAGE_MODEL_OPTION_CHAT_GBT: IMAGE_MODEL_OPTION_CHAT_GBT,
-    "grok imagine": IMAGE_MODEL_OPTION_GROK_IMAGINE,
-    "grok_imagine": IMAGE_MODEL_OPTION_GROK_IMAGINE,
-    IMAGE_MODEL_OPTION_GROK_IMAGINE: IMAGE_MODEL_OPTION_GROK_IMAGINE,
+JO_IMAGE_MODEL_ALIASES = {
+    "joai_image_generate",
+    "jo_ai_image_generate",
+    "jo ai image generate",
+    "jo_ai",
+    "joai",
+    "image_generator",
+    "image generator",
+}
+
+POLLINATIONS_IMAGE_MODEL_ALIASES: dict[str, str] = {
+    "gptimage": "gptimage",
+    "gpt_image": "gptimage",
+    "gpt_image_1_mini": "gptimage",
+    "gpt_image_1": "gptimage",
+    "flux": "flux",
+    "zimage": "zimage",
+    "z_image": "zimage",
+    "z_image_turbo": "zimage",
+    "klein": "klein",
+    "flux_klein": "klein",
+    "imagen_4": "imagen-4",
+    "imagen": "imagen-4",
+    "flux_2_dev": "flux-2-dev",
+    "flux_2": "flux-2-dev",
+    "flux2_dev": "flux-2-dev",
+    "grok_imagine": "grok-imagine",
+    "dirtberry": "dirtberry",
+    "dirtberry_pro": "dirtberry-pro",
+    "special_berry": "dirtberry-pro",
 }
 
 VIDEO_MODEL_OPTION_GROK_TEXT_TO_VIDEO = "grok_text_to_video"
@@ -208,11 +240,61 @@ def _video_join_required_keyboard() -> InlineKeyboardMarkup:
     )
 
 
+def _normalize_image_model_token(value: str | None) -> str:
+    return str(value or "").strip().lower().replace("-", "_").replace(" ", "_")
+
+
+def _pollinations_image_model_from_alias(value: str | None) -> str | None:
+    normalized = _normalize_image_model_token(value)
+    if not normalized:
+        return None
+    return POLLINATIONS_IMAGE_MODEL_ALIASES.get(normalized)
+
+
+def _image_model_keyboard_options() -> list[tuple[str, str]]:
+    return [(IMAGE_MODEL_LABELS[IMAGE_MODEL_OPTION_JO], IMAGE_MODEL_OPTION_JO), *POLLINATIONS_FREE_IMAGE_MODEL_OPTIONS]
+
+
 def _resolve_image_model_option(value: str | None) -> str:
-    candidate = str(value or "").strip().lower()
-    if candidate in IMAGE_MODEL_ALIASES:
-        return IMAGE_MODEL_ALIASES[candidate]
+    normalized = _normalize_image_model_token(value)
+    if not normalized:
+        return DEFAULT_IMAGE_MODEL_OPTION
+    if normalized in JO_IMAGE_MODEL_ALIASES:
+        return IMAGE_MODEL_OPTION_JO
+    if normalized in {"chat_gbt", "chatgbt"}:
+        return DEFAULT_POLLINATIONS_IMAGE_MODEL
+    if normalized == IMAGE_MODEL_OPTION_GROK_IMAGINE:
+        return "grok-imagine"
+    pollinations_model = _pollinations_image_model_from_alias(normalized)
+    if pollinations_model:
+        return pollinations_model
     return DEFAULT_IMAGE_MODEL_OPTION
+
+
+def _pollinations_image_model_id_for_option(
+    model_option: str | None,
+    pollinations_media_service: PollinationsMediaService,
+) -> str | None:
+    normalized_option = _resolve_image_model_option(model_option)
+    if normalized_option == IMAGE_MODEL_OPTION_JO:
+        return None
+    if normalized_option == IMAGE_MODEL_OPTION_CHAT_GBT:
+        return str(pollinations_media_service.image_model_chat_gbt or "").strip() or DEFAULT_POLLINATIONS_IMAGE_MODEL
+    if normalized_option == IMAGE_MODEL_OPTION_GROK_IMAGINE:
+        return str(pollinations_media_service.image_model_grok_imagine or "").strip() or "grok-imagine"
+    pollinations_model = _pollinations_image_model_from_alias(normalized_option) or str(normalized_option).strip()
+    return pollinations_model or DEFAULT_POLLINATIONS_IMAGE_MODEL
+
+
+def _is_grok_image_model_option(model_option: str | None, pollinations_media_service: PollinationsMediaService) -> bool:
+    model_id = _pollinations_image_model_id_for_option(model_option, pollinations_media_service)
+    if not model_id:
+        return False
+    normalized_model_id = _normalize_image_model_token(model_id)
+    normalized_grok_model = _normalize_image_model_token(
+        str(pollinations_media_service.image_model_grok_imagine or "grok-imagine")
+    )
+    return normalized_model_id in {normalized_grok_model, "grok_imagine"}
 
 
 def _image_model_label(model_option: str | None) -> str:
@@ -639,15 +721,13 @@ async def _send_prompt_details_step(message: Message) -> None:
 
 
 async def _send_image_intro(message: Message) -> None:
+    available_models_text = "\n".join(f"- {label}" for label, _token in _image_model_keyboard_options())
     await _send_step_message(
         message,
         "<b>Image Generation is active</b>\n\n"
         "Step 1/2: Choose an image model.\n"
-        "Options:\n"
-        f"- {IMAGE_MODEL_LABELS[IMAGE_MODEL_OPTION_JO]}\n"
-        f"- {IMAGE_MODEL_LABELS[IMAGE_MODEL_OPTION_CHAT_GBT]}\n"
-        f"- {IMAGE_MODEL_LABELS[IMAGE_MODEL_OPTION_GROK_IMAGINE]}",
-        reply_markup=image_model_keyboard(DEFAULT_IMAGE_MODEL_OPTION),
+        f"Options:\n{available_models_text}",
+        reply_markup=image_model_keyboard(DEFAULT_IMAGE_MODEL_OPTION, _image_model_keyboard_options()),
     )
 
 
@@ -1091,6 +1171,17 @@ def _is_service_unavailable_error(exc: Exception | None) -> bool:
     if not normalized:
         return False
     return normalized == SAFE_SERVICE_UNAVAILABLE_MESSAGE
+
+
+def _is_pollinations_payment_error(exc: Exception | str | None) -> bool:
+    normalized = str(exc or "").strip().lower()
+    if not normalized:
+        return False
+    return (
+        "insufficient balance" in normalized
+        or "payment_required" in normalized
+        or "payment required" in normalized
+    )
 
 
 def _image_request_blocked_text() -> str:
@@ -1799,7 +1890,7 @@ async def image_show_model_menu(query: CallbackQuery, session_manager: SessionMa
             query.message,
             "<b>Select an image model</b>\n\n"
             "Choose one option below. Provider internals stay hidden.",
-            reply_markup=image_model_keyboard(selected_model),
+            reply_markup=image_model_keyboard(selected_model, _image_model_keyboard_options()),
         )
 
 
@@ -3536,8 +3627,12 @@ async def _process_image_message(
     _ = session_manager
     model_option = _resolve_image_model_option(current_image_model)
     model_label = _image_model_label(model_option)
-    provider_source = "jo_ai" if model_option == IMAGE_MODEL_OPTION_JO else "pollinations"
-    feature_used = f"image_generation:{model_option}"
+    requested_model_option = model_option
+    requested_model_label = model_label
+    effective_model_option = model_option
+    effective_model_label = model_label
+    provider_source = "jo_ai" if effective_model_option == IMAGE_MODEL_OPTION_JO else "pollinations"
+    feature_used = f"image_generation:{effective_model_option}"
     ratio_label = current_image_ratio if current_image_ratio in IMAGE_RATIO_TO_SIZE else "1:1"
     image_size = IMAGE_RATIO_TO_SIZE.get(ratio_label, IMAGE_RATIO_TO_SIZE["1:1"])
     guardrail_reply = guardrail_response_for_user_query(user_text, ratio_label)
@@ -3557,7 +3652,7 @@ async def _process_image_message(
         )
         return
 
-    if model_option == IMAGE_MODEL_OPTION_GROK_IMAGINE:
+    if _is_grok_image_model_option(model_option, pollinations_media_service):
         moderation_result = moderate_grok_generation_prompt(user_text)
         if moderation_result.blocked:
             block_reason = grok_safety_reason_code(moderation_result)
@@ -3596,29 +3691,49 @@ async def _process_image_message(
 
     progress_message = await _send_progress_message(message, "Creating your image...")
 
+    fallback_notice: str | None = None
     try:
         async with ChatActionSender.upload_photo(bot=message.bot, chat_id=message.chat.id):
-            generated = await asyncio.wait_for(
-                (
+            if effective_model_option == IMAGE_MODEL_OPTION_JO:
+                generated = await asyncio.wait_for(
                     image_generation_service.generate_image(
                         enhanced_prompt,
                         size=image_size,
                         ratio=ratio_label,
-                    )
-                    if model_option == IMAGE_MODEL_OPTION_JO
-                    else pollinations_media_service.generate_image(
-                        prompt=enhanced_prompt,
-                        model=(
-                            pollinations_media_service.image_model_chat_gbt
-                            if model_option == IMAGE_MODEL_OPTION_CHAT_GBT
-                            else pollinations_media_service.image_model_grok_imagine
+                    ),
+                    timeout=TELEGRAM_IMAGE_TIMEOUT_SECONDS,
+                )
+            else:
+                pollinations_model_id = _pollinations_image_model_id_for_option(
+                    effective_model_option,
+                    pollinations_media_service,
+                ) or DEFAULT_POLLINATIONS_IMAGE_MODEL
+                try:
+                    generated = await asyncio.wait_for(
+                        pollinations_media_service.generate_image(
+                            prompt=enhanced_prompt,
+                            model=pollinations_model_id,
+                            size=image_size,
+                            enhance=True,
                         ),
-                        size=image_size,
-                        enhance=True,
+                        timeout=TELEGRAM_IMAGE_TIMEOUT_SECONDS,
                     )
-                ),
-                timeout=TELEGRAM_IMAGE_TIMEOUT_SECONDS,
-            )
+                except AIServiceError as exc:
+                    if not _is_pollinations_payment_error(exc):
+                        raise
+                    fallback_notice = str(exc).strip()[:220]
+                    effective_model_option = IMAGE_MODEL_OPTION_JO
+                    effective_model_label = IMAGE_MODEL_LABEL_JO
+                    provider_source = "jo_ai"
+                    feature_used = f"image_generation:{requested_model_option}:fallback_to_{effective_model_option}"
+                    generated = await asyncio.wait_for(
+                        image_generation_service.generate_image(
+                            enhanced_prompt,
+                            size=image_size,
+                            ratio=ratio_label,
+                        ),
+                        timeout=TELEGRAM_IMAGE_TIMEOUT_SECONDS,
+                    )
     except asyncio.TimeoutError:
         await _clear_progress_message(progress_message)
         reply_text = "Image generation timed out. Please retry."
@@ -3629,7 +3744,7 @@ async def _process_image_message(
             message_type="image",
             user_message=user_text,
             bot_reply=reply_text,
-            model_used=model_label,
+            model_used=effective_model_label,
             success=False,
             image_increment=1,
             feature_used=feature_used,
@@ -3653,7 +3768,7 @@ async def _process_image_message(
                 message_type="image",
                 user_message=user_text,
                 bot_reply=reply_text,
-                model_used=model_label,
+                model_used=effective_model_label,
                 success=False,
                 image_increment=1,
                 feature_used=feature_used,
@@ -3668,12 +3783,13 @@ async def _process_image_message(
             return
         primary_image_key = (
             image_generation_service.api_key
-            if model_option == IMAGE_MODEL_OPTION_JO
+            if effective_model_option == IMAGE_MODEL_OPTION_JO
             else pollinations_media_service.api_key
         )
-        reply_text = _image_generation_failed_text(
-            confirmed_unavailable=_is_service_unavailable_error(exc) or not bool(primary_image_key),
-        )
+        if _is_service_unavailable_error(exc) or not bool(primary_image_key):
+            reply_text = _image_generation_failed_text(confirmed_unavailable=True)
+        else:
+            reply_text = _friendly_error_text("Image generation failed", exc)
         await message.answer(reply_text, reply_markup=_image_prompt_reply_keyboard())
         await _track_telegram_action(
             tracking_service=tracking_service,
@@ -3681,7 +3797,7 @@ async def _process_image_message(
             message_type="image",
             user_message=user_text,
             bot_reply=reply_text,
-            model_used=model_label,
+            model_used=effective_model_label,
             success=False,
             image_increment=1,
             feature_used=feature_used,
@@ -3705,7 +3821,7 @@ async def _process_image_message(
             message_type="image",
             user_message=user_text,
             bot_reply=reply_text,
-            model_used=model_label,
+            model_used=effective_model_label,
             success=False,
             image_increment=1,
             feature_used=feature_used,
@@ -3721,6 +3837,13 @@ async def _process_image_message(
 
     await _clear_progress_message(progress_message)
     original_prompt_caption = html.escape(" ".join(user_text.split())[:900]) or "Image generated."
+    if fallback_notice:
+        original_prompt_caption = f"{original_prompt_caption}\n\nFallback: JO AI image model used."
+    success_reply = (
+        f"Image generated successfully using JO AI fallback model (requested {requested_model_label})."
+        if fallback_notice
+        else "Image generated successfully."
+    )
     if generated.image_bytes:
         image_file = BufferedInputFile(generated.image_bytes, filename="jo_ai_generated.png")
         sent = await message.answer_photo(
@@ -3736,8 +3859,8 @@ async def _process_image_message(
             message=message,
             message_type="image",
             user_message=user_text,
-            bot_reply="Image generated successfully.",
-            model_used=model_label,
+            bot_reply=success_reply,
+            model_used=effective_model_label,
             success=True,
             image_increment=1,
             feature_used=feature_used,
@@ -3767,8 +3890,8 @@ async def _process_image_message(
             message=message,
             message_type="image",
             user_message=user_text,
-            bot_reply="Image generated successfully.",
-            model_used=model_label,
+            bot_reply=success_reply,
+            model_used=effective_model_label,
             success=True,
             image_increment=1,
             feature_used=feature_used,
@@ -3791,7 +3914,7 @@ async def _process_image_message(
         message_type="image",
         user_message=user_text,
         bot_reply=reply_text,
-        model_used=model_label,
+        model_used=effective_model_label,
         success=False,
         image_increment=1,
         feature_used=feature_used,

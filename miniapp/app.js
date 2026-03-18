@@ -3211,8 +3211,20 @@
       const ratio = payload.ratio || "1:1";
       const modelLabelMap = {
         jo_ai_image_generate: "JO AI Image Generate",
-        chat_gbt: "Chat GBT",
+        joai_image_generate: "JO AI Image Generate",
+        chat_gbt: "GPT Image Mini",
         grok_imagine: "Grok Imagine",
+        "gpt-image-1-mini": "GPT Image Mini",
+        gpt_image_1_mini: "GPT Image Mini",
+        gptimage: "GPT Image Mini",
+        flux: "Flux Schnell",
+        zimage: "Z-Image Turbo",
+        klein: "Flux 2 Klein",
+        "imagen-4": "Imagen 4",
+        "flux-2-dev": "Flux 2 Dev",
+        "grok-imagine": "Grok Imagine",
+        dirtberry: "Dirtberry",
+        "dirtberry-pro": "Dirtberry Pro",
       };
       const modelLabel = modelLabelMap[payload.image_model] || "JO AI Image Generate";
       note = `Model: ${modelLabel} | Ratio: ${ratio}`;

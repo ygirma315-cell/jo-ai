@@ -70,19 +70,20 @@ def image_ratio_keyboard() -> InlineKeyboardMarkup:
     return builder.as_markup()
 
 
-def image_model_keyboard(selected_model: str | None = None) -> InlineKeyboardMarkup:
+def image_model_keyboard(
+    selected_model: str | None = None,
+    model_options: list[tuple[str, str]] | None = None,
+) -> InlineKeyboardMarkup:
     selected = (selected_model or "").strip().lower()
-    options: list[tuple[str, str]] = [
-        ("JO AI Image Generate", "joai_image_generate"),
-        ("Chat GBT", "chat_gbt"),
-        ("Grok Imagine", "grok_imagine"),
-    ]
+    options = model_options or [("JO AI Image Generate", "joai_image_generate")]
     builder = InlineKeyboardBuilder()
     for label, token in options:
         prefix = "✅ " if token == selected else ""
         builder.button(text=f"{prefix}{label}", callback_data=f"joaiimg:model:{token}")
     _append_back_main(builder, "joaiimg:ratio_menu")
-    builder.adjust(1, 1, 1, 2)
+    layout = [1] * len(options)
+    layout.append(2)
+    builder.adjust(*layout)
     return builder.as_markup()
 
 

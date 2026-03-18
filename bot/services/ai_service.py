@@ -1257,7 +1257,7 @@ async def _post_pollinations_json(
             if _is_retryable_status(response.status) and attempt < retries:
                 await asyncio.sleep(DEFAULT_RETRY_BACKOFF_SECONDS * (attempt + 1))
                 continue
-            raise AIServiceError(SAFE_SERVICE_UNAVAILABLE_MESSAGE)
+            raise AIServiceError(_friendly_pollinations_error(detail, response.status))
 
         parsed = _safe_json(body)
         if parsed:
@@ -1348,7 +1348,7 @@ async def _get_pollinations_binary(
             if _is_retryable_status(response.status) and attempt < retries:
                 await asyncio.sleep(DEFAULT_RETRY_BACKOFF_SECONDS * (attempt + 1))
                 continue
-            raise AIServiceError(SAFE_SERVICE_UNAVAILABLE_MESSAGE)
+            raise AIServiceError(_friendly_pollinations_error(detail, response.status))
         return body, content_type
 
     if last_error is not None:
@@ -1394,6 +1394,35 @@ def _friendly_gemini_error(raw_message: str, status_code: int) -> str:
     if detail:
         clipped = detail[:220].rstrip()
         return f"Gemini request failed ({status_code}): {clipped}"
+    return SAFE_SERVICE_UNAVAILABLE_MESSAGE
+
+
+def _friendly_pollinations_error(raw_message: str, status_code: int) -> str:
+    detail = str(raw_message or "").strip()
+    lowered = detail.lower()
+    if status_code in {401, 403} or (
+        "api key" in lowered and ("invalid" in lowered or "unauthorized" in lowered or "forbidden" in lowered)
+    ):
+        return "Pollinations API key is invalid or blocked. Check POLLINATIONS_API_KEY."
+    if (
+        status_code == 402
+        or "insufficient balance" in lowered
+        or "payment_required" in lowered
+        or "payment required" in lowered
+    ):
+        if detail:
+            clipped = detail[:220].rstrip()
+            return f"Pollinations balance is too low for this request. {clipped}"
+        return "Pollinations balance is too low for this request."
+    if status_code == 404 or ("model" in lowered and "not found" in lowered):
+        return "Pollinations model is not available. Check configured Pollinations model names."
+    if status_code == 429 or "rate limit" in lowered or "quota" in lowered:
+        return "Pollinations is rate-limited right now. Please retry shortly."
+    if status_code >= 500:
+        return "Pollinations service is temporarily unavailable upstream. Please retry shortly."
+    if detail:
+        clipped = detail[:220].rstrip()
+        return f"Pollinations request failed ({status_code}): {clipped}"
     return SAFE_SERVICE_UNAVAILABLE_MESSAGE
 
 

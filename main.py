@@ -110,6 +110,19 @@ GPT_AUDIO_MODEL_LABEL = "GPT Audio"
 IMAGE_MODEL_OPTION_JO = "jo_ai_image_generate"
 IMAGE_MODEL_OPTION_CHAT_GBT = "chat_gbt"
 IMAGE_MODEL_OPTION_GROK_IMAGINE = "grok_imagine"
+DEFAULT_POLLINATIONS_IMAGE_MODEL_OPTION = "gptimage"
+POLLINATIONS_FREE_IMAGE_MODELS: tuple[tuple[str, str], ...] = (
+    ("gptimage", "GPT Image Mini"),
+    ("flux", "Flux Schnell"),
+    ("zimage", "Z-Image Turbo"),
+    ("klein", "Flux 2 Klein"),
+    ("imagen-4", "Imagen 4"),
+    ("flux-2-dev", "Flux 2 Dev"),
+    ("grok-imagine", "Grok Imagine"),
+    ("dirtberry", "Dirtberry"),
+    ("dirtberry-pro", "Dirtberry Pro"),
+)
+POLLINATIONS_FREE_IMAGE_MODEL_IDS = frozenset(model_id for model_id, _label in POLLINATIONS_FREE_IMAGE_MODELS)
 VIDEO_MODEL_OPTION_GROK_TEXT_TO_VIDEO = "grok_text_to_video"
 _raw_video_join_chat_id = (
     str(
@@ -134,22 +147,51 @@ IMAGE_MODEL_OPTION_LABELS: dict[str, str] = {
     IMAGE_MODEL_OPTION_JO: IMAGE_MODEL_LABEL_JO,
     IMAGE_MODEL_OPTION_CHAT_GBT: IMAGE_MODEL_LABEL_CHAT_GBT,
     IMAGE_MODEL_OPTION_GROK_IMAGINE: IMAGE_MODEL_LABEL_GROK_IMAGINE,
+    **{model_id: label for model_id, label in POLLINATIONS_FREE_IMAGE_MODELS},
 }
 IMAGE_MODEL_OPTION_ALIASES: dict[str, str] = {
     IMAGE_MODEL_OPTION_JO: IMAGE_MODEL_OPTION_JO,
+    "joai_image_generate": IMAGE_MODEL_OPTION_JO,
     "jo_ai": IMAGE_MODEL_OPTION_JO,
     "jo ai image generate": IMAGE_MODEL_OPTION_JO,
     "image_generator": IMAGE_MODEL_OPTION_JO,
     "image generator": IMAGE_MODEL_OPTION_JO,
-    IMAGE_MODEL_OPTION_CHAT_GBT: IMAGE_MODEL_OPTION_CHAT_GBT,
-    "chat gbt": IMAGE_MODEL_OPTION_CHAT_GBT,
-    "chatgbt": IMAGE_MODEL_OPTION_CHAT_GBT,
-    "gpt_image_1_mini": IMAGE_MODEL_OPTION_CHAT_GBT,
-    "gpt image 1 mini": IMAGE_MODEL_OPTION_CHAT_GBT,
-    "gpt-image-1-mini": IMAGE_MODEL_OPTION_CHAT_GBT,
-    IMAGE_MODEL_OPTION_GROK_IMAGINE: IMAGE_MODEL_OPTION_GROK_IMAGINE,
-    "grok imagine": IMAGE_MODEL_OPTION_GROK_IMAGINE,
-    "grok-imagine": IMAGE_MODEL_OPTION_GROK_IMAGINE,
+    IMAGE_MODEL_OPTION_CHAT_GBT: DEFAULT_POLLINATIONS_IMAGE_MODEL_OPTION,
+    "chat gbt": DEFAULT_POLLINATIONS_IMAGE_MODEL_OPTION,
+    "chatgbt": DEFAULT_POLLINATIONS_IMAGE_MODEL_OPTION,
+    "gpt_image_1_mini": DEFAULT_POLLINATIONS_IMAGE_MODEL_OPTION,
+    "gpt image 1 mini": DEFAULT_POLLINATIONS_IMAGE_MODEL_OPTION,
+    "gpt-image-1-mini": DEFAULT_POLLINATIONS_IMAGE_MODEL_OPTION,
+    "gptimage": "gptimage",
+    "gpt_image": "gptimage",
+    "gpt-image": "gptimage",
+    IMAGE_MODEL_OPTION_GROK_IMAGINE: "grok-imagine",
+    "grok_imagine": "grok-imagine",
+    "grok imagine": "grok-imagine",
+    "grok-imagine": "grok-imagine",
+    "flux": "flux",
+    "zimage": "zimage",
+    "z_image": "zimage",
+    "z_image_turbo": "zimage",
+    "z-image": "zimage",
+    "z-image-turbo": "zimage",
+    "klein": "klein",
+    "flux_klein": "klein",
+    "flux-klein": "klein",
+    "imagen_4": "imagen-4",
+    "imagen-4": "imagen-4",
+    "imagen": "imagen-4",
+    "flux_2_dev": "flux-2-dev",
+    "flux_2": "flux-2-dev",
+    "flux2_dev": "flux-2-dev",
+    "flux-2-dev": "flux-2-dev",
+    "flux-2": "flux-2-dev",
+    "flux2-dev": "flux-2-dev",
+    "dirtberry": "dirtberry",
+    "dirtberry_pro": "dirtberry-pro",
+    "special_berry": "dirtberry-pro",
+    "dirtberry-pro": "dirtberry-pro",
+    "special-berry": "dirtberry-pro",
 }
 VIDEO_MODEL_OPTION_LABELS: dict[str, str] = {
     VIDEO_MODEL_OPTION_GROK_TEXT_TO_VIDEO: VIDEO_MODEL_LABEL_GROK_TEXT_TO_VIDEO,
@@ -241,6 +283,10 @@ class ImageRequest(TrackingRequestBase):
     @property
     def effective_size(self) -> str:
         return IMAGE_RATIO_TO_SIZE[self.effective_ratio]
+
+    @property
+    def effective_model_option(self) -> str:
+        return _resolve_image_model_option(self.image_model or self.model)
 
 
 class PromptRequest(TrackingRequestBase):
@@ -516,6 +562,21 @@ def _status_code_for_ai_error(message: str) -> int:
     lower = str(message or "").strip().lower()
     if not lower:
         return 503
+    status_match = re.search(r"\((\d{3})\)", lower)
+    if status_match:
+        try:
+            parsed_status = int(status_match.group(1))
+            if 400 <= parsed_status <= 599:
+                return parsed_status
+        except ValueError:
+            pass
+    if (
+        "insufficient balance" in lower
+        or "balance is too low" in lower
+        or "payment_required" in lower
+        or "payment required" in lower
+    ):
+        return 402
     if "quota" in lower or "rate-limit" in lower or "rate limit" in lower:
         return 429
     if "invalid" in lower and "api key" in lower:
@@ -523,6 +584,18 @@ def _status_code_for_ai_error(message: str) -> int:
     if "model is not available" in lower:
         return 400
     return 503
+
+
+def _is_pollinations_payment_error(message: str | None) -> bool:
+    lower = str(message or "").strip().lower()
+    if not lower:
+        return False
+    return (
+        "insufficient balance" in lower
+        or "balance is too low" in lower
+        or "payment_required" in lower
+        or "payment required" in lower
+    )
 
 
 def _safe_guardrail_response(message: str) -> JSONResponse:
@@ -542,14 +615,20 @@ def _normalize_model_option(value: str | None) -> str:
 
 
 def _resolve_image_model_option(value: str | None) -> str:
-    normalized = _normalize_model_option(value)
+    raw = str(value or "").strip().lower()
+    if raw in IMAGE_MODEL_OPTION_ALIASES:
+        return IMAGE_MODEL_OPTION_ALIASES[raw]
+    normalized = _normalize_model_option(raw)
     if not normalized:
         return IMAGE_MODEL_OPTION_JO
     return IMAGE_MODEL_OPTION_ALIASES.get(normalized, IMAGE_MODEL_OPTION_JO)
 
 
 def _resolve_video_model_option(value: str | None) -> str:
-    normalized = _normalize_model_option(value)
+    raw = str(value or "").strip().lower()
+    if raw in VIDEO_MODEL_OPTION_ALIASES:
+        return VIDEO_MODEL_OPTION_ALIASES[raw]
+    normalized = _normalize_model_option(raw)
     if not normalized:
         return VIDEO_MODEL_OPTION_GROK_TEXT_TO_VIDEO
     return VIDEO_MODEL_OPTION_ALIASES.get(normalized, VIDEO_MODEL_OPTION_GROK_TEXT_TO_VIDEO)
@@ -907,7 +986,8 @@ def _pollinations_service() -> PollinationsMediaService:
 
 
 def _image_model_label(option: str) -> str:
-    return IMAGE_MODEL_OPTION_LABELS.get(option, IMAGE_MODEL_LABEL_JO)
+    resolved_option = _resolve_image_model_option(option)
+    return IMAGE_MODEL_OPTION_LABELS.get(resolved_option, IMAGE_MODEL_LABEL_JO)
 
 
 def _video_model_label(option: str) -> str:
@@ -915,11 +995,19 @@ def _video_model_label(option: str) -> str:
 
 
 def _image_model_id_for_option(settings, option: str) -> str:
-    if option == IMAGE_MODEL_OPTION_CHAT_GBT:
+    resolved_option = _resolve_image_model_option(option)
+    if resolved_option == IMAGE_MODEL_OPTION_CHAT_GBT:
         return settings.pollinations_image_model_chat_gbt
-    if option == IMAGE_MODEL_OPTION_GROK_IMAGINE:
+    if resolved_option == IMAGE_MODEL_OPTION_GROK_IMAGINE:
         return settings.pollinations_image_model_grok_imagine
+    if resolved_option in POLLINATIONS_FREE_IMAGE_MODEL_IDS:
+        return resolved_option
     return settings.image_model
+
+
+def _is_grok_image_model_option(option: str | None) -> bool:
+    resolved_option = _resolve_image_model_option(option)
+    return _normalize_model_option(resolved_option) == "grok_imagine"
 
 
 def _video_model_id_for_option(settings, option: str) -> str:
@@ -1320,7 +1408,7 @@ async def _generate_pollinations_image(*, prompt: str, size: str, model: str) ->
     lowered = safe_message.lower()
     if "timed out" in lowered or "timeout" in lowered:
         raise BackendError("Image generation timed out. Please retry.", status_code=504) from last_error
-    raise BackendError(SAFE_SERVICE_UNAVAILABLE_MESSAGE, status_code=_status_code_for_ai_error(safe_message)) from last_error
+    raise BackendError(safe_message, status_code=_status_code_for_ai_error(safe_message)) from last_error
 
 
 async def _generate_pollinations_video(
@@ -1373,7 +1461,7 @@ async def _generate_pollinations_video(
     lowered = safe_message.lower()
     if "timed out" in lowered or "timeout" in lowered:
         raise BackendError("Video generation timed out. Please retry.", status_code=504) from last_error
-    raise BackendError(SAFE_SERVICE_UNAVAILABLE_MESSAGE, status_code=_status_code_for_ai_error(safe_message)) from last_error
+    raise BackendError(safe_message, status_code=_status_code_for_ai_error(safe_message)) from last_error
 
 
 async def _generate_tts(
@@ -1433,7 +1521,7 @@ async def _generate_pollinations_audio(*, prompt: str) -> dict[str, str]:
     lowered = safe_message.lower()
     if "timed out" in lowered or "timeout" in lowered:
         raise BackendError("Audio generation timed out. Please retry.", status_code=504) from last_error
-    raise BackendError(SAFE_SERVICE_UNAVAILABLE_MESSAGE, status_code=_status_code_for_ai_error(safe_message)) from last_error
+    raise BackendError(safe_message, status_code=_status_code_for_ai_error(safe_message)) from last_error
 
 
 def _get_bot_runtime() -> BotRuntime | None:
@@ -3707,7 +3795,14 @@ async def image_endpoint(request: Request, payload: ImageRequest) -> JSONRespons
     image_model_option = payload.effective_model_option
     image_model_label = _image_model_label(image_model_option)
     image_model_id = _image_model_id_for_option(settings, image_model_option)
-    provider_source = "jo_ai" if image_model_option == IMAGE_MODEL_OPTION_JO else "pollinations"
+    requested_image_model_option = image_model_option
+    requested_image_model_label = image_model_label
+    requested_image_model_id = image_model_id
+    effective_image_model_option = image_model_option
+    effective_image_model_label = image_model_label
+    effective_image_model_id = image_model_id
+    provider_source = "jo_ai" if effective_image_model_option == IMAGE_MODEL_OPTION_JO else "pollinations"
+    effective_feature_used = f"{feature_used}:{effective_image_model_option}"
     logger.info(
         "API IMAGE START | request_id=%s user=%s prompt_len=%s ratio=%s model=%s",
         request_id or "unknown",
@@ -3744,7 +3839,7 @@ async def image_endpoint(request: Request, payload: ImageRequest) -> JSONRespons
         )
         return refusal
 
-    if image_model_option == IMAGE_MODEL_OPTION_GROK_IMAGINE:
+    if _is_grok_image_model_option(image_model_option):
         moderation_result = moderate_grok_generation_prompt(user_prompt)
         if moderation_result.blocked:
             block_reason = grok_safety_reason_code(moderation_result)
@@ -3788,7 +3883,8 @@ async def image_endpoint(request: Request, payload: ImageRequest) -> JSONRespons
             prompt_hash,
             len(enhanced_prompt),
         )
-        if image_model_option == IMAGE_MODEL_OPTION_JO:
+        fallback_reason: str | None = None
+        if effective_image_model_option == IMAGE_MODEL_OPTION_JO:
             result_payload = await asyncio.wait_for(
                 _generate_image(
                     prompt=enhanced_prompt,
@@ -3798,19 +3894,54 @@ async def image_endpoint(request: Request, payload: ImageRequest) -> JSONRespons
                 timeout=IMAGE_ENDPOINT_TIMEOUT_SECONDS,
             )
         else:
-            result_payload = await asyncio.wait_for(
-                _generate_pollinations_image(
-                    prompt=enhanced_prompt,
-                    size=payload.effective_size,
-                    model=image_model_id,
-                ),
-                timeout=IMAGE_ENDPOINT_TIMEOUT_SECONDS,
-            )
+            try:
+                result_payload = await asyncio.wait_for(
+                    _generate_pollinations_image(
+                        prompt=enhanced_prompt,
+                        size=payload.effective_size,
+                        model=effective_image_model_id,
+                    ),
+                    timeout=IMAGE_ENDPOINT_TIMEOUT_SECONDS,
+                )
+            except BackendError as exc:
+                if not _is_pollinations_payment_error(exc.message):
+                    raise
+                logger.warning(
+                    "API IMAGE POLLINATIONS FALLBACK | request_id=%s user=%s from=%s reason=%s",
+                    request_id or "unknown",
+                    user_id,
+                    requested_image_model_label,
+                    exc.message,
+                )
+                fallback_reason = exc.message
+                effective_image_model_option = IMAGE_MODEL_OPTION_JO
+                effective_image_model_label = IMAGE_MODEL_LABEL_JO
+                effective_image_model_id = settings.image_model
+                provider_source = "jo_ai"
+                effective_feature_used = (
+                    f"{feature_used}:{requested_image_model_option}:fallback_to_{effective_image_model_option}"
+                )
+                result_payload = await asyncio.wait_for(
+                    _generate_image(
+                        prompt=enhanced_prompt,
+                        size=payload.effective_size,
+                        ratio=payload.effective_ratio,
+                    ),
+                    timeout=IMAGE_ENDPOINT_TIMEOUT_SECONDS,
+                )
         response_payload: dict[str, Any] = {
             "output": user_prompt,
             "ratio": payload.effective_ratio,
-            "model_label": image_model_label,
+            "model_label": effective_image_model_label,
+            "model_option": effective_image_model_option,
+            "model_id": effective_image_model_id,
+            "requested_model_label": requested_image_model_label,
+            "requested_model_option": requested_image_model_option,
+            "requested_model_id": requested_image_model_id,
         }
+        if fallback_reason:
+            response_payload["fallback_applied"] = True
+            response_payload["fallback_reason"] = fallback_reason[:220]
         response_payload.update(result_payload)
         persisted_storage_path: str | None = None
         if not str(response_payload.get("image_url") or "").strip() and str(response_payload.get("image_base64") or "").strip():
@@ -3829,11 +3960,11 @@ async def image_endpoint(request: Request, payload: ImageRequest) -> JSONRespons
             message_type="image",
             user_message=user_prompt,
             bot_reply=str(response_payload.get("output", "Image generated successfully.")),
-            model_used=image_model_label,
+            model_used=effective_image_model_label,
             success=True,
             image_increment=1,
             frontend_source=frontend_source,
-            feature_used=f"{feature_used}:{image_model_option}",
+            feature_used=effective_feature_used,
             conversation_id=conversation_id,
             text_content=str(response_payload.get("output", "Image generated successfully.")),
             media=TrackingMedia(
@@ -3868,11 +3999,11 @@ async def image_endpoint(request: Request, payload: ImageRequest) -> JSONRespons
             message_type="image",
             user_message=user_prompt,
             bot_reply=timeout_message,
-            model_used=image_model_label,
+            model_used=effective_image_model_label,
             success=False,
             image_increment=1,
             frontend_source=frontend_source,
-            feature_used=f"{feature_used}:{image_model_option}",
+            feature_used=effective_feature_used,
             conversation_id=conversation_id,
             text_content=user_prompt,
             media=TrackingMedia(
@@ -3901,11 +4032,11 @@ async def image_endpoint(request: Request, payload: ImageRequest) -> JSONRespons
             message_type="image",
             user_message=user_prompt,
             bot_reply=exc.message,
-            model_used=image_model_label,
+            model_used=effective_image_model_label,
             success=False,
             image_increment=1,
             frontend_source=frontend_source,
-            feature_used=f"{feature_used}:{image_model_option}",
+            feature_used=effective_feature_used,
             conversation_id=conversation_id,
             text_content=user_prompt,
             media=TrackingMedia(
@@ -4346,6 +4477,10 @@ async def gpt_audio_endpoint(request: Request, payload: GPTAudioRequest) -> JSON
     conversation_id = _extract_conversation_id(request, identity, feature_used)
     referral_code = _extract_referral_code(request)
     user_prompt = payload.effective_prompt
+    model_used = GPT_AUDIO_MODEL_LABEL
+    provider_source = "pollinations"
+    effective_feature_used = feature_used
+    fallback_notice: str | None = None
     logger.info(
         "API GPT AUDIO START | request_id=%s user=%s prompt_len=%s",
         request_id or "unknown",
@@ -4382,31 +4517,57 @@ async def gpt_audio_endpoint(request: Request, payload: GPTAudioRequest) -> JSON
             "Keep it natural, concise, and helpful.\n\n"
             f"User request: {user_prompt}"
         )
-        generated = await asyncio.wait_for(
-            _generate_pollinations_audio(prompt=enhanced_prompt),
-            timeout=GPT_AUDIO_ENDPOINT_TIMEOUT_SECONDS,
-        )
+        try:
+            generated = await asyncio.wait_for(
+                _generate_pollinations_audio(prompt=enhanced_prompt),
+                timeout=GPT_AUDIO_ENDPOINT_TIMEOUT_SECONDS,
+            )
+        except BackendError as exc:
+            if not _is_pollinations_payment_error(exc.message):
+                raise
+            logger.warning(
+                "API GPT AUDIO FALLBACK | request_id=%s user=%s reason=%s",
+                request_id or "unknown",
+                user_id,
+                exc.message,
+            )
+            fallback_notice = exc.message
+            model_used = f"{GPT_AUDIO_MODEL_LABEL} (fallback)"
+            provider_source = "nvidia"
+            effective_feature_used = f"{feature_used}:fallback_tts"
+            generated = await asyncio.wait_for(
+                _generate_tts(
+                    text=user_prompt,
+                    language="en",
+                    voice="female",
+                    emotion="neutral",
+                ),
+                timeout=GPT_AUDIO_ENDPOINT_TIMEOUT_SECONDS,
+            )
         response_payload: dict[str, Any] = {
             "output": "Audio generated successfully.",
-            "model_label": GPT_AUDIO_MODEL_LABEL,
+            "model_label": model_used,
         }
+        if fallback_notice:
+            response_payload["fallback_applied"] = True
+            response_payload["fallback_reason"] = fallback_notice[:220]
         response_payload.update(generated)
         await _track_api_action(
             identity=identity,
             message_type="gpt_audio",
             user_message=user_prompt,
             bot_reply=str(response_payload.get("output", "Audio generated successfully.")),
-            model_used=GPT_AUDIO_MODEL_LABEL,
+            model_used=model_used,
             success=True,
             message_increment=1,
             frontend_source=frontend_source,
-            feature_used=feature_used,
+            feature_used=effective_feature_used,
             conversation_id=conversation_id,
             text_content=str(response_payload.get("output", "Audio generated successfully.")),
             media=TrackingMedia(
                 media_type="audio",
                 mime_type=str(response_payload.get("audio_mime_type") or "audio/mpeg"),
-                provider_source="pollinations",
+                provider_source=provider_source,
                 media_origin="generated",
                 media_status="available",
             ),
@@ -4427,16 +4588,16 @@ async def gpt_audio_endpoint(request: Request, payload: GPTAudioRequest) -> JSON
             message_type="gpt_audio",
             user_message=user_prompt,
             bot_reply=timeout_message,
-            model_used=GPT_AUDIO_MODEL_LABEL,
+            model_used=model_used,
             success=False,
             message_increment=1,
             frontend_source=frontend_source,
-            feature_used=feature_used,
+            feature_used=effective_feature_used,
             conversation_id=conversation_id,
             text_content=user_prompt,
             media=TrackingMedia(
                 media_type="audio",
-                provider_source="pollinations",
+                provider_source=provider_source,
                 media_origin="generated",
                 media_status="failed",
                 media_error_reason="timeout",
@@ -4454,16 +4615,16 @@ async def gpt_audio_endpoint(request: Request, payload: GPTAudioRequest) -> JSON
             message_type="gpt_audio",
             user_message=user_prompt,
             bot_reply=exc.message,
-            model_used=GPT_AUDIO_MODEL_LABEL,
+            model_used=model_used,
             success=False,
             message_increment=1,
             frontend_source=frontend_source,
-            feature_used=feature_used,
+            feature_used=effective_feature_used,
             conversation_id=conversation_id,
             text_content=user_prompt,
             media=TrackingMedia(
                 media_type="audio",
-                provider_source="pollinations",
+                provider_source=provider_source,
                 media_origin="generated",
                 media_status="failed",
                 media_error_reason=exc.message,
