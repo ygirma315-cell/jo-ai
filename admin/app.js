@@ -136,6 +136,22 @@
 
     statusInfo: byId("statusInfo"),
     settingsLogout: byId("settingsLogout"),
+    joVideoRefresh: byId("joVideoRefresh"),
+    joVideoEnabled: byId("joVideoEnabled"),
+    joVideoProviderOrder: byId("joVideoProviderOrder"),
+    joVideoImageModels: byId("joVideoImageModels"),
+    joVideoFallback: byId("joVideoFallback"),
+    joVideoLevel1Enabled: byId("joVideoLevel1Enabled"),
+    joVideoLevel1Model: byId("joVideoLevel1Model"),
+    joVideoMaxDuration: byId("joVideoMaxDuration"),
+    joVideoAspectRatios: byId("joVideoAspectRatios"),
+    joVideoDefaultFps: byId("joVideoDefaultFps"),
+    joVideoMaxScenes: byId("joVideoMaxScenes"),
+    joVideoMaxJobs: byId("joVideoMaxJobs"),
+    joVideoOutputFormat: byId("joVideoOutputFormat"),
+    joVideoSave: byId("joVideoSave"),
+    joVideoUpdated: byId("joVideoUpdated"),
+    joVideoFailedList: byId("joVideoFailedList"),
 
     logsLevel: byId("logsLevel"),
     logsSearch: byId("logsSearch"),
@@ -166,6 +182,13 @@
     }
     const parsed = new Date(value);
     return Number.isNaN(parsed.getTime()) ? String(value) : parsed.toLocaleString();
+  }
+
+  function splitCsvTokens(raw) {
+    return String(raw || "")
+      .split(",")
+      .map((token) => token.trim())
+      .filter(Boolean);
   }
 
   function userLabel(row) {
@@ -293,6 +316,25 @@
       return;
     }
     container.innerHTML = `<article class="list-item"><p>${escapeHtml(message)}</p></article>`;
+  }
+
+  function renderJoVideoFailedJobs(items) {
+    if (!refs.joVideoFailedList) {
+      return;
+    }
+    if (!Array.isArray(items) || !items.length) {
+      renderEmpty(refs.joVideoFailedList, "No failed JO video jobs found.");
+      return;
+    }
+    refs.joVideoFailedList.innerHTML = items.map((job) => {
+      const jobId = String(job.job_id || "-");
+      const model = String(job.model_id || "-");
+      const stage = String(job.stage || "-");
+      const error = String(job.error_details || "Unknown error");
+      const updatedAt = formatDateTime(job.updated_at);
+      const provider = String(job.provider_used || "-");
+      return `<article class="list-item"><div class="row-head"><h4>${escapeHtml(jobId)}</h4><span class="chip danger-chip">${escapeHtml(stage)}</span></div><p><strong>Model:</strong> ${escapeHtml(model)}<br><strong>Provider:</strong> ${escapeHtml(provider)}<br><strong>Error:</strong> ${escapeHtml(error)}</p><div class="list-meta"><span>${escapeHtml(updatedAt)}</span></div></article>`;
+    }).join("");
   }
 
   function mediaRef(item) {
@@ -1069,6 +1111,70 @@
     }
   }
 
+  async function loadJOVideoModelConfig() {
+    try {
+      const payload = await requestJson("/api/admin/models/video-config");
+      const config = payload && typeof payload === "object" ? payload.config || {} : {};
+      if (refs.joVideoEnabled) refs.joVideoEnabled.checked = Boolean(config.enabled);
+      if (refs.joVideoProviderOrder) refs.joVideoProviderOrder.value = Array.isArray(config.provider_order) ? config.provider_order.join(",") : "";
+      if (refs.joVideoImageModels) refs.joVideoImageModels.value = Array.isArray(config.image_models) ? config.image_models.join(",") : "";
+      if (refs.joVideoFallback) refs.joVideoFallback.checked = Boolean(config.fallback_enabled);
+      if (refs.joVideoLevel1Enabled) refs.joVideoLevel1Enabled.checked = Boolean(config.level1_provider_enabled);
+      if (refs.joVideoLevel1Model) refs.joVideoLevel1Model.value = String(config.level1_provider_model || "");
+      if (refs.joVideoMaxDuration) refs.joVideoMaxDuration.value = String(config.max_duration_seconds || 10);
+      if (refs.joVideoAspectRatios) refs.joVideoAspectRatios.value = Array.isArray(config.allowed_aspect_ratios) ? config.allowed_aspect_ratios.join(",") : "16:9,9:16";
+      if (refs.joVideoDefaultFps) refs.joVideoDefaultFps.value = String(config.default_fps || 24);
+      if (refs.joVideoMaxScenes) refs.joVideoMaxScenes.value = String(config.max_scenes || 4);
+      if (refs.joVideoMaxJobs) refs.joVideoMaxJobs.value = String(config.max_jobs_per_user || 3);
+      if (refs.joVideoOutputFormat) refs.joVideoOutputFormat.value = String(config.default_output_format || "mp4");
+      if (refs.joVideoUpdated) refs.joVideoUpdated.textContent = `Config loaded: ${formatDateTime(new Date().toISOString())}`;
+    } catch (error) {
+      if (handleAuthError(error)) return;
+      if (refs.joVideoUpdated) refs.joVideoUpdated.textContent = "Failed to load JO AI video config.";
+      showToast(error.message || "Failed to load JO AI video config.", true);
+    }
+
+    try {
+      const jobsPayload = await requestJson("/api/admin/video-jobs", {
+        params: { status: "failed", limit: 10 },
+      });
+      const items = Array.isArray(jobsPayload.items) ? jobsPayload.items : [];
+      renderJoVideoFailedJobs(items);
+    } catch (error) {
+      if (handleAuthError(error)) return;
+      renderEmpty(refs.joVideoFailedList, "Failed to load JO video jobs.");
+    }
+  }
+
+  async function saveJOVideoModelConfig() {
+    const body = {
+      enabled: Boolean(refs.joVideoEnabled && refs.joVideoEnabled.checked),
+      provider_order: splitCsvTokens(refs.joVideoProviderOrder ? refs.joVideoProviderOrder.value : ""),
+      image_models: splitCsvTokens(refs.joVideoImageModels ? refs.joVideoImageModels.value : ""),
+      fallback_enabled: Boolean(refs.joVideoFallback && refs.joVideoFallback.checked),
+      level1_provider_enabled: Boolean(refs.joVideoLevel1Enabled && refs.joVideoLevel1Enabled.checked),
+      level1_provider_model: refs.joVideoLevel1Model ? refs.joVideoLevel1Model.value.trim() : "",
+      max_duration_seconds: Number(refs.joVideoMaxDuration ? refs.joVideoMaxDuration.value : 10),
+      allowed_aspect_ratios: splitCsvTokens(refs.joVideoAspectRatios ? refs.joVideoAspectRatios.value : ""),
+      default_fps: Number(refs.joVideoDefaultFps ? refs.joVideoDefaultFps.value : 24),
+      max_scenes: Number(refs.joVideoMaxScenes ? refs.joVideoMaxScenes.value : 4),
+      max_jobs_per_user: Number(refs.joVideoMaxJobs ? refs.joVideoMaxJobs.value : 3),
+      default_output_format: refs.joVideoOutputFormat ? refs.joVideoOutputFormat.value : "mp4",
+    };
+    try {
+      const payload = await requestJson("/api/admin/models/video-config", { method: "POST", body });
+      if (refs.joVideoUpdated) {
+        const usingOverrides = payload && payload.overrides && typeof payload.overrides === "object";
+        refs.joVideoUpdated.textContent = usingOverrides ? "Saved (admin overrides active)." : "Saved.";
+      }
+      showToast("JO AI video config saved.");
+      await loadJOVideoModelConfig();
+    } catch (error) {
+      if (handleAuthError(error)) return;
+      showToast(error.message || "Failed to save JO AI video config.", true);
+    }
+  }
+
   async function loadSettings(force = false) {
     if (!force && state.loaded.settings) return;
     try {
@@ -1083,6 +1189,7 @@
       if (payload.owner_telegram_id) parts.push(`Owner ID: ${payload.owner_telegram_id}`);
       if (!payload.service_enabled && payload.service_reason) parts.push(`Reason: ${payload.service_reason}`);
       if (refs.statusInfo) refs.statusInfo.textContent = parts.join(" | ");
+      await loadJOVideoModelConfig();
       state.loaded.settings = true;
     } catch (_error) {
       if (refs.statusInfo) refs.statusInfo.textContent = "Failed to load settings status.";
@@ -1160,6 +1267,8 @@
     if (refs.mediaApply) refs.mediaApply.addEventListener("click", async () => { resetPage("media"); state.loaded.media = false; await loadMedia(true); });
     if (refs.refApply) refs.refApply.addEventListener("click", async () => { resetPage("referrals"); state.loaded.referrals = false; await loadReferrals(true); });
     if (refs.engSave) refs.engSave.addEventListener("click", () => saveEngagement());
+    if (refs.joVideoRefresh) refs.joVideoRefresh.addEventListener("click", async () => { await loadJOVideoModelConfig(); });
+    if (refs.joVideoSave) refs.joVideoSave.addEventListener("click", async () => { await saveJOVideoModelConfig(); });
     if (refs.botStatusRefresh) refs.botStatusRefresh.addEventListener("click", async () => { state.loaded.botStatus = false; await loadBotStatus(true); });
     if (refs.logsApply) refs.logsApply.addEventListener("click", async () => { state.loaded.logs = false; await loadLogs(true); });
 

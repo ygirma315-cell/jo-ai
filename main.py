@@ -53,6 +53,7 @@ from bot.services.ai_service import (
     build_enhanced_image_prompt,
     build_enhanced_video_prompt,
 )
+from bot.services.jo_video_model import JOAIVideoModelEngine, JOAIVideoOptions, JOAIVideoProgress
 from bot.safety import (
     grok_safety_reason_code,
     grok_safety_warning_text,
@@ -105,6 +106,7 @@ IMAGE_MODEL_LABEL_JO = "JO AI Image Generate"
 IMAGE_MODEL_LABEL_CHAT_GBT = "Chat GBT"
 IMAGE_MODEL_LABEL_GROK_IMAGINE = "Grok Imagine"
 VIDEO_MODEL_LABEL_GROK_TEXT_TO_VIDEO = "Grok Text to Video"
+VIDEO_MODEL_LABEL_JO_AI_VIDEO = "JO AI Video Model"
 GPT_AUDIO_MODEL_LABEL = "GPT Audio"
 
 IMAGE_MODEL_OPTION_JO = "jo_ai_image_generate"
@@ -124,6 +126,7 @@ POLLINATIONS_FREE_IMAGE_MODELS: tuple[tuple[str, str], ...] = (
 )
 POLLINATIONS_FREE_IMAGE_MODEL_IDS = frozenset(model_id for model_id, _label in POLLINATIONS_FREE_IMAGE_MODELS)
 VIDEO_MODEL_OPTION_GROK_TEXT_TO_VIDEO = "grok_text_to_video"
+VIDEO_MODEL_OPTION_JO_AI_VIDEO = "jo_ai_video"
 _raw_video_join_chat_id = (
     str(
         os.getenv("VIDEO_JOIN_CHAT_ID")
@@ -195,12 +198,18 @@ IMAGE_MODEL_OPTION_ALIASES: dict[str, str] = {
 }
 VIDEO_MODEL_OPTION_LABELS: dict[str, str] = {
     VIDEO_MODEL_OPTION_GROK_TEXT_TO_VIDEO: VIDEO_MODEL_LABEL_GROK_TEXT_TO_VIDEO,
+    VIDEO_MODEL_OPTION_JO_AI_VIDEO: VIDEO_MODEL_LABEL_JO_AI_VIDEO,
 }
 VIDEO_MODEL_OPTION_ALIASES: dict[str, str] = {
     VIDEO_MODEL_OPTION_GROK_TEXT_TO_VIDEO: VIDEO_MODEL_OPTION_GROK_TEXT_TO_VIDEO,
     "grok text to video": VIDEO_MODEL_OPTION_GROK_TEXT_TO_VIDEO,
     "grok-video": VIDEO_MODEL_OPTION_GROK_TEXT_TO_VIDEO,
     "grok video": VIDEO_MODEL_OPTION_GROK_TEXT_TO_VIDEO,
+    VIDEO_MODEL_OPTION_JO_AI_VIDEO: VIDEO_MODEL_OPTION_JO_AI_VIDEO,
+    "jo_ai_video": VIDEO_MODEL_OPTION_JO_AI_VIDEO,
+    "jo ai video": VIDEO_MODEL_OPTION_JO_AI_VIDEO,
+    "jo video": VIDEO_MODEL_OPTION_JO_AI_VIDEO,
+    "jo_video": VIDEO_MODEL_OPTION_JO_AI_VIDEO,
 }
 OBSERVABLE_REQUEST_PATHS = frozenset(
     {
@@ -226,6 +235,23 @@ ADMIN_SESSION_COOKIE_SECURE = True
 KEEPALIVE_MIN_LOOP_SECONDS = 30
 _ADMIN_SESSION_TOKENS: dict[str, dict[str, Any]] = {}
 ACCESS_RESTRICTED_MESSAGE = "Your access to JO AI is currently restricted. Contact support for help."
+_JO_VIDEO_JOB_STORE: dict[str, dict[str, Any]] = {}
+_JO_VIDEO_JOB_TASKS: dict[str, asyncio.Task[None]] = {}
+_JO_VIDEO_ADMIN_OVERRIDES: dict[str, Any] = {}
+_JO_CHAT_CONTEXT_STORE: dict[str, dict[str, Any]] = {}
+JO_CHAT_IMAGE_REQUEST_PATTERN = re.compile(
+    r"\b(generate|create|make|draw|render|design)\b[\s\S]{0,40}\b(image|photo|picture|art|portrait|logo)\b",
+    flags=re.IGNORECASE,
+)
+JO_CHAT_VIDEO_REQUEST_PATTERN = re.compile(
+    r"\b(generate|create|make|animate|turn)\b[\s\S]{0,50}\b(video|clip|animation|movie)\b",
+    flags=re.IGNORECASE,
+)
+JO_CHAT_EDIT_PATTERN = re.compile(
+    r"\b(edit|change|remove|replace|add|modify|remix|variation|upscale|enhance)\b",
+    flags=re.IGNORECASE,
+)
+JO_CHAT_ANIMATE_THIS_PATTERN = re.compile(r"\b(animate this|make it move|turn this into video)\b", flags=re.IGNORECASE)
 
 
 class BackendError(RuntimeError):
@@ -248,6 +274,23 @@ class ChatRequest(TrackingRequestBase):
     message: str = Field(min_length=1, max_length=32000)
 
 
+class JOChatRequest(TrackingRequestBase):
+    message: str = Field(min_length=1, max_length=32000)
+    selected_model: str | None = Field(default=None, max_length=120)
+    last_output_type: Literal["text", "image", "video", "audio", "code"] | None = Field(default=None)
+    last_asset_id: str | None = Field(default=None, max_length=160)
+    last_asset_type: str | None = Field(default=None, max_length=40)
+    last_asset_url: str | None = Field(default=None, max_length=4000)
+    last_prompt: str | None = Field(default=None, max_length=4000)
+    last_provider: str | None = Field(default=None, max_length=80)
+    last_seed: int | None = Field(default=None, ge=1, le=2_147_483_647)
+    last_settings: dict[str, Any] | None = None
+    parent_asset_id: str | None = Field(default=None, max_length=160)
+    reference_asset_id: str | None = Field(default=None, max_length=160)
+    reference_image_url: str | None = Field(default=None, max_length=4000)
+    reference_image_base64: str | None = Field(default=None, max_length=16_000_000)
+
+
 class CodeRequest(ChatRequest):
     code_file_name: str | None = Field(default=None, max_length=240)
     code_file_base64: str | None = Field(default=None, max_length=4_000_000)
@@ -256,10 +299,24 @@ class CodeRequest(ChatRequest):
 class ImageRequest(TrackingRequestBase):
     prompt: str | None = Field(default=None, max_length=4000)
     message: str | None = Field(default=None, max_length=4000)
+    negative_prompt: str | None = Field(default=None, max_length=4000)
     ratio: Literal["1:1", "16:9", "9:16"] | None = Field(default=None)
     size: str | None = Field(default=None, pattern=r"^\d+x\d+$")
     model: str | None = Field(default=None, max_length=120)
     image_model: str | None = Field(default=None, max_length=120)
+    style: str | None = Field(default=None, max_length=160)
+    quality: Literal["standard", "hd", "low", "medium", "high"] | None = Field(default=None)
+    seed: int | None = Field(default=None, ge=1, le=2_147_483_647)
+    reference_image_url: str | None = Field(default=None, max_length=4000)
+    reference_image_base64: str | None = Field(default=None, max_length=16_000_000)
+    reference_asset_id: str | None = Field(default=None, max_length=160)
+    edit_instruction: str | None = Field(default=None, max_length=800)
+    preserve_face: bool | None = Field(default=None)
+    preserve_background: bool | None = Field(default=None)
+    preserve_composition: bool | None = Field(default=None)
+    similarity_strength: Literal["low", "medium", "high"] | None = Field(default=None)
+    edit_strength: Literal["low", "medium", "high"] | None = Field(default=None)
+    use_exact_reference_mode: bool | None = Field(default=None)
 
     @model_validator(mode="after")
     def _validate_prompt(self) -> "ImageRequest":
@@ -287,6 +344,15 @@ class ImageRequest(TrackingRequestBase):
     @property
     def effective_model_option(self) -> str:
         return _resolve_image_model_option(self.image_model or self.model)
+
+    @property
+    def effective_negative_prompt(self) -> str | None:
+        normalized = " ".join(str(self.negative_prompt or "").split())
+        return normalized or None
+
+    @property
+    def has_reference_image(self) -> bool:
+        return bool(str(self.reference_image_url or "").strip() or str(self.reference_image_base64 or "").strip())
 
 
 class PromptRequest(TrackingRequestBase):
@@ -427,22 +493,36 @@ class GeminiRequest(TrackingRequestBase):
     def effective_model_option(self) -> str:
         return _resolve_image_model_option(self.model)
 
-    @property
-    def effective_model_option(self) -> str:
-        return _resolve_image_model_option(self.image_model or self.model)
-
 
 class VideoRequest(TrackingRequestBase):
     prompt: str | None = Field(default=None, max_length=4000)
     message: str | None = Field(default=None, max_length=4000)
+    negative_prompt: str | None = Field(default=None, max_length=4000)
     model: str | None = Field(default=None, max_length=120)
     video_model: str | None = Field(default=None, max_length=120)
     join_clicked: bool | None = Field(default=None)
     join_confirmed: bool | None = Field(default=None)
-    duration_seconds: int | None = Field(default=None, ge=1, le=10)
-    duration: int | None = Field(default=None, ge=1, le=10)
+    duration_seconds: int | None = Field(default=None, ge=1, le=20)
+    duration: int | None = Field(default=None, ge=1, le=20)
     aspect_ratio: Literal["16:9", "9:16"] | None = Field(default=None)
     ratio: Literal["16:9", "9:16"] | None = Field(default=None)
+    scene_count: int | None = Field(default=None, ge=1, le=8)
+    motion_strength: Literal["low", "medium", "high"] | None = Field(default=None)
+    camera_motion: str | None = Field(default=None, max_length=80)
+    style: str | None = Field(default=None, max_length=160)
+    quality: Literal["low", "medium", "high"] | None = Field(default=None)
+    seed: int | None = Field(default=None, ge=1, le=2_147_483_647)
+    fps: int | None = Field(default=None, ge=8, le=30)
+    output_format: Literal["mp4", "gif", "webm"] | None = Field(default=None)
+    reference_image_url: str | None = Field(default=None, max_length=4000)
+    reference_image_base64: str | None = Field(default=None, max_length=16_000_000)
+    reference_asset_id: str | None = Field(default=None, max_length=160)
+    preserve_face: bool | None = Field(default=None)
+    preserve_background: bool | None = Field(default=None)
+    preserve_composition: bool | None = Field(default=None)
+    similarity_strength: Literal["low", "medium", "high"] | None = Field(default=None)
+    edit_strength: Literal["low", "medium", "high"] | None = Field(default=None)
+    use_exact_reference_mode: bool | None = Field(default=None)
 
     @model_validator(mode="after")
     def _validate_prompt(self) -> "VideoRequest":
@@ -461,17 +541,54 @@ class VideoRequest(TrackingRequestBase):
     @property
     def effective_duration_seconds(self) -> int:
         if isinstance(self.duration_seconds, int):
-            return max(1, min(10, self.duration_seconds))
+            return max(1, min(20, self.duration_seconds))
         if isinstance(self.duration, int):
-            return max(1, min(10, self.duration))
-        return VIDEO_DEFAULT_DURATION_SECONDS
+            return max(1, min(20, self.duration))
+        return 5
 
     @property
     def effective_aspect_ratio(self) -> Literal["16:9", "9:16"]:
         candidate = self.aspect_ratio or self.ratio
         if candidate in VIDEO_ASPECT_RATIOS:
-            return candidate
-        return VIDEO_DEFAULT_ASPECT_RATIO  # type: ignore[return-value]
+            return candidate  # type: ignore[return-value]
+        return "9:16"
+
+    @property
+    def effective_scene_count(self) -> int:
+        return max(1, min(8, int(self.scene_count or 1)))
+
+    @property
+    def effective_motion_strength(self) -> Literal["low", "medium", "high"]:
+        return self.motion_strength or "medium"
+
+    @property
+    def effective_camera_motion(self) -> str:
+        return str(self.camera_motion or "cinematic").strip() or "cinematic"
+
+    @property
+    def effective_quality(self) -> Literal["low", "medium", "high"]:
+        return self.quality or "high"
+
+    @property
+    def effective_seed(self) -> int | None:
+        return int(self.seed) if isinstance(self.seed, int) and self.seed > 0 else None
+
+    @property
+    def effective_fps(self) -> int:
+        return max(8, min(30, int(self.fps or 24)))
+
+    @property
+    def effective_output_format(self) -> Literal["mp4", "gif", "webm"]:
+        return self.output_format or "mp4"
+
+    @property
+    def effective_negative_prompt(self) -> str | None:
+        normalized = " ".join(str(self.negative_prompt or "").split())
+        return normalized or None
+
+    @property
+    def has_reference_image(self) -> bool:
+        return bool(str(self.reference_image_url or "").strip() or str(self.reference_image_base64 or "").strip())
 
 
 class ReferralClaimRequest(TrackingRequestBase):
@@ -485,6 +602,21 @@ class EngagementConfigUpdateRequest(BaseModel):
     inactivity_minutes: int | None = Field(default=None, ge=30, le=10_080)
     cooldown_minutes: int | None = Field(default=None, ge=30, le=43_200)
     batch_size: int | None = Field(default=None, ge=1, le=500)
+
+
+class AdminJOVideoConfigUpdateRequest(BaseModel):
+    enabled: bool | None = None
+    provider_order: list[str] | None = None
+    image_models: list[str] | None = None
+    fallback_enabled: bool | None = None
+    level1_provider_enabled: bool | None = None
+    level1_provider_model: str | None = Field(default=None, max_length=120)
+    max_duration_seconds: int | None = Field(default=None, ge=1, le=20)
+    allowed_aspect_ratios: list[Literal["16:9", "9:16"]] | None = None
+    default_fps: int | None = Field(default=None, ge=8, le=30)
+    max_scenes: int | None = Field(default=None, ge=1, le=8)
+    max_jobs_per_user: int | None = Field(default=None, ge=1, le=25)
+    default_output_format: Literal["mp4", "gif", "webm"] | None = None
 
 
 class AdminTokenAuthRequest(BaseModel):
@@ -985,13 +1117,22 @@ def _pollinations_service() -> PollinationsMediaService:
     )
 
 
+@lru_cache(maxsize=1)
+def _jo_video_engine() -> JOAIVideoModelEngine:
+    return JOAIVideoModelEngine(
+        pollinations_service=_pollinations_service(),
+        image_service=_image_service(),
+    )
+
+
 def _image_model_label(option: str) -> str:
     resolved_option = _resolve_image_model_option(option)
     return IMAGE_MODEL_OPTION_LABELS.get(resolved_option, IMAGE_MODEL_LABEL_JO)
 
 
 def _video_model_label(option: str) -> str:
-    return VIDEO_MODEL_OPTION_LABELS.get(option, VIDEO_MODEL_LABEL_GROK_TEXT_TO_VIDEO)
+    resolved_option = _resolve_video_model_option(option)
+    return VIDEO_MODEL_OPTION_LABELS.get(resolved_option, VIDEO_MODEL_LABEL_GROK_TEXT_TO_VIDEO)
 
 
 def _image_model_id_for_option(settings, option: str) -> str:
@@ -1011,8 +1152,14 @@ def _is_grok_image_model_option(option: str | None) -> bool:
 
 
 def _video_model_id_for_option(settings, option: str) -> str:
-    _ = option
-    return settings.pollinations_video_model_grok_text_to_video
+    resolved_option = _resolve_video_model_option(option)
+    if resolved_option == VIDEO_MODEL_OPTION_GROK_TEXT_TO_VIDEO:
+        return settings.pollinations_video_model_grok_text_to_video
+    return settings.jo_video_level1_model or settings.pollinations_video_model_grok_text_to_video
+
+
+def _is_jo_video_model_option(option: str | None) -> bool:
+    return _resolve_video_model_option(option) == VIDEO_MODEL_OPTION_JO_AI_VIDEO
 
 
 @lru_cache(maxsize=1)
@@ -1376,7 +1523,14 @@ async def _generate_image(prompt: str, size: str, ratio: Literal["1:1", "16:9", 
     ) from last_error
 
 
-async def _generate_pollinations_image(*, prompt: str, size: str, model: str) -> dict[str, str]:
+async def _generate_pollinations_image(
+    *,
+    prompt: str,
+    size: str,
+    model: str,
+    image: str | list[str] | None = None,
+    quality: Literal["standard", "hd", "low", "medium", "high"] | str | None = None,
+) -> dict[str, str]:
     max_attempts = 2
     last_error: AIServiceError | None = None
     for attempt in range(1, max_attempts + 1):
@@ -1386,6 +1540,8 @@ async def _generate_pollinations_image(*, prompt: str, size: str, model: str) ->
                 model=model,
                 size=size,
                 enhance=False,
+                image=image,
+                quality=quality,
             )
             if generated.image_bytes:
                 return {"image_base64": base64.b64encode(generated.image_bytes).decode("utf-8")}
@@ -1462,6 +1618,166 @@ async def _generate_pollinations_video(
     if "timed out" in lowered or "timeout" in lowered:
         raise BackendError("Video generation timed out. Please retry.", status_code=504) from last_error
     raise BackendError(safe_message, status_code=_status_code_for_ai_error(safe_message)) from last_error
+
+
+async def _resolve_video_reference_inputs(payload: VideoRequest) -> tuple[str | None, bytes | None]:
+    reference_url = str(payload.reference_image_url or "").strip() or None
+    reference_bytes: bytes | None = None
+
+    raw_b64 = str(payload.reference_image_base64 or "").strip()
+    if raw_b64:
+        reference_bytes = _decode_base64_image(raw_b64)
+    if reference_url:
+        return reference_url, reference_bytes
+
+    if reference_bytes and str(_pollinations_service().api_key or "").strip():
+        try:
+            uploaded = await _pollinations_service().upload_media_bytes(
+                media_bytes=reference_bytes,
+                mime_type="image/png",
+                file_name="video_reference.png",
+            )
+            if uploaded:
+                reference_url = uploaded
+        except Exception:
+            reference_url = None
+
+    return reference_url, reference_bytes
+
+
+async def _resolve_image_reference_inputs(payload: ImageRequest) -> tuple[str | None, bytes | None]:
+    reference_url = str(payload.reference_image_url or "").strip() or None
+    reference_bytes: bytes | None = None
+
+    raw_b64 = str(payload.reference_image_base64 or "").strip()
+    if raw_b64:
+        reference_bytes = _decode_base64_image(raw_b64)
+    if reference_url:
+        return reference_url, reference_bytes
+
+    if reference_bytes and str(_pollinations_service().api_key or "").strip():
+        try:
+            uploaded = await _pollinations_service().upload_media_bytes(
+                media_bytes=reference_bytes,
+                mime_type="image/png",
+                file_name="image_reference.png",
+            )
+            if uploaded:
+                reference_url = uploaded
+        except Exception:
+            reference_url = None
+
+    return reference_url, reference_bytes
+
+
+def _jo_video_settings_payload_from_request(payload: VideoRequest, settings) -> dict[str, Any]:
+    return {
+        "aspect_ratio": payload.effective_aspect_ratio,
+        "duration_seconds": payload.effective_duration_seconds,
+        "scene_count": payload.effective_scene_count,
+        "motion_strength": payload.effective_motion_strength,
+        "camera_motion": payload.effective_camera_motion,
+        "style": str(payload.style or "").strip() or None,
+        "quality": payload.effective_quality,
+        "seed": payload.effective_seed,
+        "fps": payload.effective_fps or settings.jo_video_default_fps,
+        "output_format": payload.effective_output_format or settings.jo_video_default_output_format,
+        "preserve_face": bool(payload.preserve_face if payload.preserve_face is not None else True),
+        "preserve_background": bool(payload.preserve_background if payload.preserve_background is not None else True),
+        "preserve_composition": bool(payload.preserve_composition if payload.preserve_composition is not None else True),
+        "similarity_strength": payload.similarity_strength or "high",
+        "edit_strength": payload.edit_strength or "medium",
+        "use_exact_reference_mode": bool(payload.use_exact_reference_mode if payload.use_exact_reference_mode is not None else True),
+    }
+
+
+def _resolve_jo_video_aspect_ratio(*, requested_ratio: str, settings, config: dict[str, Any] | None = None) -> str:
+    allowed_raw = list((config or {}).get("allowed_aspect_ratios") or settings.jo_video_allowed_aspect_ratios or ())
+    allowed = [ratio for ratio in allowed_raw if ratio in VIDEO_ASPECT_RATIOS]
+    if not allowed:
+        allowed = ["9:16", "16:9"]
+    requested = str(requested_ratio or "").strip()
+    if requested in allowed:
+        return requested
+    if "9:16" in allowed:
+        return "9:16"
+    return allowed[0]
+
+
+async def _generate_jo_ai_video(
+    *,
+    payload: VideoRequest,
+    settings,
+    jo_config: dict[str, Any] | None = None,
+    job_id: str | None = None,
+) -> dict[str, Any]:
+    config = dict(jo_config or {})
+    reference_url, reference_bytes = await _resolve_video_reference_inputs(payload)
+    resolved_ratio = _resolve_jo_video_aspect_ratio(
+        requested_ratio=payload.effective_aspect_ratio,
+        settings=settings,
+        config=config,
+    )
+    safe_ratio: Literal["16:9", "9:16"] = "9:16" if resolved_ratio == "9:16" else "16:9"
+    options = JOAIVideoOptions(
+        prompt=payload.effective_prompt,
+        negative_prompt=payload.effective_negative_prompt,
+        aspect_ratio=safe_ratio,
+        duration_seconds=min(int(config.get("max_duration_seconds", settings.jo_video_max_duration_seconds)), payload.effective_duration_seconds),
+        scene_count=min(int(config.get("max_scenes", settings.jo_video_max_scenes)), payload.effective_scene_count),
+        motion_strength=payload.effective_motion_strength,
+        camera_motion=payload.effective_camera_motion,
+        style=str(payload.style or "").strip() or None,
+        quality=payload.effective_quality,
+        seed=payload.effective_seed,
+        fps=payload.effective_fps or int(config.get("default_fps", settings.jo_video_default_fps)),
+        output_format=payload.effective_output_format or str(config.get("default_output_format", settings.jo_video_default_output_format)),
+        reference_image_url=reference_url,
+        reference_image_bytes=reference_bytes,
+        provider_order=tuple(config.get("provider_order") or settings.jo_video_provider_order),
+        provider_model_order=tuple(config.get("image_models") or settings.jo_video_image_models),
+        provider_level1_enabled=bool(config.get("level1_provider_enabled", settings.jo_video_level1_provider_enabled)),
+        provider_level1_model=str(config.get("level1_provider_model") or settings.jo_video_level1_model or "").strip() or None,
+        fallback_enabled=bool(config.get("fallback_enabled", settings.jo_video_fallback_enabled)),
+    )
+
+    async def _progress(event: JOAIVideoProgress) -> None:
+        if not job_id:
+            return
+        _update_jo_video_job_progress(job_id, event)
+
+    result = await _jo_video_engine().generate(options, progress_callback=_progress if job_id else None)
+    video_url: str | None = result.video_url
+    storage_path: str | None = None
+    mime_type = result.mime_type or "video/mp4"
+
+    if result.video_bytes:
+        persisted_url, persisted_storage_path = _persist_video_bytes_to_local_asset(
+            result.video_bytes,
+            prefix="jo_ai_video",
+            mime_type=mime_type,
+        )
+        video_url = persisted_url
+        storage_path = persisted_storage_path
+    elif video_url and video_url.startswith("/media/"):
+        storage_path = f"local_file:{video_url.split('/', maxsplit=2)[-1]}"
+
+    return {
+        "video_url": video_url,
+        "video_mime_type": mime_type,
+        "storage_path": storage_path,
+        "model_label": VIDEO_MODEL_LABEL_JO_AI_VIDEO,
+        "model_option": VIDEO_MODEL_OPTION_JO_AI_VIDEO,
+        "provider_used": result.provider_used,
+        "prompt_used": result.prompt_used,
+        "negative_prompt": result.negative_prompt_used,
+        "seed": result.seed_used,
+        "scene_prompts": result.scene_prompts,
+        "reference_images": result.reference_images,
+        "pipeline_steps": result.progress_steps,
+        "output_format": result.output_format,
+        "metadata": result.metadata,
+    }
 
 
 async def _generate_tts(
@@ -1590,6 +1906,172 @@ def _append_debug_error(existing: str | None, message: str) -> str:
     if existing:
         return f"{existing} | {message}"
     return message
+
+
+def _utc_now_iso() -> str:
+    return datetime.now(timezone.utc).isoformat()
+
+
+def _new_jo_video_job(
+    *,
+    identity: TrackingIdentity | None,
+    model_id: str,
+    prompt: str,
+    negative_prompt: str | None,
+    settings_payload: dict[str, Any],
+    source_payload: dict[str, Any] | None = None,
+) -> dict[str, Any]:
+    job_id = uuid.uuid4().hex
+    now_iso = _utc_now_iso()
+    job = {
+        "job_id": job_id,
+        "user_id": identity.telegram_id if identity else None,
+        "model_id": model_id,
+        "prompt": prompt,
+        "negative_prompt": negative_prompt,
+        "settings": settings_payload,
+        "provider_used": None,
+        "image_outputs": [],
+        "video_output": None,
+        "status": "queued",
+        "progress": 0.0,
+        "stage": "queued",
+        "progress_steps": [],
+        "created_at": now_iso,
+        "updated_at": now_iso,
+        "error_details": None,
+        "canceled": False,
+        "source_payload": dict(source_payload or {}),
+    }
+    _JO_VIDEO_JOB_STORE[job_id] = job
+    return job
+
+
+def _jo_video_job(job_id: str) -> dict[str, Any] | None:
+    candidate = str(job_id or "").strip()
+    if not candidate:
+        return None
+    return _JO_VIDEO_JOB_STORE.get(candidate)
+
+
+def _jo_video_job_summary(job: dict[str, Any]) -> dict[str, Any]:
+    return {
+        "job_id": job.get("job_id"),
+        "user_id": job.get("user_id"),
+        "model_id": job.get("model_id"),
+        "prompt": job.get("prompt"),
+        "negative_prompt": job.get("negative_prompt"),
+        "settings": job.get("settings"),
+        "provider_used": job.get("provider_used"),
+        "image_outputs": job.get("image_outputs"),
+        "video_output": job.get("video_output"),
+        "status": job.get("status"),
+        "progress": job.get("progress"),
+        "stage": job.get("stage"),
+        "progress_steps": job.get("progress_steps"),
+        "created_at": job.get("created_at"),
+        "updated_at": job.get("updated_at"),
+        "error_details": job.get("error_details"),
+    }
+
+
+def _update_jo_video_job_progress(job_id: str, progress: JOAIVideoProgress) -> None:
+    job = _jo_video_job(job_id)
+    if not job:
+        return
+    if job.get("status") == "canceled":
+        return
+    job["status"] = "running"
+    job["progress"] = max(0.0, min(1.0, float(progress.progress)))
+    job["stage"] = progress.stage
+    step = {
+        "stage": progress.stage,
+        "progress": max(0.0, min(1.0, float(progress.progress))),
+        "message": progress.message,
+        "metadata": dict(progress.metadata or {}),
+        "timestamp": _utc_now_iso(),
+    }
+    history = job.get("progress_steps")
+    if isinstance(history, list):
+        history.append(step)
+    else:
+        job["progress_steps"] = [step]
+    job["updated_at"] = _utc_now_iso()
+
+
+def _complete_jo_video_job(job_id: str, *, result: JOAIVideoResult, output_payload: dict[str, Any]) -> None:
+    job = _jo_video_job(job_id)
+    if not job:
+        return
+    job["status"] = "completed"
+    job["progress"] = 1.0
+    job["stage"] = "completed"
+    job["provider_used"] = result.provider_used
+    job["image_outputs"] = result.reference_images
+    job["video_output"] = output_payload
+    job["updated_at"] = _utc_now_iso()
+    job["error_details"] = None
+
+
+def _fail_jo_video_job(job_id: str, error_message: str) -> None:
+    job = _jo_video_job(job_id)
+    if not job:
+        return
+    if job.get("status") == "canceled":
+        return
+    job["status"] = "failed"
+    job["stage"] = "failed"
+    job["error_details"] = str(error_message or SAFE_SERVICE_UNAVAILABLE_MESSAGE)
+    job["updated_at"] = _utc_now_iso()
+
+
+def _cancel_jo_video_job(job_id: str) -> bool:
+    job = _jo_video_job(job_id)
+    if not job:
+        return False
+    job["status"] = "canceled"
+    job["stage"] = "canceled"
+    job["updated_at"] = _utc_now_iso()
+    job["canceled"] = True
+    task = _JO_VIDEO_JOB_TASKS.get(job_id)
+    if isinstance(task, asyncio.Task) and not task.done():
+        task.cancel()
+    return True
+
+
+def _running_jo_video_jobs_for_user(user_id: int | None) -> int:
+    if not user_id:
+        return 0
+    count = 0
+    for job in _JO_VIDEO_JOB_STORE.values():
+        if int(job.get("user_id") or 0) != int(user_id):
+            continue
+        if str(job.get("status") or "").lower() in {"queued", "running"}:
+            count += 1
+    return count
+
+
+def _effective_jo_video_config(settings) -> dict[str, Any]:
+    base = {
+        "enabled": bool(settings.jo_video_model_enabled),
+        "provider_order": list(settings.jo_video_provider_order),
+        "image_models": list(settings.jo_video_image_models),
+        "fallback_enabled": bool(settings.jo_video_fallback_enabled),
+        "level1_provider_enabled": bool(settings.jo_video_level1_provider_enabled),
+        "level1_provider_model": settings.jo_video_level1_model,
+        "max_duration_seconds": int(settings.jo_video_max_duration_seconds),
+        "allowed_aspect_ratios": list(settings.jo_video_allowed_aspect_ratios),
+        "default_fps": int(settings.jo_video_default_fps),
+        "max_scenes": int(settings.jo_video_max_scenes),
+        "max_jobs_per_user": int(settings.jo_video_max_jobs_per_user),
+        "default_output_format": str(settings.jo_video_default_output_format or "mp4"),
+    }
+    if not _JO_VIDEO_ADMIN_OVERRIDES:
+        return base
+    merged = dict(base)
+    for key, value in _JO_VIDEO_ADMIN_OVERRIDES.items():
+        merged[key] = value
+    return merged
 
 
 def _parse_positive_int(value: Any) -> int | None:
@@ -1730,6 +2212,72 @@ def _extract_conversation_id(request: Request, identity: TrackingIdentity | None
     if identity is None:
         return f"anon:{feature_used}:{datetime.now(timezone.utc).date().isoformat()}"
     return f"{identity.telegram_id}:{feature_used}:{datetime.now(timezone.utc).date().isoformat()}"
+
+
+def _jo_chat_context_key(identity: TrackingIdentity | None, conversation_id: str) -> str:
+    if identity is not None and int(identity.telegram_id) > 0:
+        return f"{identity.telegram_id}:{conversation_id}"
+    return f"anon:{conversation_id}"
+
+
+def _get_jo_chat_context(identity: TrackingIdentity | None, conversation_id: str) -> dict[str, Any]:
+    key = _jo_chat_context_key(identity, conversation_id)
+    return dict(_JO_CHAT_CONTEXT_STORE.get(key) or {})
+
+
+def _save_jo_chat_context(identity: TrackingIdentity | None, conversation_id: str, context: dict[str, Any]) -> None:
+    key = _jo_chat_context_key(identity, conversation_id)
+    _JO_CHAT_CONTEXT_STORE[key] = dict(context)
+
+
+def _json_payload_from_response(response: JSONResponse) -> dict[str, Any]:
+    try:
+        raw = bytes(response.body or b"")
+    except Exception:
+        return {}
+    if not raw:
+        return {}
+    try:
+        parsed = json.loads(raw.decode("utf-8"))
+    except Exception:
+        return {}
+    return parsed if isinstance(parsed, dict) else {}
+
+
+def _detect_jo_chat_intent(payload: JOChatRequest, context: dict[str, Any]) -> tuple[str, float]:
+    text = " ".join(str(payload.message or "").split()).strip()
+    if not text:
+        return "chat", 0.1
+
+    selected_model = _resolve_video_model_option(payload.selected_model)
+    reference_present = bool(
+        str(payload.reference_image_url or "").strip()
+        or str(payload.reference_image_base64 or "").strip()
+        or str(payload.last_asset_url or "").strip()
+        or str(context.get("last_asset_url") or "").strip()
+    )
+    last_output_type = str(payload.last_output_type or context.get("last_output_type") or "").strip().lower()
+    lowered = text.lower()
+
+    if JO_CHAT_ANIMATE_THIS_PATTERN.search(lowered) and reference_present:
+        return "image_to_video", 0.98
+    if JO_CHAT_VIDEO_REQUEST_PATTERN.search(lowered):
+        return "text_to_video", 0.93
+    if JO_CHAT_EDIT_PATTERN.search(lowered) and reference_present:
+        if any(token in lowered for token in ("animate", "make it move", "turn this into video", "video")):
+            return "image_to_video", 0.93
+        if "upscale" in lowered or "enhance" in lowered:
+            return "upscale", 0.9
+        if "variation" in lowered or "remix" in lowered:
+            return "image_variation", 0.9
+        return "image_edit", 0.94
+    if JO_CHAT_IMAGE_REQUEST_PATTERN.search(lowered):
+        return "text_to_image", 0.91
+    if selected_model == VIDEO_MODEL_OPTION_JO_AI_VIDEO and last_output_type in {"image", "video"}:
+        return "text_to_video", 0.72
+    if any(token in lowered for token in ("again", "retry", "regenerate", "one more")) and last_output_type in {"image", "video"}:
+        return "regenerate_same_idea", 0.78
+    return "chat", 0.62
 
 
 def _admin_actor_telegram_id(request: Request) -> int | None:
@@ -2310,6 +2858,52 @@ def uptime() -> dict[str, Any]:
 @app.get("/api/runtime-info")
 def runtime_info() -> dict[str, Any]:
     return _runtime_info_payload()
+
+
+@app.get("/models")
+@app.get("/api/models")
+def models_registry() -> dict[str, Any]:
+    settings = get_settings()
+    jo_video_config = _effective_jo_video_config(settings)
+    default_video_ratio = _resolve_jo_video_aspect_ratio(
+        requested_ratio="9:16",
+        settings=settings,
+        config=jo_video_config,
+    )
+    return {
+        "ok": True,
+        "image_models": [
+            {"id": IMAGE_MODEL_OPTION_JO, "label": IMAGE_MODEL_LABEL_JO},
+            {"id": "gptimage", "label": "GPT Image Mini"},
+            {"id": "flux", "label": "Flux Schnell"},
+            {"id": "zimage", "label": "Z-Image Turbo"},
+            {"id": "klein", "label": "Flux 2 Klein"},
+            {"id": "imagen-4", "label": "Imagen 4"},
+            {"id": "flux-2-dev", "label": "Flux 2 Dev"},
+            {"id": "grok-imagine", "label": "Grok Imagine"},
+            {"id": "dirtberry", "label": "Dirtberry"},
+            {"id": "dirtberry-pro", "label": "Dirtberry Pro"},
+        ],
+        "video_models": [
+            {"id": VIDEO_MODEL_OPTION_GROK_TEXT_TO_VIDEO, "label": VIDEO_MODEL_LABEL_GROK_TEXT_TO_VIDEO, "enabled": True},
+            {
+                "id": VIDEO_MODEL_OPTION_JO_AI_VIDEO,
+                "label": VIDEO_MODEL_LABEL_JO_AI_VIDEO,
+                "enabled": bool(jo_video_config.get("enabled", True)),
+            },
+        ],
+        "defaults": {
+            "video_model": VIDEO_MODEL_OPTION_JO_AI_VIDEO if bool(jo_video_config.get("enabled", True)) else VIDEO_MODEL_OPTION_GROK_TEXT_TO_VIDEO,
+            "aspect_ratio": default_video_ratio,
+            "duration_seconds": 5,
+            "scene_count": 1,
+            "motion_strength": "medium",
+            "camera_motion": "cinematic",
+            "quality": "high",
+            "fps": int(jo_video_config.get("default_fps", 24)),
+            "output_format": str(jo_video_config.get("default_output_format", "mp4")),
+        },
+    }
 
 
 @app.get("/api/referral/me")
@@ -3024,6 +3618,99 @@ async def admin_engagement_update(request: Request, payload: EngagementConfigUpd
         return _admin_error_response(request, 500, "Failed to update engagement settings.")
 
 
+@app.get("/api/admin/models/video-config")
+def admin_video_model_config(request: Request) -> JSONResponse:
+    try:
+        _require_admin_access(request)
+        settings = get_settings()
+        payload = {
+            "ok": True,
+            "config": _effective_jo_video_config(settings),
+            "overrides": dict(_JO_VIDEO_ADMIN_OVERRIDES),
+        }
+        return JSONResponse(status_code=200, content=payload)
+    except HTTPException as exc:
+        return _admin_error_response(request, exc.status_code, str(exc.detail))
+    except Exception as exc:
+        logger.exception("ADMIN VIDEO CONFIG GET FAILED | request_id=%s error=%s", _request_id_from_request(request), exc)
+        return _admin_error_response(request, 500, "Failed to load JO AI video config.")
+
+
+@app.post("/api/admin/models/video-config")
+def admin_video_model_config_update(request: Request, payload: AdminJOVideoConfigUpdateRequest) -> JSONResponse:
+    try:
+        _require_admin_access(request)
+        update = payload.model_dump(exclude_none=True)
+        sanitized: dict[str, Any] = {}
+        for key, value in update.items():
+            if key in {"provider_order", "image_models"} and isinstance(value, list):
+                tokens = [str(item).strip() for item in value if str(item).strip()]
+                if tokens:
+                    sanitized[key] = tokens
+                continue
+            if key == "allowed_aspect_ratios" and isinstance(value, list):
+                ratios = [item for item in value if item in {"16:9", "9:16"}]
+                if ratios:
+                    sanitized[key] = ratios
+                continue
+            if key == "level1_provider_model":
+                normalized = str(value or "").strip() or None
+                sanitized[key] = normalized
+                continue
+            sanitized[key] = value
+
+        _JO_VIDEO_ADMIN_OVERRIDES.update(sanitized)
+        settings = get_settings()
+        return JSONResponse(
+            status_code=200,
+            content={
+                "ok": True,
+                "config": _effective_jo_video_config(settings),
+                "overrides": dict(_JO_VIDEO_ADMIN_OVERRIDES),
+            },
+        )
+    except HTTPException as exc:
+        return _admin_error_response(request, exc.status_code, str(exc.detail))
+    except Exception as exc:
+        logger.exception("ADMIN VIDEO CONFIG UPDATE FAILED | request_id=%s error=%s", _request_id_from_request(request), exc)
+        return _admin_error_response(request, 500, "Failed to update JO AI video config.")
+
+
+@app.get("/api/admin/video-jobs")
+def admin_video_jobs(
+    request: Request,
+    status: str | None = None,
+    limit: int = 100,
+) -> JSONResponse:
+    try:
+        _require_admin_access(request)
+        requested_status = str(status or "").strip().lower()
+        safe_limit = max(1, min(300, int(limit)))
+        items: list[dict[str, Any]] = []
+        for job in _JO_VIDEO_JOB_STORE.values():
+            job_status = str(job.get("status") or "").strip().lower()
+            if requested_status and job_status != requested_status:
+                continue
+            items.append(_jo_video_job_summary(job))
+        items.sort(key=lambda item: str(item.get("updated_at") or ""), reverse=True)
+        items = items[:safe_limit]
+        failed_count = sum(1 for item in items if str(item.get("status") or "").lower() == "failed")
+        return JSONResponse(
+            status_code=200,
+            content={
+                "ok": True,
+                "items": items,
+                "count": len(items),
+                "failed_count": failed_count,
+            },
+        )
+    except HTTPException as exc:
+        return _admin_error_response(request, exc.status_code, str(exc.detail))
+    except Exception as exc:
+        logger.exception("ADMIN VIDEO JOBS FAILED | request_id=%s error=%s", _request_id_from_request(request), exc)
+        return _admin_error_response(request, 500, "Failed to load video jobs.")
+
+
 @app.get("/api/admin/bot-status")
 def admin_bot_status(request: Request) -> JSONResponse:
     try:
@@ -3527,6 +4214,160 @@ async def chat_endpoint(request: Request, payload: ChatRequest) -> JSONResponse:
     return await _handle_text_mode_request(request=request, mode="chat", message=payload.message, identity=identity)
 
 
+@app.post("/jo-chat")
+@app.post("/api/jo-chat")
+async def jo_chat_endpoint(request: Request, payload: JOChatRequest) -> JSONResponse:
+    identity = _resolve_tracking_identity(request, payload)
+    feature_used = "jo_chat"
+    conversation_id = _extract_conversation_id(request, identity, feature_used)
+    context = _get_jo_chat_context(identity, conversation_id)
+    intent, confidence = _detect_jo_chat_intent(payload, context)
+
+    if confidence < 0.55:
+        clarification = (
+            "I can do this as chat, image, or video. "
+            "Tell me if you want an image, an edit of your last image, or a video."
+        )
+        response_payload = {
+            "output": clarification,
+            "intent": "clarify",
+            "intent_confidence": round(confidence, 3),
+        }
+        return JSONResponse(status_code=200, content=response_payload)
+
+    text = str(payload.message or "").strip()
+    selected_model = _resolve_video_model_option(payload.selected_model)
+
+    if intent == "chat":
+        response = await _handle_text_mode_request(
+            request=request,
+            mode="chat",
+            message=text,
+            identity=identity,
+        )
+        parsed = _json_payload_from_response(response)
+        parsed["intent"] = "chat"
+        parsed["intent_confidence"] = round(confidence, 3)
+        _save_jo_chat_context(
+            identity,
+            conversation_id,
+            {
+                **context,
+                "last_output_type": "text",
+                "last_prompt": text,
+                "last_selected_model": selected_model,
+            },
+        )
+        return JSONResponse(status_code=response.status_code, content=parsed)
+
+    if intent in {"text_to_image", "image_edit", "image_variation", "upscale", "regenerate_same_idea"}:
+        reference_url = (
+            str(payload.reference_image_url or "").strip()
+            or str(payload.last_asset_url or "").strip()
+            or str(context.get("last_asset_url") or "").strip()
+            or None
+        )
+        reference_base64 = str(payload.reference_image_base64 or "").strip() or None
+        reference_asset_id = (
+            str(payload.reference_asset_id or "").strip()
+            or str(payload.parent_asset_id or "").strip()
+            or str(context.get("last_asset_id") or "").strip()
+            or None
+        )
+        image_payload = ImageRequest.model_validate(
+            {
+                "telegram_id": payload.telegram_id,
+                "username": payload.username,
+                "first_name": payload.first_name,
+                "last_name": payload.last_name,
+                "prompt": text,
+                "ratio": "1:1",
+                "image_model": context.get("last_image_model_option") or IMAGE_MODEL_OPTION_JO,
+                "reference_image_url": reference_url if intent != "text_to_image" else None,
+                "reference_image_base64": reference_base64 if intent != "text_to_image" else None,
+                "reference_asset_id": reference_asset_id if intent != "text_to_image" else None,
+                "edit_instruction": text if intent in {"image_edit", "image_variation", "upscale"} else None,
+                "preserve_face": True,
+                "preserve_background": True,
+                "preserve_composition": True,
+                "similarity_strength": "high" if intent in {"image_edit", "upscale"} else "medium",
+                "edit_strength": "medium" if intent != "upscale" else "low",
+                "use_exact_reference_mode": True,
+                "quality": "high" if intent == "upscale" else "medium",
+            }
+        )
+        response = await image_endpoint(request, image_payload)
+        parsed = _json_payload_from_response(response)
+        parsed["intent"] = intent
+        parsed["intent_confidence"] = round(confidence, 3)
+
+        if response.status_code < 300:
+            next_context = dict(context)
+            next_context["last_output_type"] = "image"
+            next_context["last_prompt"] = text
+            next_context["last_asset_id"] = parsed.get("asset_id")
+            next_context["last_asset_url"] = parsed.get("image_url")
+            next_context["last_image_model_option"] = parsed.get("model_option")
+            next_context["last_selected_model"] = selected_model
+            _save_jo_chat_context(identity, conversation_id, next_context)
+        return JSONResponse(status_code=response.status_code, content=parsed)
+
+    reference_url = (
+        str(payload.reference_image_url or "").strip()
+        or str(payload.last_asset_url or "").strip()
+        or str(context.get("last_asset_url") or "").strip()
+        or None
+    )
+    reference_base64 = str(payload.reference_image_base64 or "").strip() or None
+    reference_asset_id = (
+        str(payload.reference_asset_id or "").strip()
+        or str(payload.parent_asset_id or "").strip()
+        or str(context.get("last_asset_id") or "").strip()
+        or None
+    )
+    video_payload = VideoRequest.model_validate(
+        {
+            "telegram_id": payload.telegram_id,
+            "username": payload.username,
+            "first_name": payload.first_name,
+            "last_name": payload.last_name,
+            "prompt": text,
+            "video_model": (
+                VIDEO_MODEL_OPTION_JO_AI_VIDEO
+                if intent == "image_to_video" or selected_model == VIDEO_MODEL_OPTION_JO_AI_VIDEO
+                else VIDEO_MODEL_OPTION_GROK_TEXT_TO_VIDEO
+            ),
+            "duration_seconds": 5,
+            "aspect_ratio": "9:16",
+            "scene_count": 1 if intent == "image_to_video" else 2,
+            "motion_strength": "medium",
+            "camera_motion": "cinematic",
+            "quality": "high",
+            "fps": 24,
+            "output_format": "mp4",
+            "join_clicked": True,
+            "join_confirmed": True,
+            "reference_image_url": reference_url if intent == "image_to_video" else None,
+            "reference_image_base64": reference_base64 if intent == "image_to_video" else None,
+            "reference_asset_id": reference_asset_id if intent == "image_to_video" else None,
+            "use_exact_reference_mode": True if intent == "image_to_video" else None,
+        }
+    )
+    response = await video_endpoint(request, video_payload)
+    parsed = _json_payload_from_response(response)
+    parsed["intent"] = intent
+    parsed["intent_confidence"] = round(confidence, 3)
+    if response.status_code < 300:
+        next_context = dict(context)
+        next_context["last_output_type"] = "video"
+        next_context["last_prompt"] = text
+        next_context["last_asset_id"] = parsed.get("job_id")
+        next_context["last_asset_url"] = parsed.get("video_url")
+        next_context["last_selected_model"] = selected_model
+        _save_jo_chat_context(identity, conversation_id, next_context)
+    return JSONResponse(status_code=response.status_code, content=parsed)
+
+
 @app.post("/gemini")
 @app.post("/api/gemini")
 async def gemini_endpoint(request: Request, payload: GeminiRequest) -> JSONResponse:
@@ -3802,7 +4643,13 @@ async def image_endpoint(request: Request, payload: ImageRequest) -> JSONRespons
     effective_image_model_label = image_model_label
     effective_image_model_id = image_model_id
     provider_source = "jo_ai" if effective_image_model_option == IMAGE_MODEL_OPTION_JO else "pollinations"
+    reference_image_url, reference_image_bytes = await _resolve_image_reference_inputs(payload)
+    reference_locked = bool(reference_image_url or reference_image_bytes)
+    if reference_locked:
+        provider_source = "pollinations"
     effective_feature_used = f"{feature_used}:{effective_image_model_option}"
+    if reference_locked:
+        effective_feature_used = f"{effective_feature_used}:edit"
     logger.info(
         "API IMAGE START | request_id=%s user=%s prompt_len=%s ratio=%s model=%s",
         request_id or "unknown",
@@ -3839,6 +4686,28 @@ async def image_endpoint(request: Request, payload: ImageRequest) -> JSONRespons
         )
         return refusal
 
+    if reference_locked and not str(_pollinations_service().api_key or "").strip():
+        reply_text = "Image editing is unavailable right now because the image-edit provider is not configured."
+        await _track_api_action(
+            identity=identity,
+            message_type="image",
+            user_message=user_prompt,
+            bot_reply=reply_text,
+            model_used=image_model_label,
+            success=False,
+            image_increment=1,
+            frontend_source=frontend_source,
+            feature_used=f"{feature_used}:{image_model_option}:edit_missing_provider",
+            conversation_id=conversation_id,
+            text_content=user_prompt,
+            mark_started=bool(identity),
+            referral_code=referral_code,
+        )
+        payload_response: dict[str, Any] = {"error": reply_text}
+        if request_id:
+            payload_response["request_id"] = request_id
+        return JSONResponse(status_code=503, content=payload_response)
+
     if _is_grok_image_model_option(image_model_option):
         moderation_result = moderate_grok_generation_prompt(user_prompt)
         if moderation_result.blocked:
@@ -3874,7 +4743,37 @@ async def image_endpoint(request: Request, payload: ImageRequest) -> JSONRespons
             )
             return _grok_safety_block_response(request, "image")
     try:
-        enhanced_prompt = build_enhanced_image_prompt(user_prompt, ratio=payload.effective_ratio)
+        base_prompt = user_prompt
+        if reference_locked:
+            preserve_face = bool(payload.preserve_face if payload.preserve_face is not None else True)
+            preserve_background = bool(payload.preserve_background if payload.preserve_background is not None else True)
+            preserve_composition = bool(payload.preserve_composition if payload.preserve_composition is not None else True)
+            similarity_strength = payload.similarity_strength or "high"
+            edit_strength = payload.edit_strength or "medium"
+            exact_reference = bool(payload.use_exact_reference_mode if payload.use_exact_reference_mode is not None else True)
+            edit_instruction = " ".join(str(payload.edit_instruction or "").split())
+            preservation_tokens = [
+                "preserve same person identity" if preserve_face else "",
+                "preserve same background" if preserve_background else "",
+                "preserve same framing/composition" if preserve_composition else "",
+                f"similarity strength {similarity_strength}",
+                f"edit strength {edit_strength}",
+                "exact reference lock enabled" if exact_reference else "exact reference lock disabled",
+            ]
+            base_prompt = (
+                f"{user_prompt}\n\n"
+                f"Reference-locked edit request. {'; '.join(token for token in preservation_tokens if token)}."
+            )
+            if edit_instruction:
+                base_prompt = f"{base_prompt}\nRequested edit: {edit_instruction}"
+
+        enhanced_prompt = build_enhanced_image_prompt(base_prompt, ratio=payload.effective_ratio) or base_prompt
+        if payload.effective_negative_prompt:
+            enhanced_prompt = f"{enhanced_prompt}\n\nNegative prompt: {payload.effective_negative_prompt}"
+        if payload.style:
+            enhanced_prompt = f"{enhanced_prompt}\nStyle preset: {payload.style.strip()}"
+        if payload.seed:
+            enhanced_prompt = f"{enhanced_prompt}\nSeed lock: {payload.seed}"
         prompt_hash = hashlib.sha256(user_prompt.encode("utf-8")).hexdigest()[:12]
         logger.info(
             "API IMAGE ENHANCED | request_id=%s user=%s prompt_hash=%s enhanced_len=%s",
@@ -3884,7 +4783,26 @@ async def image_endpoint(request: Request, payload: ImageRequest) -> JSONRespons
             len(enhanced_prompt),
         )
         fallback_reason: str | None = None
-        if effective_image_model_option == IMAGE_MODEL_OPTION_JO:
+        if reference_locked:
+            pollinations_model = _image_model_id_for_option(settings, effective_image_model_option)
+            if effective_image_model_option == IMAGE_MODEL_OPTION_JO:
+                pollinations_model = settings.pollinations_image_model_chat_gbt
+            effective_image_model_option = _resolve_image_model_option(pollinations_model)
+            effective_image_model_label = _image_model_label(effective_image_model_option)
+            effective_image_model_id = pollinations_model
+            provider_source = "pollinations"
+            effective_feature_used = f"{feature_used}:{effective_image_model_option}:edit"
+            result_payload = await asyncio.wait_for(
+                _generate_pollinations_image(
+                    prompt=enhanced_prompt,
+                    model=pollinations_model,
+                    size=payload.effective_size,
+                    image=reference_image_url,
+                    quality=payload.quality or "high",
+                ),
+                timeout=IMAGE_ENDPOINT_TIMEOUT_SECONDS,
+            )
+        elif effective_image_model_option == IMAGE_MODEL_OPTION_JO:
             result_payload = await asyncio.wait_for(
                 _generate_image(
                     prompt=enhanced_prompt,
@@ -3927,8 +4845,8 @@ async def image_endpoint(request: Request, payload: ImageRequest) -> JSONRespons
                         size=payload.effective_size,
                         ratio=payload.effective_ratio,
                     ),
-                    timeout=IMAGE_ENDPOINT_TIMEOUT_SECONDS,
-                )
+                        timeout=IMAGE_ENDPOINT_TIMEOUT_SECONDS,
+                    )
         response_payload: dict[str, Any] = {
             "output": user_prompt,
             "ratio": payload.effective_ratio,
@@ -3938,6 +4856,25 @@ async def image_endpoint(request: Request, payload: ImageRequest) -> JSONRespons
             "requested_model_label": requested_image_model_label,
             "requested_model_option": requested_image_model_option,
             "requested_model_id": requested_image_model_id,
+            "negative_prompt": payload.effective_negative_prompt,
+            "seed": payload.seed,
+            "reference_locked": reference_locked,
+            "reference_image_url": reference_image_url,
+            "reference_asset_id": payload.reference_asset_id,
+            "provider_source": provider_source,
+            "asset_type": "image",
+            "asset_id": uuid.uuid4().hex,
+            "edit_mode": bool(reference_locked),
+            "available_actions": [
+                "edit",
+                "remix",
+                "remove_object",
+                "change_detail",
+                "animate_this",
+                "use_as_reference",
+                "regenerate_similar",
+                "upscale",
+            ],
         }
         if fallback_reason:
             response_payload["fallback_applied"] = True
@@ -4087,15 +5024,49 @@ async def video_endpoint(request: Request, payload: VideoRequest) -> JSONRespons
     feature_used = "video_generation"
     conversation_id = _extract_conversation_id(request, identity, feature_used)
     referral_code = _extract_referral_code(request)
+    jo_video_config = _effective_jo_video_config(settings)
     manual_join_clicked = bool(payload.join_clicked)
     manual_join_confirmed = bool(payload.join_confirmed)
     manual_join_verified = manual_join_clicked and manual_join_confirmed
     user_prompt = payload.effective_prompt
     video_model_option = payload.effective_model_option
+    if video_model_option == VIDEO_MODEL_OPTION_JO_AI_VIDEO and not bool(jo_video_config.get("enabled", True)):
+        video_model_option = VIDEO_MODEL_OPTION_GROK_TEXT_TO_VIDEO
     video_model_label = _video_model_label(video_model_option)
     video_model_id = _video_model_id_for_option(settings, video_model_option)
     duration_seconds = payload.effective_duration_seconds
     aspect_ratio = payload.effective_aspect_ratio
+    provider_source = "jo_ai" if video_model_option == VIDEO_MODEL_OPTION_JO_AI_VIDEO else "pollinations"
+    settings_payload = _jo_video_settings_payload_from_request(payload, settings)
+    if video_model_option == VIDEO_MODEL_OPTION_JO_AI_VIDEO:
+        aspect_ratio = _resolve_jo_video_aspect_ratio(
+            requested_ratio=payload.effective_aspect_ratio,
+            settings=settings,
+            config=jo_video_config,
+        )
+        settings_payload["aspect_ratio"] = aspect_ratio
+        settings_payload["fps"] = payload.effective_fps or int(jo_video_config.get("default_fps", settings_payload["fps"]))
+        settings_payload["output_format"] = payload.effective_output_format or str(
+            jo_video_config.get("default_output_format", settings_payload["output_format"])
+        )
+        settings_payload["scene_count"] = min(
+            int(settings_payload["scene_count"]),
+            int(jo_video_config.get("max_scenes", settings_payload["scene_count"])),
+        )
+        settings_payload["duration_seconds"] = min(
+            int(payload.effective_duration_seconds),
+            int(jo_video_config.get("max_duration_seconds", payload.effective_duration_seconds)),
+        )
+        duration_seconds = int(settings_payload["duration_seconds"])
+    job = _new_jo_video_job(
+        identity=identity,
+        model_id=video_model_option,
+        prompt=user_prompt,
+        negative_prompt=payload.effective_negative_prompt,
+        settings_payload=settings_payload,
+        source_payload=payload.model_dump(exclude_none=True),
+    )
+    job_id = str(job["job_id"])
 
     logger.info(
         "API VIDEO START | request_id=%s user=%s prompt_len=%s duration=%s aspect_ratio=%s model=%s",
@@ -4108,9 +5079,11 @@ async def video_endpoint(request: Request, payload: VideoRequest) -> JSONRespons
     )
     access_denied = await _maybe_reject_restricted_identity(request, identity)
     if access_denied:
+        _fail_jo_video_job(job_id, ACCESS_RESTRICTED_MESSAGE)
         return access_denied
 
     if identity is None and not manual_join_verified:
+        _cancel_jo_video_job(job_id)
         return JSONResponse(status_code=401, content=_video_join_required_payload(request_id=request_id))
 
     join_required_message = _video_join_required_text()
@@ -4131,7 +5104,21 @@ async def video_endpoint(request: Request, payload: VideoRequest) -> JSONRespons
             mark_started=True,
             referral_code=referral_code,
         )
+        _cancel_jo_video_job(job_id)
         return JSONResponse(status_code=403, content=_video_join_required_payload(request_id=request_id))
+
+    if video_model_option == VIDEO_MODEL_OPTION_JO_AI_VIDEO and identity is not None:
+        running_jobs = _running_jo_video_jobs_for_user(identity.telegram_id)
+        if running_jobs > int(jo_video_config.get("max_jobs_per_user", settings.jo_video_max_jobs_per_user)):
+            message = (
+                f"You already have {running_jobs} active JO AI video jobs. "
+                "Please wait for one to finish, then try again."
+            )
+            _fail_jo_video_job(job_id, message)
+            payload_response: dict[str, Any] = {"error": message, "job_id": job_id}
+            if request_id:
+                payload_response["request_id"] = request_id
+            return JSONResponse(status_code=429, content=payload_response)
 
     refusal = _maybe_block_sensitive_request(user_prompt, aspect_ratio, str(duration_seconds))
     if refusal:
@@ -4150,6 +5137,7 @@ async def video_endpoint(request: Request, payload: VideoRequest) -> JSONRespons
             mark_started=bool(identity),
             referral_code=referral_code,
         )
+        _fail_jo_video_job(job_id, SAFE_INTERNAL_DETAILS_REFUSAL)
         return refusal
 
     moderation_result = moderate_grok_generation_prompt(user_prompt)
@@ -4170,7 +5158,7 @@ async def video_endpoint(request: Request, payload: VideoRequest) -> JSONRespons
             text_content=user_prompt,
             media=TrackingMedia(
                 media_type="video",
-                provider_source="pollinations",
+                provider_source=provider_source,
                 media_origin="generated",
                 media_status="blocked",
                 media_error_reason=block_reason,
@@ -4184,28 +5172,63 @@ async def video_endpoint(request: Request, payload: VideoRequest) -> JSONRespons
             user_id,
             block_reason or "grok_safety_block",
         )
+        _fail_jo_video_job(job_id, block_message)
         return _grok_safety_block_response(request, "video")
 
     try:
-        enhanced_prompt = build_enhanced_video_prompt(
-            user_prompt,
-            aspect_ratio=aspect_ratio,
-            duration_seconds=duration_seconds,
-        ) or user_prompt
-        result_payload = await asyncio.wait_for(
-            _generate_pollinations_video(
-                prompt=enhanced_prompt,
-                model=video_model_id,
-                duration_seconds=duration_seconds,
+        if video_model_option == VIDEO_MODEL_OPTION_JO_AI_VIDEO:
+            result_payload = await asyncio.wait_for(
+                _generate_jo_ai_video(
+                    payload=payload,
+                    settings=settings,
+                    jo_config=jo_video_config,
+                    job_id=job_id,
+                ),
+                timeout=VIDEO_ENDPOINT_TIMEOUT_SECONDS,
+            )
+        else:
+            enhanced_prompt = build_enhanced_video_prompt(
+                user_prompt,
                 aspect_ratio=aspect_ratio,
-            ),
-            timeout=VIDEO_ENDPOINT_TIMEOUT_SECONDS,
-        )
+                duration_seconds=duration_seconds,
+            ) or user_prompt
+            _update_jo_video_job_progress(
+                job_id,
+                JOAIVideoProgress(
+                    stage="provider_video",
+                    progress=0.55,
+                    message="Generating video with provider model.",
+                    metadata={"model_id": video_model_id},
+                ),
+            )
+            result_payload = await asyncio.wait_for(
+                _generate_pollinations_video(
+                    prompt=enhanced_prompt,
+                    model=video_model_id,
+                    duration_seconds=duration_seconds,
+                    aspect_ratio=aspect_ratio,
+                ),
+                timeout=VIDEO_ENDPOINT_TIMEOUT_SECONDS,
+            )
         response_payload: dict[str, Any] = {
             "output": user_prompt,
             "model_label": video_model_label,
+            "model_option": video_model_option,
             "duration_seconds": duration_seconds,
             "aspect_ratio": aspect_ratio,
+            "negative_prompt": payload.effective_negative_prompt,
+            "scene_count": settings_payload["scene_count"],
+            "motion_strength": settings_payload["motion_strength"],
+            "camera_motion": settings_payload["camera_motion"],
+            "style": settings_payload["style"],
+            "quality": settings_payload["quality"],
+            "seed": settings_payload["seed"],
+            "fps": settings_payload["fps"],
+            "output_format": settings_payload["output_format"],
+            "reference_locked": payload.has_reference_image,
+            "reference_asset_id": payload.reference_asset_id,
+            "job_id": job_id,
+            "status": "completed",
         }
         response_payload.update(result_payload)
         media_url = str(response_payload.get("video_url") or "").strip() or None
@@ -4213,6 +5236,32 @@ async def video_endpoint(request: Request, payload: VideoRequest) -> JSONRespons
         storage_path: str | None = None
         if media_url and media_url.startswith("/media/"):
             storage_path = f"local_file:{media_url.split('/', maxsplit=2)[-1]}"
+        if not storage_path:
+            storage_path = str(result_payload.get("storage_path") or "").strip() or None
+
+        _complete_jo_video_job(
+            job_id,
+            result=JOAIVideoResult(
+                video_bytes=None,
+                video_url=media_url,
+                mime_type=mime_type,
+                output_format=str(response_payload.get("output_format") or "mp4"),
+                provider_used=str(response_payload.get("provider_used") or provider_source),
+                prompt_used=str(response_payload.get("prompt_used") or user_prompt),
+                negative_prompt_used=str(response_payload.get("negative_prompt") or ""),
+                seed_used=int(response_payload.get("seed") or 0),
+                scene_prompts=list(response_payload.get("scene_prompts") or []),
+                reference_images=list(response_payload.get("reference_images") or []),
+                progress_steps=list(response_payload.get("pipeline_steps") or []),
+                metadata=dict(response_payload.get("metadata") or {}),
+            ),
+            output_payload={
+                "video_url": media_url,
+                "mime_type": mime_type,
+                "storage_path": storage_path,
+            },
+        )
+
         await _track_api_action(
             identity=identity,
             message_type="video",
@@ -4230,7 +5279,7 @@ async def video_endpoint(request: Request, payload: VideoRequest) -> JSONRespons
                 media_url=media_url,
                 storage_path=storage_path,
                 mime_type=mime_type,
-                provider_source="pollinations",
+                provider_source=provider_source,
                 media_origin="generated",
                 media_status="available" if media_url else "missing",
                 media_error_reason=None if media_url else "missing_video_payload",
@@ -4241,6 +5290,7 @@ async def video_endpoint(request: Request, payload: VideoRequest) -> JSONRespons
         return JSONResponse(status_code=200, content=response_payload)
     except asyncio.TimeoutError:
         timeout_message = "Video generation timed out. Please retry."
+        _fail_jo_video_job(job_id, timeout_message)
         await _track_api_action(
             identity=identity,
             message_type="video",
@@ -4255,7 +5305,7 @@ async def video_endpoint(request: Request, payload: VideoRequest) -> JSONRespons
             text_content=user_prompt,
             media=TrackingMedia(
                 media_type="video",
-                provider_source="pollinations",
+                provider_source=provider_source,
                 media_origin="generated",
                 media_status="failed",
                 media_error_reason="timeout",
@@ -4263,11 +5313,12 @@ async def video_endpoint(request: Request, payload: VideoRequest) -> JSONRespons
             mark_started=bool(identity),
             referral_code=referral_code,
         )
-        payload_response: dict[str, Any] = {"error": timeout_message}
+        payload_response: dict[str, Any] = {"error": timeout_message, "job_id": job_id}
         if request_id:
             payload_response["request_id"] = request_id
         return JSONResponse(status_code=504, content=payload_response)
     except BackendError as exc:
+        _fail_jo_video_job(job_id, exc.message)
         await _track_api_action(
             identity=identity,
             message_type="video",
@@ -4282,7 +5333,7 @@ async def video_endpoint(request: Request, payload: VideoRequest) -> JSONRespons
             text_content=user_prompt,
             media=TrackingMedia(
                 media_type="video",
-                provider_source="pollinations",
+                provider_source=provider_source,
                 media_origin="generated",
                 media_status="failed",
                 media_error_reason=exc.message,
@@ -4290,16 +5341,206 @@ async def video_endpoint(request: Request, payload: VideoRequest) -> JSONRespons
             mark_started=bool(identity),
             referral_code=referral_code,
         )
-        payload_response = {"error": exc.message}
+        payload_response = {"error": exc.message, "job_id": job_id}
         if request_id:
             payload_response["request_id"] = request_id
         return JSONResponse(status_code=exc.status_code, content=payload_response)
     except Exception:
+        _fail_jo_video_job(job_id, SAFE_SERVICE_UNAVAILABLE_MESSAGE)
         logger.exception("API VIDEO FAILED | request_id=%s user=%s", request_id or "unknown", user_id)
-        payload_response = {"error": SAFE_SERVICE_UNAVAILABLE_MESSAGE}
+        payload_response = {"error": SAFE_SERVICE_UNAVAILABLE_MESSAGE, "job_id": job_id}
         if request_id:
             payload_response["request_id"] = request_id
         return JSONResponse(status_code=500, content=payload_response)
+
+
+async def _run_video_job_async(job_id: str, payload: VideoRequest, settings) -> None:
+    job = _jo_video_job(job_id)
+    if not job:
+        return
+    jo_video_config = _effective_jo_video_config(settings)
+    model_option = _resolve_video_model_option(payload.video_model or payload.model)
+    try:
+        if model_option == VIDEO_MODEL_OPTION_JO_AI_VIDEO:
+            result_payload = await _generate_jo_ai_video(
+                payload=payload,
+                settings=settings,
+                jo_config=jo_video_config,
+                job_id=job_id,
+            )
+        else:
+            _update_jo_video_job_progress(
+                job_id,
+                JOAIVideoProgress(
+                    stage="provider_video",
+                    progress=0.45,
+                    message="Generating provider video.",
+                    metadata={"model_option": model_option},
+                ),
+            )
+            enhanced_prompt = (
+                build_enhanced_video_prompt(
+                    payload.effective_prompt,
+                    aspect_ratio=payload.effective_aspect_ratio,
+                    duration_seconds=payload.effective_duration_seconds,
+                )
+                or payload.effective_prompt
+            )
+            result_payload = await _generate_pollinations_video(
+                prompt=enhanced_prompt,
+                model=_video_model_id_for_option(settings, model_option),
+                duration_seconds=payload.effective_duration_seconds,
+                aspect_ratio=payload.effective_aspect_ratio,
+            )
+
+        media_url = str(result_payload.get("video_url") or "").strip() or None
+        mime_type = str(result_payload.get("video_mime_type") or "").strip() or "video/mp4"
+        storage_path = str(result_payload.get("storage_path") or "").strip() or None
+        _complete_jo_video_job(
+            job_id,
+            result=JOAIVideoResult(
+                video_bytes=None,
+                video_url=media_url,
+                mime_type=mime_type,
+                output_format=str(result_payload.get("output_format") or "mp4"),
+                provider_used=str(result_payload.get("provider_used") or "unknown"),
+                prompt_used=str(result_payload.get("prompt_used") or payload.effective_prompt),
+                negative_prompt_used=str(result_payload.get("negative_prompt") or ""),
+                seed_used=int(result_payload.get("seed") or payload.effective_seed or 0),
+                scene_prompts=list(result_payload.get("scene_prompts") or []),
+                reference_images=list(result_payload.get("reference_images") or []),
+                progress_steps=list(result_payload.get("pipeline_steps") or []),
+                metadata=dict(result_payload.get("metadata") or {}),
+            ),
+            output_payload={
+                "video_url": media_url,
+                "mime_type": mime_type,
+                "storage_path": storage_path,
+            },
+        )
+    except asyncio.CancelledError:
+        _cancel_jo_video_job(job_id)
+        raise
+    except Exception as exc:
+        _fail_jo_video_job(job_id, str(exc) or SAFE_SERVICE_UNAVAILABLE_MESSAGE)
+    finally:
+        _JO_VIDEO_JOB_TASKS.pop(job_id, None)
+
+
+@app.post("/api/video/jobs")
+@app.post("/video/jobs")
+async def create_video_job(request: Request, payload: VideoRequest) -> JSONResponse:
+    settings = get_settings()
+    identity = _resolve_tracking_identity(request, payload)
+    model_option = payload.effective_model_option
+    settings_payload = _jo_video_settings_payload_from_request(payload, settings)
+    if model_option == VIDEO_MODEL_OPTION_JO_AI_VIDEO:
+        jo_video_config = _effective_jo_video_config(settings)
+        settings_payload["aspect_ratio"] = _resolve_jo_video_aspect_ratio(
+            requested_ratio=payload.effective_aspect_ratio,
+            settings=settings,
+            config=jo_video_config,
+        )
+        settings_payload["duration_seconds"] = min(
+            int(settings_payload["duration_seconds"]),
+            int(jo_video_config.get("max_duration_seconds", settings.jo_video_max_duration_seconds)),
+        )
+        settings_payload["scene_count"] = min(
+            int(settings_payload["scene_count"]),
+            int(jo_video_config.get("max_scenes", settings.jo_video_max_scenes)),
+        )
+        settings_payload["fps"] = payload.effective_fps or int(
+            jo_video_config.get("default_fps", settings.jo_video_default_fps)
+        )
+        settings_payload["output_format"] = payload.effective_output_format or str(
+            jo_video_config.get("default_output_format", settings.jo_video_default_output_format)
+        )
+    job = _new_jo_video_job(
+        identity=identity,
+        model_id=model_option,
+        prompt=payload.effective_prompt,
+        negative_prompt=payload.effective_negative_prompt,
+        settings_payload=settings_payload,
+        source_payload=payload.model_dump(exclude_none=True),
+    )
+    job_id = str(job.get("job_id") or "")
+    task = asyncio.create_task(_run_video_job_async(job_id, payload, settings), name=f"video-job-{job_id}")
+    _JO_VIDEO_JOB_TASKS[job_id] = task
+    return JSONResponse(
+        status_code=202,
+        content={
+            "ok": True,
+            "job": _jo_video_job_summary(job),
+        },
+    )
+
+
+@app.get("/api/video/jobs/{job_id}")
+@app.get("/video/jobs/{job_id}")
+async def get_video_job(job_id: str) -> JSONResponse:
+    job = _jo_video_job(job_id)
+    if job is None:
+        return JSONResponse(status_code=404, content={"error": "Video job not found."})
+    return JSONResponse(status_code=200, content={"ok": True, "job": _jo_video_job_summary(job)})
+
+
+@app.post("/api/video/jobs/{job_id}/cancel")
+@app.post("/video/jobs/{job_id}/cancel")
+async def cancel_video_job(job_id: str) -> JSONResponse:
+    if not _cancel_jo_video_job(job_id):
+        return JSONResponse(status_code=404, content={"error": "Video job not found."})
+    job = _jo_video_job(job_id)
+    return JSONResponse(status_code=200, content={"ok": True, "job": _jo_video_job_summary(job or {})})
+
+
+@app.post("/api/video/jobs/{job_id}/retry")
+@app.post("/video/jobs/{job_id}/retry")
+async def retry_video_job(job_id: str, request: Request) -> JSONResponse:
+    existing = _jo_video_job(job_id)
+    if existing is None:
+        return JSONResponse(status_code=404, content={"error": "Video job not found."})
+    source_payload = existing.get("source_payload")
+    if not isinstance(source_payload, dict) or not source_payload:
+        return JSONResponse(status_code=400, content={"error": "This job cannot be retried."})
+    try:
+        payload = VideoRequest.model_validate(source_payload)
+    except ValidationError:
+        return JSONResponse(status_code=400, content={"error": "Stored job payload is invalid."})
+
+    settings = get_settings()
+    identity = _resolve_tracking_identity(request, payload)
+    retry_job = _new_jo_video_job(
+        identity=identity,
+        model_id=payload.effective_model_option,
+        prompt=payload.effective_prompt,
+        negative_prompt=payload.effective_negative_prompt,
+        settings_payload=_jo_video_settings_payload_from_request(payload, settings),
+        source_payload=source_payload,
+    )
+    retry_job_id = str(retry_job.get("job_id") or "")
+    task = asyncio.create_task(_run_video_job_async(retry_job_id, payload, settings), name=f"video-job-{retry_job_id}")
+    _JO_VIDEO_JOB_TASKS[retry_job_id] = task
+    return JSONResponse(status_code=202, content={"ok": True, "job": _jo_video_job_summary(retry_job)})
+
+
+@app.get("/api/video/jobs/{job_id}/result")
+@app.get("/video/jobs/{job_id}/result")
+async def get_video_job_result(job_id: str) -> JSONResponse:
+    job = _jo_video_job(job_id)
+    if job is None:
+        return JSONResponse(status_code=404, content={"error": "Video job not found."})
+    status = str(job.get("status") or "").lower()
+    if status != "completed":
+        return JSONResponse(
+            status_code=202,
+            content={
+                "ok": True,
+                "status": status or "queued",
+                "job": _jo_video_job_summary(job),
+            },
+        )
+    output = job.get("video_output")
+    return JSONResponse(status_code=200, content={"ok": True, "status": "completed", "result": output, "job_id": job_id})
 
 
 @app.post("/vision")

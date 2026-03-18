@@ -41,6 +41,86 @@ If your actual Render hostname differs, update `miniapp/config.js`.
 - `miniapp/config.js` provides the public backend base for direct browser visits to GitHub Pages
 - GitHub Actions now deploys `miniapp/` to GitHub Pages from this same repo
 
+## JO AI Video Model
+
+`JO AI Video Model` is now available as a separate model option alongside `Grok Text to Video`.
+
+- Internal model ID: `jo_ai_video`
+- Grok flow is preserved: `grok_text_to_video`
+- Available in backend model registry (`/api/models`), Telegram bot, and mini app video selector
+
+### JO AI Video Pipeline
+
+The JO AI pipeline is implemented as a modular engine in `bot/services/jo_video_model.py` with these stages:
+
+1. Prompt enhancer
+2. Scene planner
+3. Image generation adapter + fallback providers
+4. Best image selector
+5. Consistency lock (seed/style/camera/motion metadata)
+6. Motion engine (pan/zoom/parallax-style frame composition)
+7. Renderer (ffmpeg mp4/webm when available, GIF fallback)
+8. Result formatter + progress timeline
+
+### Level Strategy
+
+- Level 1: optional provider-backed image-to-video path (when configured)
+- Level 2: built-in JO fallback engine using generated keyframes + motion composition
+
+If Level 1 is unavailable, the fallback engine still returns a playable output.
+
+### Context-Aware JO Chat Routing
+
+The shared backend includes `/api/jo-chat` intent routing for:
+
+- text-to-image
+- image edit / variation / upscale
+- image-to-video
+- text-to-video
+- regenerate same idea
+- normal chat fallback
+
+Routing considers message text + selected model + last generated asset context.
+
+### Image Edit and Reference Lock
+
+Image responses return action metadata and reference fields:
+
+- `asset_id`, `asset_type`, `reference_locked`, `reference_image_url`, `seed`, `available_actions`
+
+Mini app image messages now include one-tap actions:
+
+- Edit
+- Remix
+- Remove object
+- Change detail
+- Animate This
+- Use as Reference
+- Regenerate Similar
+- Upscale
+
+The Telegram bot image replies include equivalent inline action buttons and reference-aware follow-up handling.
+
+### Video Job APIs
+
+The backend now supports JO video jobs and progress tracking:
+
+- `POST /api/video/jobs`
+- `GET /api/video/jobs/{job_id}`
+- `POST /api/video/jobs/{job_id}/cancel`
+- `POST /api/video/jobs/{job_id}/retry`
+- `GET /api/video/jobs/{job_id}/result`
+
+### Admin APIs and Dashboard Support
+
+Admin endpoints:
+
+- `GET /api/admin/models/video-config`
+- `POST /api/admin/models/video-config`
+- `GET /api/admin/video-jobs`
+
+Admin Settings UI now includes JO AI Video config editing and failed-job inspection.
+
 ## Local Development
 
 1. Install dependencies:
@@ -128,6 +208,18 @@ Optional:
 - `ADMIN_DASHBOARD_OWNER_TELEGRAM_ID` (Telegram ID allowed to access `/admin` and `/api/admin/*`)
 - `ADMIN_DASHBOARD_ALLOWLIST_TELEGRAM_IDS` (optional fallback list; first ID is used as owner when owner ID is unset)
 - `ADMIN_DASHBOARD_TELEGRAM_BOT_TOKEN` (optional; use when admin mini app login comes from a different bot token)
+- `JO_VIDEO_MODEL_ENABLED`
+- `JO_VIDEO_PROVIDER_ORDER`
+- `JO_VIDEO_IMAGE_MODELS`
+- `JO_VIDEO_FALLBACK_ENABLED`
+- `JO_VIDEO_LEVEL1_PROVIDER_ENABLED`
+- `JO_VIDEO_LEVEL1_PROVIDER_MODEL`
+- `JO_VIDEO_MAX_DURATION_SECONDS`
+- `JO_VIDEO_ALLOWED_ASPECT_RATIOS`
+- `JO_VIDEO_DEFAULT_FPS`
+- `JO_VIDEO_MAX_SCENES`
+- `JO_VIDEO_MAX_JOBS_PER_USER`
+- `JO_VIDEO_DEFAULT_OUTPUT_FORMAT`
 
 Defaults:
 
@@ -206,3 +298,10 @@ Simple future workflow:
 - `.env.example` contains examples only
 - No bot token or provider secret is stored in `miniapp/`
 - `miniapp/config.js` contains only a public backend URL, not a secret
+
+## Current Limitations
+
+- If Pillow is unavailable in runtime, JO fallback video rendering is unavailable.
+- If `ffmpeg` is missing, JO fallback output uses GIF rendering instead of mp4/webm.
+- Reference-locked image edits depend on Pollinations image API availability.
+- Exact seed locking depends on provider-level support; unsupported providers fall back to prompt and reference locking.

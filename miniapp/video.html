@@ -99,9 +99,17 @@
             <div id="videoDurationWrap" class="composer-field">
               <label for="videoDuration">Duration</label>
               <select id="videoDuration">
+                <option value="5">5s</option>
                 <option value="4">4s</option>
                 <option value="6">6s</option>
                 <option value="8">8s</option>
+              </select>
+            </div>
+            <div id="videoModelWrap" class="composer-field">
+              <label for="videoModel">Video model</label>
+              <select id="videoModel">
+                <option value="jo_ai_video">JO AI Video Model</option>
+                <option value="grok_text_to_video">Grok Text to Video</option>
               </select>
             </div>
             <div id="videoRatioWrap" class="composer-field">
@@ -111,6 +119,73 @@
                 <option value="9:16">9:16</option>
               </select>
             </div>
+            <details id="videoAdvancedWrap" class="composer-field">
+              <summary>Advanced video settings</summary>
+              <div class="composer-field">
+                <label for="videoNegativePrompt">Negative prompt</label>
+                <input id="videoNegativePrompt" type="text" placeholder="Optional constraints to avoid artifacts">
+              </div>
+              <div class="composer-field">
+                <label for="videoSceneCount">Scene count</label>
+                <select id="videoSceneCount">
+                  <option value="1">1 scene</option>
+                  <option value="2">2 scenes</option>
+                  <option value="3">3 scenes</option>
+                  <option value="4">4 scenes</option>
+                </select>
+              </div>
+              <div class="composer-field">
+                <label for="videoMotionStrength">Motion strength</label>
+                <select id="videoMotionStrength">
+                  <option value="medium">Medium</option>
+                  <option value="low">Low</option>
+                  <option value="high">High</option>
+                </select>
+              </div>
+              <div class="composer-field">
+                <label for="videoCameraMotion">Camera motion</label>
+                <select id="videoCameraMotion">
+                  <option value="cinematic">Cinematic</option>
+                  <option value="dolly">Dolly</option>
+                  <option value="pan">Pan</option>
+                  <option value="orbit">Orbit</option>
+                  <option value="handheld">Handheld</option>
+                </select>
+              </div>
+              <div class="composer-field">
+                <label for="videoStyle">Style</label>
+                <input id="videoStyle" type="text" placeholder="Optional style preset">
+              </div>
+              <div class="composer-field">
+                <label for="videoQuality">Quality</label>
+                <select id="videoQuality">
+                  <option value="high">High</option>
+                  <option value="medium">Medium</option>
+                  <option value="low">Low</option>
+                </select>
+              </div>
+              <div class="composer-field">
+                <label for="videoSeed">Seed</label>
+                <input id="videoSeed" type="number" min="1" step="1" placeholder="Optional seed lock">
+              </div>
+              <div class="composer-field">
+                <label for="videoFps">FPS</label>
+                <select id="videoFps">
+                  <option value="24">24</option>
+                  <option value="30">30</option>
+                  <option value="20">20</option>
+                  <option value="16">16</option>
+                </select>
+              </div>
+              <div class="composer-field">
+                <label for="videoOutputFormat">Output format</label>
+                <select id="videoOutputFormat">
+                  <option value="mp4">MP4</option>
+                  <option value="gif">GIF</option>
+                  <option value="webm">WEBM</option>
+                </select>
+              </div>
+            </details>
             <div id="videoJoinGate" class="composer-field video-join-gate" hidden>
               <p id="videoJoinMessage" class="hint">Join the JO AI Telegram channel to unlock video generation.</p>
               <div class="video-join-actions">

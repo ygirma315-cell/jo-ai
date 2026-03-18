@@ -253,6 +253,39 @@
           <p class="muted">Authentication can be Telegram ID and/or admin token depending on backend config.</p>
           <button id="settingsLogout" class="btn btn-danger">Logout session</button>
         </article>
+        <article class="card">
+          <div class="row-head">
+            <h3>JO AI Video Model</h3>
+            <button id="joVideoRefresh" class="btn" type="button">Refresh</button>
+          </div>
+          <p class="muted">Configure JO AI Video Model defaults, fallback behavior, and limits.</p>
+          <div class="form-grid">
+            <label><input id="joVideoEnabled" type="checkbox"> Enabled</label>
+            <label><input id="joVideoFallback" type="checkbox"> Fallback enabled</label>
+            <label><input id="joVideoLevel1Enabled" type="checkbox"> Level-1 provider enabled</label>
+            <label>Level-1 provider model <input id="joVideoLevel1Model" type="text" placeholder="Optional provider model"></label>
+            <label>Provider order (comma-separated) <input id="joVideoProviderOrder" type="text" placeholder="pollinations,local"></label>
+            <label>Image models (comma-separated) <input id="joVideoImageModels" type="text" placeholder="imagen-4,flux-2-dev,dirtberry-pro"></label>
+            <label>Max duration seconds <input id="joVideoMaxDuration" type="number" min="1" max="20"></label>
+            <label>Allowed aspect ratios (comma-separated) <input id="joVideoAspectRatios" type="text" placeholder="16:9,9:16"></label>
+            <label>Default FPS <input id="joVideoDefaultFps" type="number" min="8" max="30"></label>
+            <label>Max scenes <input id="joVideoMaxScenes" type="number" min="1" max="8"></label>
+            <label>Max active jobs per user <input id="joVideoMaxJobs" type="number" min="1" max="25"></label>
+            <label>Default output format
+              <select id="joVideoOutputFormat">
+                <option value="mp4">mp4</option>
+                <option value="gif">gif</option>
+                <option value="webm">webm</option>
+              </select>
+            </label>
+          </div>
+          <div class="toolbar">
+            <button id="joVideoSave" class="btn btn-primary" type="button">Save JO AI Video Config</button>
+            <span id="joVideoUpdated" class="muted"></span>
+          </div>
+          <h4>Recent failed JO video jobs</h4>
+          <div id="joVideoFailedList" class="list"></div>
+        </article>
       </section>
 
       <section id="section-logs" class="section">

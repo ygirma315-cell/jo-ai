@@ -217,9 +217,11 @@
       historyTitle: "Video results",
       needsVideoDuration: true,
       needsVideoRatio: true,
+      needsVideoModel: true,
       supportsVideoSave: true,
-      defaultVideoDuration: "4",
-      defaultVideoRatio: "16:9",
+      defaultVideoDuration: "5",
+      defaultVideoRatio: "9:16",
+      defaultVideoModel: "jo_ai_video",
       emptyTitle: "Create a video with JO AI",
       emptyCopy: "Describe a scene and your generated video will appear here.",
     },
@@ -307,6 +309,7 @@
     bodyLockStyles: null,
     runtimeInfo: null,
     referralCode: "",
+    referenceLock: null,
   };
 
   const sensitiveTargetsPattern =
@@ -472,8 +475,20 @@
       imageModel: byId("imageModel"),
       videoDurationWrap: byId("videoDurationWrap"),
       videoDuration: byId("videoDuration"),
+      videoModelWrap: byId("videoModelWrap"),
+      videoModel: byId("videoModel"),
       videoRatioWrap: byId("videoRatioWrap"),
       videoRatio: byId("videoRatio"),
+      videoAdvancedWrap: byId("videoAdvancedWrap"),
+      videoNegativePrompt: byId("videoNegativePrompt"),
+      videoSceneCount: byId("videoSceneCount"),
+      videoMotionStrength: byId("videoMotionStrength"),
+      videoCameraMotion: byId("videoCameraMotion"),
+      videoStyle: byId("videoStyle"),
+      videoQuality: byId("videoQuality"),
+      videoSeed: byId("videoSeed"),
+      videoFps: byId("videoFps"),
+      videoOutputFormat: byId("videoOutputFormat"),
       videoJoinGate: byId("videoJoinGate"),
       videoJoinMessage: byId("videoJoinMessage"),
       videoJoinBtn: byId("videoJoinBtn"),
@@ -1916,6 +1931,95 @@
     }
   }
 
+  function normalizedImageActions(entry) {
+    const raw = entry && Array.isArray(entry.availableActions) ? entry.availableActions : [];
+    const fallback = [
+      "edit",
+      "remix",
+      "remove_object",
+      "change_detail",
+      "animate_this",
+      "use_as_reference",
+      "regenerate_similar",
+      "upscale",
+    ];
+    const source = raw.length ? raw : fallback;
+    return source
+      .map((value) => String(value || "").trim().toLowerCase())
+      .filter(Boolean);
+  }
+
+  function imageActionLabel(action) {
+    return {
+      edit: "Edit",
+      remix: "Remix",
+      remove_object: "Remove Object",
+      change_detail: "Change Detail",
+      animate_this: "Animate This",
+      use_as_reference: "Use as Reference",
+      regenerate_similar: "Regenerate Similar",
+      upscale: "Upscale",
+    }[action] || "Action";
+  }
+
+  function applyReferenceLockFromEntry(entry, options = {}) {
+    if (!entry || typeof entry !== "object") {
+      return null;
+    }
+    const seedValue = Number(entry.seed);
+    const lock = {
+      assetId: entry.assetId || "",
+      imageUrl: entry.imageUrl || entry.referenceImageUrl || "",
+      imageDataUrl: entry.imageDataUrl || "",
+      seed: Number.isFinite(seedValue) && seedValue > 0 ? seedValue : null,
+      similarityStrength: options.similarityStrength || "high",
+      editStrength: options.editStrength || "medium",
+      source: options.source || "user_action",
+    };
+    state.referenceLock = lock;
+    return lock;
+  }
+
+  function queueImageActionPrompt(action, entry) {
+    const lock = applyReferenceLockFromEntry(entry, {
+      similarityStrength: action === "upscale" ? "high" : "high",
+      editStrength: action === "upscale" ? "low" : "medium",
+      source: `image_action:${action}`,
+    });
+    if (!lock) {
+      showToast("No image reference found for this action.", "error");
+      return;
+    }
+
+    const promptByAction = {
+      edit: "Edit this image while keeping the same person, same background, and same style.",
+      remix: "Create a remix variation of this image while keeping the same identity and scene vibe.",
+      remove_object: "Remove the specified object from this image and keep everything else consistent.",
+      change_detail: "Keep the same image and change only the specific detail I request.",
+      animate_this: "Animate this image into a short cinematic video while preserving subject and background.",
+      use_as_reference: "",
+      regenerate_similar: "Generate a similar image with the same subject, style, and composition.",
+      upscale: "Upscale and enhance this image while preserving identity, background, and composition.",
+    };
+
+    const message = promptByAction[action] || "Use this image as the locked reference for the next generation.";
+    if (action === "use_as_reference") {
+      showToast("Reference locked. Send your next prompt.", "success");
+      return;
+    }
+
+    if (action === "animate_this" && elements.videoModel) {
+      elements.videoModel.value = "jo_ai_video";
+    }
+    if (elements.aiInput) {
+      elements.aiInput.value = message;
+      resizeComposerInput();
+      elements.aiInput.focus();
+      updateSendButtonState();
+    }
+    showToast("Reference locked. You can send this now.");
+  }
+
   function createMessageElement(entry) {
     const item = document.createElement("article");
     item.className = `message ${entry.role}${entry.pending ? " pending" : ""}`;
@@ -2035,6 +2139,38 @@
       image.alt = "Generated image";
       image.src = entry.imageDataUrl;
       body.appendChild(image);
+
+      const actions = normalizedImageActions(entry);
+      if (actions.length) {
+        const actionRow = document.createElement("div");
+        actionRow.className = "message-actions";
+        const allowed = new Set([
+          "edit",
+          "remix",
+          "remove_object",
+          "change_detail",
+          "animate_this",
+          "use_as_reference",
+          "regenerate_similar",
+          "upscale",
+        ]);
+        for (const action of actions) {
+          if (!allowed.has(action)) {
+            continue;
+          }
+          const button = document.createElement("button");
+          button.type = "button";
+          button.className = "btn small";
+          button.textContent = imageActionLabel(action);
+          button.addEventListener("click", () => {
+            queueImageActionPrompt(action, entry);
+          });
+          actionRow.appendChild(button);
+        }
+        if (actionRow.childElementCount) {
+          body.appendChild(actionRow);
+        }
+      }
     }
 
     bubble.appendChild(head);
@@ -2214,6 +2350,7 @@
     state.lastAudioFileName = "";
     state.lastCodeFileDataUrl = "";
     state.lastCodeFileName = "";
+    state.referenceLock = null;
     persistHistory();
     renderHistory();
 
@@ -2238,10 +2375,40 @@
       elements.imageModel.value = "jo_ai_image_generate";
     }
     if (elements.videoDuration) {
-      elements.videoDuration.value = "4";
+      elements.videoDuration.value = "5";
     }
     if (elements.videoRatio) {
-      elements.videoRatio.value = "16:9";
+      elements.videoRatio.value = "9:16";
+    }
+    if (elements.videoModel) {
+      elements.videoModel.value = "jo_ai_video";
+    }
+    if (elements.videoNegativePrompt) {
+      elements.videoNegativePrompt.value = "";
+    }
+    if (elements.videoSceneCount) {
+      elements.videoSceneCount.value = "1";
+    }
+    if (elements.videoMotionStrength) {
+      elements.videoMotionStrength.value = "medium";
+    }
+    if (elements.videoCameraMotion) {
+      elements.videoCameraMotion.value = "cinematic";
+    }
+    if (elements.videoStyle) {
+      elements.videoStyle.value = "";
+    }
+    if (elements.videoQuality) {
+      elements.videoQuality.value = "high";
+    }
+    if (elements.videoSeed) {
+      elements.videoSeed.value = "";
+    }
+    if (elements.videoFps) {
+      elements.videoFps.value = "24";
+    }
+    if (elements.videoOutputFormat) {
+      elements.videoOutputFormat.value = "mp4";
     }
     if (elements.ttsLanguage) {
       elements.ttsLanguage.value = "en";
@@ -2604,6 +2771,8 @@
 
     if (mode === "chat") {
       return [
+        { path: "/api/jo-chat", payload: basePayload },
+        { path: "/jo-chat", payload: basePayload },
         {
           path: "/api/ai",
           payload: { ...trackingFields, mode: "chat", message: basePayload.message },
@@ -2718,6 +2887,9 @@
   }
 
   function requestTimeoutMsForMode(mode) {
+    if (mode === "chat") {
+      return 210000;
+    }
     if (mode === "image") {
       return 120000;
     }
@@ -2985,11 +3157,20 @@
     if (elements.videoDuration && config.defaultVideoDuration && !elements.videoDuration.value) {
       elements.videoDuration.value = config.defaultVideoDuration;
     }
+    if (elements.videoModelWrap) {
+      elements.videoModelWrap.hidden = !config.needsVideoModel;
+    }
+    if (elements.videoModel && config.defaultVideoModel && !elements.videoModel.value) {
+      elements.videoModel.value = config.defaultVideoModel;
+    }
     if (elements.videoRatioWrap) {
       elements.videoRatioWrap.hidden = !config.needsVideoRatio;
     }
     if (elements.videoRatio && config.defaultVideoRatio && !elements.videoRatio.value) {
       elements.videoRatio.value = config.defaultVideoRatio;
+    }
+    if (elements.videoAdvancedWrap) {
+      elements.videoAdvancedWrap.hidden = !(config.needsVideoDuration || config.needsVideoRatio || config.needsVideoModel);
     }
     if (elements.ttsLanguageWrap) {
       elements.ttsLanguageWrap.hidden = !config.needsTtsLanguage;
@@ -3051,6 +3232,9 @@
     }
     if (config.defaultVideoRatio && elements.videoRatio) {
       elements.videoRatio.value = config.defaultVideoRatio;
+    }
+    if (config.defaultVideoModel && elements.videoModel) {
+      elements.videoModel.value = config.defaultVideoModel;
     }
     if (config.defaultTtsLanguage && elements.ttsLanguage) {
       elements.ttsLanguage.value = config.defaultTtsLanguage;
@@ -3126,6 +3310,62 @@
     });
   }
 
+  function latestGeneratedAssetEntry() {
+    for (let index = state.history.length - 1; index >= 0; index -= 1) {
+      const entry = state.history[index];
+      if (!entry || entry.role !== "assistant" || entry.pending) {
+        continue;
+      }
+      if (entry.imageDataUrl || entry.videoDataUrl || entry.audioDataUrl || entry.codeFileDataUrl) {
+        return entry;
+      }
+    }
+    return null;
+  }
+
+  function dataUrlToBase64(raw) {
+    const value = String(raw || "").trim();
+    if (!value || !value.startsWith("data:")) {
+      return "";
+    }
+    const comma = value.indexOf(",");
+    if (comma < 0) {
+      return "";
+    }
+    return value.slice(comma + 1).trim();
+  }
+
+  function applyReferenceLockToPayload(payload) {
+    const lock = state.referenceLock;
+    if (!lock || typeof lock !== "object") {
+      return payload;
+    }
+    if (lock.assetId) {
+      payload.reference_asset_id = lock.assetId;
+      payload.parent_asset_id = lock.assetId;
+    }
+    if (lock.imageUrl && /^https?:\/\//i.test(lock.imageUrl)) {
+      payload.reference_image_url = lock.imageUrl;
+    } else if (lock.imageUrl && lock.imageUrl.startsWith("/")) {
+      payload.reference_image_url = lock.imageUrl;
+    } else if (lock.imageDataUrl) {
+      const encoded = dataUrlToBase64(lock.imageDataUrl);
+      if (encoded) {
+        payload.reference_image_base64 = encoded;
+      }
+    }
+    payload.preserve_face = true;
+    payload.preserve_background = true;
+    payload.preserve_composition = true;
+    payload.similarity_strength = lock.similarityStrength || "high";
+    payload.edit_strength = lock.editStrength || "medium";
+    payload.use_exact_reference_mode = true;
+    if (lock.seed) {
+      payload.seed = lock.seed;
+    }
+    return payload;
+  }
+
   async function buildRequestPayload() {
     const mode = getToolId();
     const message = elements.aiInput ? elements.aiInput.value.trim() : "";
@@ -3133,6 +3373,47 @@
       throw new Error("Gemini is temporarily disabled while image generation is being stabilized.");
     }
     const payload = { message };
+    const latestAsset = latestGeneratedAssetEntry();
+    const latestOutputType = latestAsset
+      ? latestAsset.imageDataUrl
+        ? "image"
+        : latestAsset.videoDataUrl
+          ? "video"
+          : latestAsset.audioDataUrl
+            ? "audio"
+            : latestAsset.codeFileDataUrl
+              ? "code"
+              : "text"
+      : "text";
+
+    if (mode === "chat") {
+      payload.selected_model = elements.videoModel ? elements.videoModel.value : "jo_ai_video";
+      payload.last_output_type = latestOutputType;
+      if (latestAsset && latestAsset.assetId) {
+        payload.last_asset_id = latestAsset.assetId;
+      }
+      if (latestAsset && latestAsset.assetType) {
+        payload.last_asset_type = latestAsset.assetType;
+      }
+      if (latestAsset && latestAsset.imageDataUrl) {
+        payload.last_asset_url = latestAsset.imageUrl || latestAsset.imageDataUrl;
+      } else if (latestAsset && latestAsset.videoDataUrl) {
+        payload.last_asset_url = latestAsset.videoDataUrl;
+      }
+      if (latestAsset && latestAsset.promptText) {
+        payload.last_prompt = latestAsset.promptText;
+      }
+      if (latestAsset && latestAsset.providerSource) {
+        payload.last_provider = latestAsset.providerSource;
+      }
+      if (latestAsset && latestAsset.seed) {
+        payload.last_seed = latestAsset.seed;
+      }
+      if (latestAsset && latestAsset.settings) {
+        payload.last_settings = latestAsset.settings;
+      }
+      applyReferenceLockToPayload(payload);
+    }
 
     if (mode !== "kimi" && !message) {
       throw new Error("Please enter a request first.");
@@ -3148,14 +3429,28 @@
     if (mode === "image") {
       payload.ratio = elements.imageRatio ? elements.imageRatio.value : "1:1";
       payload.image_model = elements.imageModel ? elements.imageModel.value : "jo_ai_image_generate";
+      applyReferenceLockToPayload(payload);
     }
 
     if (mode === "video") {
-      payload.video_model = "grok_text_to_video";
-      payload.duration_seconds = Number.parseInt(elements.videoDuration ? elements.videoDuration.value : "4", 10) || 4;
-      payload.aspect_ratio = elements.videoRatio ? elements.videoRatio.value : "16:9";
+      payload.video_model = elements.videoModel ? elements.videoModel.value : "jo_ai_video";
+      payload.duration_seconds = Number.parseInt(elements.videoDuration ? elements.videoDuration.value : "5", 10) || 5;
+      payload.aspect_ratio = elements.videoRatio ? elements.videoRatio.value : "9:16";
+      payload.negative_prompt = elements.videoNegativePrompt ? elements.videoNegativePrompt.value.trim() : "";
+      payload.scene_count = Number.parseInt(elements.videoSceneCount ? elements.videoSceneCount.value : "1", 10) || 1;
+      payload.motion_strength = elements.videoMotionStrength ? elements.videoMotionStrength.value : "medium";
+      payload.camera_motion = elements.videoCameraMotion ? elements.videoCameraMotion.value : "cinematic";
+      payload.style = elements.videoStyle ? elements.videoStyle.value.trim() : "";
+      payload.quality = elements.videoQuality ? elements.videoQuality.value : "high";
+      const parsedSeed = Number.parseInt(elements.videoSeed ? elements.videoSeed.value : "", 10);
+      if (Number.isFinite(parsedSeed) && parsedSeed > 0) {
+        payload.seed = parsedSeed;
+      }
+      payload.fps = Number.parseInt(elements.videoFps ? elements.videoFps.value : "24", 10) || 24;
+      payload.output_format = elements.videoOutputFormat ? elements.videoOutputFormat.value : "mp4";
       payload.join_clicked = Boolean(state.videoJoinLinkClicked);
       payload.join_confirmed = Boolean(state.videoJoinVerified);
+      applyReferenceLockToPayload(payload);
     }
 
     if (mode === "tts") {
@@ -3232,7 +3527,12 @@
     if (mode === "video") {
       const ratio = payload.aspect_ratio || "16:9";
       const duration = payload.duration_seconds || 4;
-      note = `Model: Grok Text to Video | Duration: ${duration}s | Ratio: ${ratio}`;
+      const videoModelMap = {
+        jo_ai_video: "JO AI Video Model",
+        grok_text_to_video: "Grok Text to Video",
+      };
+      const modelLabel = videoModelMap[payload.video_model] || "JO AI Video Model";
+      note = `Model: ${modelLabel} | Duration: ${duration}s | Ratio: ${ratio}`;
     }
     if (mode === "code" && payload.code_file_name) {
       note = `File: ${payload.code_file_name}`;
@@ -3447,6 +3747,63 @@
         autoPlayAudio: mode === "gpt_audio" && Boolean(audioDataUrl),
         codeFileDataUrl,
         codeFileName,
+        assetId:
+          (data && typeof data.asset_id === "string" && data.asset_id.trim()) ||
+          (data && typeof data.job_id === "string" && data.job_id.trim()) ||
+          "",
+        assetType:
+          (data && typeof data.asset_type === "string" && data.asset_type.trim()) ||
+          (imageDataUrl
+            ? "image"
+            : videoDataUrl
+              ? "video"
+              : audioDataUrl
+                ? "audio"
+                : codeFileDataUrl
+                  ? "code"
+                  : "text"),
+        imageUrl:
+          (data && typeof data.image_url === "string" && data.image_url.trim() && normalizeImageUrl(data.image_url)) ||
+          imageDataUrl ||
+          "",
+        referenceImageUrl:
+          (data && typeof data.reference_image_url === "string" && data.reference_image_url.trim() && normalizeImageUrl(data.reference_image_url)) ||
+          "",
+        videoUrl:
+          (data && typeof data.video_url === "string" && data.video_url.trim() && normalizeVideoUrl(data.video_url, videoMimeType)) ||
+          videoDataUrl ||
+          "",
+        providerSource:
+          (data && typeof data.provider_source === "string" && data.provider_source.trim()) ||
+          (data && typeof data.provider_used === "string" && data.provider_used.trim()) ||
+          "",
+        seed:
+          data && Number.isFinite(Number(data.seed)) && Number(data.seed) > 0
+            ? Number(data.seed)
+            : null,
+        promptText: payload.message || "",
+        modelOption:
+          (data && typeof data.model_option === "string" && data.model_option.trim()) ||
+          (mode === "video" ? payload.video_model || "" : mode === "image" ? payload.image_model || "" : ""),
+        availableActions:
+          data && Array.isArray(data.available_actions)
+            ? data.available_actions
+                .map((value) => String(value || "").trim())
+                .filter(Boolean)
+            : [],
+        settings:
+          data && typeof data === "object"
+            ? {
+                ratio: data.ratio || payload.ratio || "",
+                aspect_ratio: data.aspect_ratio || payload.aspect_ratio || "",
+                duration_seconds: data.duration_seconds || payload.duration_seconds || "",
+                scene_count: data.scene_count || payload.scene_count || "",
+                motion_strength: data.motion_strength || payload.motion_strength || "",
+                camera_motion: data.camera_motion || payload.camera_motion || "",
+                quality: data.quality || payload.quality || "",
+                output_format: data.output_format || payload.output_format || "",
+              }
+            : {},
         timestamp: Date.now(),
       });
 

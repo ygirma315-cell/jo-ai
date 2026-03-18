@@ -792,6 +792,12 @@ select:focus {
   gap: 10px;
 }
 
+.message-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
 .message-body p,
 .message-body ul,
 .message-body ol {

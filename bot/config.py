@@ -21,6 +21,8 @@ DEFAULT_POLLINATIONS_IMAGE_MODEL_GROK_IMAGINE = "grok-imagine"
 DEFAULT_POLLINATIONS_VIDEO_MODEL_GROK_TEXT_TO_VIDEO = "grok-video"
 DEFAULT_POLLINATIONS_AUDIO_MODEL_GPT_AUDIO = "openai-audio"
 DEFAULT_POLLINATIONS_AUDIO_VOICE_GPT_AUDIO = "fable"
+DEFAULT_JO_VIDEO_ALLOWED_ASPECT_RATIOS = ("16:9", "9:16")
+DEFAULT_JO_VIDEO_IMAGE_MODELS = ("imagen-4", "flux-2-dev", "dirtberry-pro")
 DEFAULT_MINIAPP_URL = "https://ygirma315-cell.github.io/jo-ai/"
 DEFAULT_ENGAGEMENT_MESSAGE_TEMPLATE = "What do you want to do with your chat bot today?"
 DEFAULT_HEARTBEAT_TELEGRAM_ID = 7799059248
@@ -57,6 +59,18 @@ class Settings:
     pollinations_video_model_grok_text_to_video: str
     pollinations_audio_model_gpt_audio: str
     pollinations_audio_voice_gpt_audio: str
+    jo_video_model_enabled: bool
+    jo_video_provider_order: tuple[str, ...]
+    jo_video_image_models: tuple[str, ...]
+    jo_video_fallback_enabled: bool
+    jo_video_level1_provider_enabled: bool
+    jo_video_level1_model: str | None
+    jo_video_max_duration_seconds: int
+    jo_video_allowed_aspect_ratios: tuple[str, ...]
+    jo_video_default_fps: int
+    jo_video_max_scenes: int
+    jo_video_max_jobs_per_user: int
+    jo_video_default_output_format: str
     deepseek_api_key: str | None
     deepseek_model: str
     kimi_api_key: str | None
@@ -296,6 +310,17 @@ def _parse_csv_models(raw_value: str | None) -> tuple[str, ...]:
     return tuple(values)
 
 
+def _parse_aspect_ratio_csv(raw_value: str | None) -> tuple[str, ...]:
+    values: list[str] = []
+    for token in str(raw_value or "").split(","):
+        candidate = token.strip()
+        if candidate not in {"16:9", "9:16"}:
+            continue
+        if candidate not in values:
+            values.append(candidate)
+    return tuple(values)
+
+
 def load_settings() -> Settings:
     root_dir = Path(__file__).resolve().parent.parent
     load_dotenv(dotenv_path=root_dir / ".env")
@@ -337,6 +362,46 @@ def load_settings() -> Settings:
     pollinations_audio_voice_gpt_audio = (
         _read_env("POLLINATIONS_AUDIO_VOICE_GPT_AUDIO") or DEFAULT_POLLINATIONS_AUDIO_VOICE_GPT_AUDIO
     )
+    jo_video_model_enabled = _parse_bool_env(_read_env("JO_VIDEO_MODEL_ENABLED"), default=True)
+    jo_video_provider_order = _parse_csv_models(_read_env("JO_VIDEO_PROVIDER_ORDER"))
+    if not jo_video_provider_order:
+        jo_video_provider_order = ("pollinations", "local")
+    jo_video_image_models = _parse_csv_models(_read_env("JO_VIDEO_IMAGE_MODELS"))
+    if not jo_video_image_models:
+        jo_video_image_models = DEFAULT_JO_VIDEO_IMAGE_MODELS
+    jo_video_fallback_enabled = _parse_bool_env(_read_env("JO_VIDEO_FALLBACK_ENABLED"), default=True)
+    jo_video_level1_provider_enabled = _parse_bool_env(_read_env("JO_VIDEO_LEVEL1_PROVIDER_ENABLED"), default=False)
+    jo_video_level1_model = _read_env("JO_VIDEO_LEVEL1_PROVIDER_MODEL") or None
+    jo_video_max_duration_seconds = _parse_bounded_int(
+        _read_env("JO_VIDEO_MAX_DURATION_SECONDS"),
+        default=10,
+        minimum=1,
+        maximum=20,
+    )
+    jo_video_allowed_aspect_ratios = _parse_aspect_ratio_csv(_read_env("JO_VIDEO_ALLOWED_ASPECT_RATIOS"))
+    if not jo_video_allowed_aspect_ratios:
+        jo_video_allowed_aspect_ratios = DEFAULT_JO_VIDEO_ALLOWED_ASPECT_RATIOS
+    jo_video_default_fps = _parse_bounded_int(
+        _read_env("JO_VIDEO_DEFAULT_FPS"),
+        default=24,
+        minimum=8,
+        maximum=30,
+    )
+    jo_video_max_scenes = _parse_bounded_int(
+        _read_env("JO_VIDEO_MAX_SCENES"),
+        default=4,
+        minimum=1,
+        maximum=8,
+    )
+    jo_video_max_jobs_per_user = _parse_bounded_int(
+        _read_env("JO_VIDEO_MAX_JOBS_PER_USER"),
+        default=3,
+        minimum=1,
+        maximum=25,
+    )
+    jo_video_default_output_format = _read_env("JO_VIDEO_DEFAULT_OUTPUT_FORMAT").lower() or "mp4"
+    if jo_video_default_output_format not in {"mp4", "gif", "webm"}:
+        jo_video_default_output_format = "mp4"
 
     deepseek_api_key = _read_env("DEEPSEEK_API_KEY") or None
     deepseek_model = _read_env("DEEPSEEK_MODEL") or DEFAULT_DEEPSEEK_MODEL
@@ -486,6 +551,10 @@ def load_settings() -> Settings:
         validation_warnings.append(
             "Pollinations credentials are missing. Chat GBT, Grok Imagine, and Grok Text to Video modes will be unavailable."
         )
+    if jo_video_level1_provider_enabled and not pollinations_api_key:
+        validation_warnings.append(
+            "JO_VIDEO_LEVEL1_PROVIDER_ENABLED is true but POLLINATIONS_API_KEY is missing. JO AI Video Model will use fallback engine only."
+        )
     for alias_warning in (
         _alias_conflict_warning("SUPABASE_URL", "SUPABASE_PROJECT_URL"),
         _alias_conflict_warning("SUPABASE_ANON_KEY", "SUPABASE_PUBLISHABLE_KEY"),
@@ -561,6 +630,18 @@ def load_settings() -> Settings:
         pollinations_video_model_grok_text_to_video=pollinations_video_model_grok_text_to_video,
         pollinations_audio_model_gpt_audio=pollinations_audio_model_gpt_audio,
         pollinations_audio_voice_gpt_audio=pollinations_audio_voice_gpt_audio,
+        jo_video_model_enabled=jo_video_model_enabled,
+        jo_video_provider_order=jo_video_provider_order,
+        jo_video_image_models=jo_video_image_models,
+        jo_video_fallback_enabled=jo_video_fallback_enabled,
+        jo_video_level1_provider_enabled=jo_video_level1_provider_enabled,
+        jo_video_level1_model=jo_video_level1_model,
+        jo_video_max_duration_seconds=jo_video_max_duration_seconds,
+        jo_video_allowed_aspect_ratios=jo_video_allowed_aspect_ratios,
+        jo_video_default_fps=jo_video_default_fps,
+        jo_video_max_scenes=jo_video_max_scenes,
+        jo_video_max_jobs_per_user=jo_video_max_jobs_per_user,
+        jo_video_default_output_format=jo_video_default_output_format,
         deepseek_api_key=deepseek_api_key,
         deepseek_model=deepseek_model,
         kimi_api_key=kimi_api_key,
