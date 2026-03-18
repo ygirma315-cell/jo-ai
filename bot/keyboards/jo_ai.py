@@ -1,4 +1,4 @@
-﻿from __future__ import annotations
+from __future__ import annotations
 
 from aiogram.types import InlineKeyboardMarkup
 from aiogram.utils.keyboard import InlineKeyboardBuilder
@@ -90,9 +90,11 @@ def image_model_keyboard(
 def video_options_keyboard(
     selected_duration_seconds: int | None = None,
     selected_aspect_ratio: str | None = None,
+    selected_model_option: str | None = None,
 ) -> InlineKeyboardMarkup:
     duration = int(selected_duration_seconds or 4)
     ratio = (selected_aspect_ratio or "16:9").strip()
+    _ = selected_model_option
     duration_options = (4, 6, 8)
     ratio_options: tuple[tuple[str, str], ...] = (("16:9", "16_9"), ("9:16", "9_16"))
 

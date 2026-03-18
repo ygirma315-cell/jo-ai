@@ -4,6 +4,7 @@ import asyncio
 from dataclasses import dataclass
 import hashlib
 import html
+import io
 import logging
 import os
 import re
@@ -63,6 +64,7 @@ from bot.security import (
 from bot.services.ai_service import (
     AIServiceError,
     ChatService,
+    GeneratedVideoResult,
     GeminiChatService,
     ImageGenerationService,
     PollinationsMediaService,
@@ -73,6 +75,11 @@ from bot.services.ai_service import (
 from bot.services.session_manager import SessionManager
 from bot.services.tracking_service import SupabaseTrackingService, TrackingIdentity, TrackingMedia
 from bot.telegram_formatting import TelegramMessageFormatter
+
+try:
+    from PIL import Image
+except Exception:  # pragma: no cover - optional dependency at runtime
+    Image = None  # type: ignore[assignment]
 
 router = Router(name="jo_ai")
 logger = logging.getLogger(__name__)
@@ -168,10 +175,13 @@ POLLINATIONS_IMAGE_MODEL_ALIASES: dict[str, str] = {
     "special_berry": "dirtberry-pro",
 }
 
-VIDEO_MODEL_OPTION_GROK_TEXT_TO_VIDEO = "grok_text_to_video"
-VIDEO_MODEL_LABEL_GROK_TEXT_TO_VIDEO = "Grok Text to Video"
+VIDEO_MODEL_OPTION_JO = "jo_video"
+VIDEO_MODEL_LABEL_JO = "JO Native Video"
+VIDEO_MODEL_LABELS = {VIDEO_MODEL_OPTION_JO: VIDEO_MODEL_LABEL_JO}
+DEFAULT_VIDEO_MODEL_OPTION = VIDEO_MODEL_OPTION_JO
 DEFAULT_VIDEO_DURATION_SECONDS = 4
 DEFAULT_VIDEO_ASPECT_RATIO = "16:9"
+JO_VIDEO_FRAME_MODEL = "imagen-4"
 VIDEO_ASPECT_RATIO_TOKEN_MAP = {
     "16_9": "16:9",
     "9_16": "9:16",
@@ -310,6 +320,17 @@ def _image_model_label(model_option: str | None) -> str:
     normalized = _resolve_image_model_option(model_option)
     return IMAGE_MODEL_LABELS.get(normalized, IMAGE_MODEL_LABELS[DEFAULT_IMAGE_MODEL_OPTION])
 
+
+def _resolve_video_model_option(value: str | None) -> str:
+    _ = value
+    return VIDEO_MODEL_OPTION_JO
+
+
+def _video_model_label(model_option: str | None) -> str:
+    normalized = _resolve_video_model_option(model_option)
+    return VIDEO_MODEL_LABELS.get(normalized, VIDEO_MODEL_LABEL_JO)
+
+
 TTS_STYLE_PRESETS: dict[str, dict[str, dict[str, str]]] = {
     "female": {
         "natural": {"label": "Natural", "emotion": "neutral"},
@@ -376,11 +397,18 @@ CHAT_IMAGE_PREFIX_PATTERN = re.compile(
     flags=re.IGNORECASE,
 )
 CHAT_IMAGE_CONTEXT_HINT_PATTERN = re.compile(
-    r"\b(same|previous|earlier|before|above|as discussed|from our chat|based on|continue|match the style)\b",
+    r"\b("
+    r"same|previous|earlier|before|above|as discussed|from our chat|based on|continue|match the style|"
+    r"already sent|this image|that image|this one|that one|same character|same scene"
+    r")\b",
     flags=re.IGNORECASE,
 )
 CHAT_IMAGE_EXCLUSION_PATTERN = re.compile(
     r"\b(image prompt|prompt for image|optimize my prompt|improve my prompt|describe image|analyze image)\b",
+    flags=re.IGNORECASE,
+)
+CHAT_IMAGE_EDIT_PATTERN = re.compile(
+    r"\b(edit|change|update|adjust|make it|add|remove|replace|turn it|modify|retouch|fix)\b",
     flags=re.IGNORECASE,
 )
 
@@ -782,14 +810,21 @@ async def _send_video_intro(
     *,
     duration_seconds: int = DEFAULT_VIDEO_DURATION_SECONDS,
     aspect_ratio: str = DEFAULT_VIDEO_ASPECT_RATIO,
+    model_option: str = DEFAULT_VIDEO_MODEL_OPTION,
 ) -> None:
+    selected_model = _resolve_video_model_option(model_option)
+    model_label = _video_model_label(selected_model)
     await _send_step_message(
         message,
         "<b>Video Generation is active</b>\n\n"
-        f"Mode: <b>{VIDEO_MODEL_LABEL_GROK_TEXT_TO_VIDEO}</b>\n"
+        f"Engine: <b>{model_label}</b>\n"
         "Set duration and aspect ratio, then tap <b>Generate Video</b>.\n"
-        "Fast mode is enabled for quicker renders.",
-        reply_markup=video_options_keyboard(duration_seconds, aspect_ratio),
+        "This uses the built-in JO image-to-video pipeline.",
+        reply_markup=video_options_keyboard(
+            duration_seconds,
+            aspect_ratio,
+            selected_model,
+        ),
     )
 
 
@@ -798,11 +833,13 @@ async def _send_video_prompt_step(
     *,
     duration_seconds: int,
     aspect_ratio: str,
+    model_option: str = DEFAULT_VIDEO_MODEL_OPTION,
 ) -> None:
+    model_label = _video_model_label(model_option)
     await _send_step_message(
         message,
         "Joined ✅\n\n"
-        f"Duration <b>{duration_seconds}s</b> and ratio <b>{html.escape(aspect_ratio)}</b> selected.\n\n"
+        f"Engine <b>{model_label}</b> | Duration <b>{duration_seconds}s</b> | Ratio <b>{html.escape(aspect_ratio)}</b>\n\n"
         "Send your video prompt now.",
         reply_markup=_video_prompt_reply_keyboard(),
     )
@@ -918,6 +955,7 @@ async def _switch_to_jo_ai_mode(user_id: int, mode: JoAIMode, session_manager: S
             if mode != JoAIMode.VIDEO:
                 session.jo_ai_video_duration = None
                 session.jo_ai_video_aspect_ratio = None
+                session.jo_ai_video_model = None
                 session.jo_ai_video_join_link_clicked = False
                 session.jo_ai_video_join_confirmed = False
             if mode != JoAIMode.KIMI_IMAGE_DESCRIBER:
@@ -973,6 +1011,7 @@ async def _activate_mode(
     if mode == JoAIMode.VIDEO:
         selected_duration = DEFAULT_VIDEO_DURATION_SECONDS
         selected_ratio = DEFAULT_VIDEO_ASPECT_RATIO
+        selected_model = DEFAULT_VIDEO_MODEL_OPTION
         async with session_manager.lock(user_id) as session:
             if session.jo_ai_video_duration in VIDEO_DURATION_OPTIONS:
                 selected_duration = int(session.jo_ai_video_duration)
@@ -982,10 +1021,13 @@ async def _activate_mode(
                 selected_ratio = str(session.jo_ai_video_aspect_ratio)
             else:
                 session.jo_ai_video_aspect_ratio = DEFAULT_VIDEO_ASPECT_RATIO
+            session.jo_ai_video_model = _resolve_video_model_option(session.jo_ai_video_model)
+            selected_model = session.jo_ai_video_model
         await _send_video_intro(
             message,
             duration_seconds=selected_duration,
             aspect_ratio=selected_ratio,
+            model_option=selected_model,
         )
         return
     if mode == JoAIMode.TEXT_TO_SPEECH:
@@ -1262,6 +1304,33 @@ def _looks_like_chat_image_request(text: str) -> bool:
     if CHAT_IMAGE_PREFIX_PATTERN.search(normalized):
         return True
     return bool(CHAT_IMAGE_REQUEST_PATTERN.search(normalized))
+
+
+def _looks_like_chat_image_edit_request(text: str, has_replied_image: bool) -> bool:
+    if not has_replied_image:
+        return False
+    normalized = " ".join(str(text or "").split())
+    if not normalized:
+        return False
+    if _looks_like_chat_image_request(normalized):
+        return True
+    return bool(CHAT_IMAGE_EDIT_PATTERN.search(normalized))
+
+
+def _extract_reply_image_file_id(message: Message) -> str | None:
+    replied = getattr(message, "reply_to_message", None)
+    if replied is None:
+        return None
+    photo = getattr(replied, "photo", None)
+    if isinstance(photo, list) and photo:
+        last = photo[-1]
+        return str(getattr(last, "file_id", "") or "").strip() or None
+    document = getattr(replied, "document", None)
+    if document is not None:
+        mime = str(getattr(document, "mime_type", "") or "").strip().lower()
+        if mime.startswith("image/"):
+            return str(getattr(document, "file_id", "") or "").strip() or None
+    return None
 
 
 def _build_chat_inline_image_prompt(user_text: str, history: list[dict[str, str]]) -> str:
@@ -2029,6 +2098,7 @@ async def video_show_options_menu(query: CallbackQuery, session_manager: Session
         return
     duration_seconds = DEFAULT_VIDEO_DURATION_SECONDS
     aspect_ratio = DEFAULT_VIDEO_ASPECT_RATIO
+    model_option = DEFAULT_VIDEO_MODEL_OPTION
     async with session_manager.lock(query.from_user.id) as session:
         if session.active_feature != Feature.JO_AI or session.jo_ai_mode != JoAIMode.VIDEO:
             await query.answer("Video session expired. Send /video again.", show_alert=True)
@@ -2041,6 +2111,8 @@ async def video_show_options_menu(query: CallbackQuery, session_manager: Session
             aspect_ratio = str(session.jo_ai_video_aspect_ratio)
         else:
             session.jo_ai_video_aspect_ratio = DEFAULT_VIDEO_ASPECT_RATIO
+        session.jo_ai_video_model = _resolve_video_model_option(session.jo_ai_video_model)
+        model_option = session.jo_ai_video_model
 
     await query.answer()
     if isinstance(query.message, Message):
@@ -2048,6 +2120,44 @@ async def video_show_options_menu(query: CallbackQuery, session_manager: Session
             query.message,
             duration_seconds=duration_seconds,
             aspect_ratio=aspect_ratio,
+            model_option=model_option,
+        )
+
+
+@router.callback_query(F.data.startswith("joaivid:model:"))
+async def choose_video_model(query: CallbackQuery, session_manager: SessionManager) -> None:
+    if not query.from_user:
+        await query.answer()
+        return
+    raw = query.data or ""
+    parts = raw.split(":")
+    if len(parts) != 3:
+        await query.answer("Invalid video option.", show_alert=True)
+        return
+    model_option = VIDEO_MODEL_OPTION_JO
+    duration_seconds = DEFAULT_VIDEO_DURATION_SECONDS
+    aspect_ratio = DEFAULT_VIDEO_ASPECT_RATIO
+    async with session_manager.lock(query.from_user.id) as session:
+        if session.active_feature != Feature.JO_AI or session.jo_ai_mode != JoAIMode.VIDEO:
+            await query.answer("Video session expired. Send /video again.", show_alert=True)
+            return
+        session.jo_ai_video_model = model_option
+        if session.jo_ai_video_duration in VIDEO_DURATION_OPTIONS:
+            duration_seconds = int(session.jo_ai_video_duration)
+        else:
+            session.jo_ai_video_duration = DEFAULT_VIDEO_DURATION_SECONDS
+        if session.jo_ai_video_aspect_ratio in VIDEO_ASPECT_RATIO_OPTIONS:
+            aspect_ratio = str(session.jo_ai_video_aspect_ratio)
+        else:
+            session.jo_ai_video_aspect_ratio = DEFAULT_VIDEO_ASPECT_RATIO
+
+    await query.answer("Video now uses JO Native only.")
+    if isinstance(query.message, Message):
+        await _send_video_intro(
+            query.message,
+            duration_seconds=duration_seconds,
+            aspect_ratio=aspect_ratio,
+            model_option=model_option,
         )
 
 
@@ -2071,6 +2181,7 @@ async def choose_video_duration(query: CallbackQuery, session_manager: SessionMa
         return
 
     aspect_ratio = DEFAULT_VIDEO_ASPECT_RATIO
+    model_option = DEFAULT_VIDEO_MODEL_OPTION
     async with session_manager.lock(query.from_user.id) as session:
         if session.active_feature != Feature.JO_AI or session.jo_ai_mode != JoAIMode.VIDEO:
             await query.answer("Video session expired. Send /video again.", show_alert=True)
@@ -2080,6 +2191,8 @@ async def choose_video_duration(query: CallbackQuery, session_manager: SessionMa
             aspect_ratio = str(session.jo_ai_video_aspect_ratio)
         else:
             session.jo_ai_video_aspect_ratio = DEFAULT_VIDEO_ASPECT_RATIO
+        session.jo_ai_video_model = _resolve_video_model_option(session.jo_ai_video_model)
+        model_option = session.jo_ai_video_model
 
     await query.answer(f"Duration {duration_seconds}s selected.")
     if isinstance(query.message, Message):
@@ -2087,6 +2200,7 @@ async def choose_video_duration(query: CallbackQuery, session_manager: SessionMa
             query.message,
             duration_seconds=duration_seconds,
             aspect_ratio=aspect_ratio,
+            model_option=model_option,
         )
 
 
@@ -2106,6 +2220,7 @@ async def choose_video_ratio(query: CallbackQuery, session_manager: SessionManag
         return
 
     duration_seconds = DEFAULT_VIDEO_DURATION_SECONDS
+    model_option = DEFAULT_VIDEO_MODEL_OPTION
     async with session_manager.lock(query.from_user.id) as session:
         if session.active_feature != Feature.JO_AI or session.jo_ai_mode != JoAIMode.VIDEO:
             await query.answer("Video session expired. Send /video again.", show_alert=True)
@@ -2115,6 +2230,8 @@ async def choose_video_ratio(query: CallbackQuery, session_manager: SessionManag
             duration_seconds = int(session.jo_ai_video_duration)
         else:
             session.jo_ai_video_duration = DEFAULT_VIDEO_DURATION_SECONDS
+        session.jo_ai_video_model = _resolve_video_model_option(session.jo_ai_video_model)
+        model_option = session.jo_ai_video_model
 
     await query.answer(f"Ratio {ratio} selected.")
     if isinstance(query.message, Message):
@@ -2122,6 +2239,7 @@ async def choose_video_ratio(query: CallbackQuery, session_manager: SessionManag
             query.message,
             duration_seconds=duration_seconds,
             aspect_ratio=ratio,
+            model_option=model_option,
         )
 
 
@@ -2133,6 +2251,7 @@ async def prepare_video_generation(query: CallbackQuery, session_manager: Sessio
 
     duration_seconds = DEFAULT_VIDEO_DURATION_SECONDS
     aspect_ratio = DEFAULT_VIDEO_ASPECT_RATIO
+    model_option = DEFAULT_VIDEO_MODEL_OPTION
     join_confirmed = False
     async with session_manager.lock(query.from_user.id) as session:
         if session.active_feature != Feature.JO_AI or session.jo_ai_mode != JoAIMode.VIDEO:
@@ -2147,6 +2266,8 @@ async def prepare_video_generation(query: CallbackQuery, session_manager: Sessio
             aspect_ratio = str(session.jo_ai_video_aspect_ratio)
         else:
             session.jo_ai_video_aspect_ratio = DEFAULT_VIDEO_ASPECT_RATIO
+        session.jo_ai_video_model = _resolve_video_model_option(session.jo_ai_video_model)
+        model_option = session.jo_ai_video_model
 
     if not join_confirmed:
         await query.answer("Please join first, then tap Confirm Joined.", show_alert=True)
@@ -2160,6 +2281,7 @@ async def prepare_video_generation(query: CallbackQuery, session_manager: Sessio
             query.message,
             duration_seconds=duration_seconds,
             aspect_ratio=aspect_ratio,
+            model_option=model_option,
         )
 
 
@@ -2187,6 +2309,7 @@ async def check_video_join_after_button(query: CallbackQuery, session_manager: S
 
     duration_seconds = DEFAULT_VIDEO_DURATION_SECONDS
     aspect_ratio = DEFAULT_VIDEO_ASPECT_RATIO
+    model_option = DEFAULT_VIDEO_MODEL_OPTION
     async with session_manager.lock(query.from_user.id) as session:
         if session.active_feature != Feature.JO_AI or session.jo_ai_mode != JoAIMode.VIDEO:
             await query.answer("Video session expired. Send /video again.", show_alert=True)
@@ -2203,6 +2326,8 @@ async def check_video_join_after_button(query: CallbackQuery, session_manager: S
             aspect_ratio = str(session.jo_ai_video_aspect_ratio)
         else:
             session.jo_ai_video_aspect_ratio = DEFAULT_VIDEO_ASPECT_RATIO
+        session.jo_ai_video_model = _resolve_video_model_option(session.jo_ai_video_model)
+        model_option = session.jo_ai_video_model
 
     await query.answer("Join confirmed.")
     if isinstance(query.message, Message):
@@ -2212,6 +2337,7 @@ async def check_video_join_after_button(query: CallbackQuery, session_manager: S
             query.message,
             duration_seconds=duration_seconds,
             aspect_ratio=aspect_ratio,
+            model_option=model_option,
         )
 
 
@@ -2271,7 +2397,9 @@ async def handle_jo_ai_text(
         image_model = session.jo_ai_image_model
         video_duration = session.jo_ai_video_duration
         video_aspect_ratio = session.jo_ai_video_aspect_ratio
+        video_model_option = _resolve_video_model_option(session.jo_ai_video_model)
         video_join_confirmed = bool(session.jo_ai_video_join_confirmed)
+        last_generated_image_url = session.jo_ai_last_generated_image_url
         code_file_name = session.jo_ai_code_file_name
         code_file_content = session.jo_ai_code_file_content
         tts_language = session.jo_ai_tts_language
@@ -2284,7 +2412,11 @@ async def handle_jo_ai_text(
     user_text = text
 
     if mode == JoAIMode.CHAT:
-        if _looks_like_chat_image_request(user_text):
+        reply_image_file_id = _extract_reply_image_file_id(message)
+        has_reply_image = bool(reply_image_file_id)
+        is_image_request = _looks_like_chat_image_request(user_text)
+        is_image_edit_request = _looks_like_chat_image_edit_request(user_text, has_reply_image)
+        if is_image_request or is_image_edit_request:
             inline_ratio = image_ratio if image_ratio in IMAGE_RATIO_TO_SIZE else "1:1"
             inline_model = image_model or (
                 CHAT_INLINE_IMAGE_DEFAULT_MODEL
@@ -2292,6 +2424,32 @@ async def handle_jo_ai_text(
                 else IMAGE_MODEL_OPTION_JO
             )
             inline_prompt = _build_chat_inline_image_prompt(user_text, history_snapshot)
+            reference_image_url: str | None = None
+            if reply_image_file_id:
+                try:
+                    reference_image_url = await _upload_reference_image_from_telegram(
+                        message=message,
+                        file_id=reply_image_file_id,
+                        pollinations_media_service=pollinations_media_service,
+                    )
+                except Exception:
+                    logger.exception("Failed to resolve replied image for chat edit.")
+                    reply_text = "I couldn't read the replied image. Please resend the image and try again."
+                    await message.answer(reply_text, reply_markup=_chat_reply_keyboard())
+                    await _track_telegram_action(
+                        tracking_service=tracking_service,
+                        message=message,
+                        message_type="chat_image_edit",
+                        user_message=user_text,
+                        bot_reply=reply_text,
+                        model_used=None,
+                        success=False,
+                        image_increment=1,
+                        feature_used="chat_image_edit:missing_reference",
+                    )
+                    return
+            elif CHAT_IMAGE_CONTEXT_HINT_PATTERN.search(user_text) and str(last_generated_image_url or "").strip():
+                reference_image_url = str(last_generated_image_url).strip()
             await _process_image_message(
                 message,
                 inline_prompt,
@@ -2302,7 +2460,8 @@ async def handle_jo_ai_text(
                 inline_model,
                 tracking_service,
                 reply_markup=_chat_reply_keyboard(),
-                feature_used_prefix="chat_image_generation",
+                feature_used_prefix="chat_image_edit" if reference_image_url else "chat_image_generation",
+                reference_image_url=reference_image_url,
             )
             if message.from_user:
                 async with session_manager.lock(message.from_user.id) as session:
@@ -2450,6 +2609,7 @@ async def handle_jo_ai_text(
             pollinations_media_service,
             video_duration,
             video_aspect_ratio,
+            video_model_option,
             video_join_confirmed,
             tracking_service,
         )
@@ -3718,6 +3878,213 @@ async def _process_prompt_message(
     )
 
 
+def _image_extension_for_mime_type(mime_type: str | None) -> str:
+    normalized = str(mime_type or "").strip().lower()
+    if normalized in {"image/png", "image/x-png"}:
+        return "png"
+    if normalized in {"image/webp"}:
+        return "webp"
+    if normalized in {"image/gif"}:
+        return "gif"
+    return "jpg"
+
+
+async def _download_telegram_file_bytes(message: Message, file_id: str) -> bytes:
+    file = await message.bot.get_file(file_id)
+    downloaded = await message.bot.download_file(file.file_path)
+    return downloaded.read()
+
+
+async def _upload_reference_image_from_telegram(
+    *,
+    message: Message,
+    file_id: str,
+    pollinations_media_service: PollinationsMediaService,
+) -> str:
+    image_bytes = await _download_telegram_file_bytes(message, file_id)
+    extension = _image_extension_for_mime_type("image/jpeg")
+    return await pollinations_media_service.upload_media_bytes(
+        media_bytes=image_bytes,
+        mime_type="image/jpeg",
+        file_name=f"telegram_ref.{extension}",
+    )
+
+
+async def _remember_generated_image_context(
+    *,
+    session_manager: SessionManager,
+    message: Message,
+    prompt_text: str,
+    telegram_file_id: str | None,
+    media_url: str | None,
+    user_id: int | None = None,
+    generated_message_id: int | None = None,
+) -> None:
+    resolved_user_id = int(user_id or 0) if int(user_id or 0) > 0 else None
+    if resolved_user_id is None and message.from_user:
+        resolved_user_id = int(message.from_user.id)
+    if not resolved_user_id:
+        return
+    async with session_manager.lock(resolved_user_id) as session:
+        if session.active_feature != Feature.JO_AI:
+            return
+        session.jo_ai_last_generated_image_file_id = str(telegram_file_id or "").strip() or None
+        session.jo_ai_last_generated_image_prompt = str(prompt_text or "").strip()[:1800] or None
+        session.jo_ai_last_generated_image_url = str(media_url or "").strip() or None
+        target_message_id = int(generated_message_id or 0) if int(generated_message_id or 0) > 0 else None
+        if target_message_id is None and message.message_id:
+            target_message_id = int(message.message_id)
+        session.jo_ai_last_generated_image_message_id = target_message_id
+
+
+def _video_dimensions_from_ratio(aspect_ratio: str) -> tuple[int, int]:
+    return (432, 768) if str(aspect_ratio).strip() == "9:16" else (768, 432)
+
+
+def _resize_cover_frame(image: "Image.Image", width: int, height: int) -> "Image.Image":
+    source_w, source_h = image.size
+    if source_w <= 0 or source_h <= 0:
+        return image.resize((width, height))
+    scale = max(width / source_w, height / source_h)
+    resized = image.resize(
+        (max(1, int(source_w * scale)), max(1, int(source_h * scale))),
+        Image.Resampling.LANCZOS,
+    )
+    left = max(0, (resized.width - width) // 2)
+    top = max(0, (resized.height - height) // 2)
+    return resized.crop((left, top, left + width, top + height))
+
+
+def _compose_jo_video_frames(
+    first: "Image.Image",
+    second: "Image.Image",
+    *,
+    width: int,
+    height: int,
+    frame_count: int,
+    segment_index: int = 0,
+    segment_total: int = 1,
+) -> list["Image.Image"]:
+    base_a = _resize_cover_frame(first.convert("RGB"), width, height)
+    base_b = _resize_cover_frame(second.convert("RGB"), width, height)
+    total = max(4, int(frame_count))
+    segment_bias = max(0, min(segment_index, max(0, segment_total - 1)))
+    zoom_seed = 1.0 + (0.015 * segment_bias)
+    reverse_pan = bool(segment_bias % 2)
+    frames: list["Image.Image"] = []
+    for index in range(total):
+        t = index / max(1, total - 1)
+        blend = Image.blend(base_a, base_b, t)
+        zoom = zoom_seed + (0.07 * t)
+        resized = blend.resize(
+            (max(width, int(width * zoom)), max(height, int(height * zoom))),
+            Image.Resampling.LANCZOS,
+        )
+        max_x = max(0, resized.width - width)
+        max_y = max(0, resized.height - height)
+        if reverse_pan:
+            x = int(max_x * (1.0 - t))
+            y = int(max_y * t)
+        else:
+            x = int(max_x * t)
+            y = int(max_y * (1.0 - t))
+        frame = resized.crop((x, y, x + width, y + height))
+        frames.append(frame.convert("P", palette=Image.ADAPTIVE))
+    return frames
+
+
+def _jo_video_storyboard_prompts(prompt: str, keyframe_count: int) -> list[str]:
+    base_prompt = " ".join(str(prompt or "").split()) or "Cinematic scene"
+    stages = (
+        "Opening frame with clear composition and calm motion setup.",
+        "Early action frame where movement starts but scene continuity remains stable.",
+        "Mid-action frame with stronger motion and subject progression.",
+        "Late-action frame where motion peaks and direction is obvious.",
+        "Closing frame that feels like a natural final beat of the same scene.",
+    )
+    continuity_suffix = (
+        "Keep the same main subject identity, environment, and visual style across all storyboard frames."
+    )
+    safe_count = max(2, min(len(stages), int(keyframe_count or 3)))
+    selected: list[str] = []
+    for idx in range(safe_count):
+        selected.append(f"{base_prompt}\n\n{stages[idx]}\n{continuity_suffix}")
+    return selected
+
+
+async def _generate_jo_video_animation(
+    *,
+    prompt: str,
+    aspect_ratio: str,
+    duration_seconds: int,
+    pollinations_media_service: PollinationsMediaService,
+) -> tuple[bytes, str]:
+    if Image is None:
+        raise AIServiceError("JO video renderer is unavailable right now.")
+    if not str(pollinations_media_service.api_key or "").strip():
+        raise AIServiceError("Video generation is unavailable right now.")
+
+    safe_duration = max(1, int(duration_seconds or DEFAULT_VIDEO_DURATION_SECONDS))
+    width, height = _video_dimensions_from_ratio(aspect_ratio)
+    image_size = f"{width}x{height}"
+    storyboard_count = max(3, min(5, 1 + (safe_duration // 2)))
+    storyboard_prompts = _jo_video_storyboard_prompts(prompt, storyboard_count)
+    keyframe_bytes: list[bytes] = []
+    for stage_prompt in storyboard_prompts:
+        enhanced_prompt = build_enhanced_image_prompt(stage_prompt, ratio=aspect_ratio) or stage_prompt
+        generated = await pollinations_media_service.generate_image(
+            prompt=enhanced_prompt,
+            model=JO_VIDEO_FRAME_MODEL,
+            size=image_size,
+            enhance=True,
+            quality="high",
+        )
+        if not generated.image_bytes:
+            raise AIServiceError("JO video could not generate storyboard frames.")
+        keyframe_bytes.append(generated.image_bytes)
+
+    if len(keyframe_bytes) < 2:
+        raise AIServiceError("JO video could not generate storyboard frames.")
+
+    frame_target = max(14, min(64, safe_duration * 8))
+    segment_count = len(keyframe_bytes) - 1
+    base_segment_frames = max(5, frame_target // max(1, segment_count))
+    frame_remainder = max(0, frame_target - (base_segment_frames * segment_count))
+    frames: list["Image.Image"] = []
+    for index in range(segment_count):
+        segment_frames = base_segment_frames + (1 if index < frame_remainder else 0)
+        with Image.open(io.BytesIO(keyframe_bytes[index])) as first_img, Image.open(
+            io.BytesIO(keyframe_bytes[index + 1])
+        ) as second_img:
+            composed = _compose_jo_video_frames(
+                first_img,
+                second_img,
+                width=width,
+                height=height,
+                frame_count=segment_frames,
+                segment_index=index,
+                segment_total=segment_count,
+            )
+        if index > 0 and composed:
+            composed = composed[1:]
+        frames.extend(composed)
+    if not frames:
+        raise AIServiceError("JO video did not create frames.")
+
+    frame_duration_ms = max(60, int((safe_duration * 1000) / len(frames)))
+    output = io.BytesIO()
+    frames[0].save(
+        output,
+        format="GIF",
+        save_all=True,
+        append_images=frames[1:],
+        duration=frame_duration_ms,
+        loop=0,
+        optimize=False,
+    )
+    return output.getvalue(), "image/gif"
+
+
 async def _process_image_message(
     message: Message,
     user_text: str,
@@ -3729,10 +4096,11 @@ async def _process_image_message(
     tracking_service: SupabaseTrackingService | None,
     reply_markup: InlineKeyboardMarkup | None = None,
     feature_used_prefix: str = "image_generation",
+    reference_image_url: str | None = None,
 ) -> None:
-    _ = session_manager
     keyboard = reply_markup or _image_prompt_reply_keyboard()
     feature_prefix = (feature_used_prefix or "image_generation").strip() or "image_generation"
+    reference_url = str(reference_image_url or "").strip() or None
     model_option = _resolve_image_model_option(current_image_model)
     model_label = _image_model_label(model_option)
     requested_model_option = model_option
@@ -3740,9 +4108,28 @@ async def _process_image_message(
     effective_model_option = model_option
     effective_model_label = model_label
     provider_source = "jo_ai" if effective_model_option == IMAGE_MODEL_OPTION_JO else "pollinations"
+    if reference_url:
+        provider_source = "pollinations"
     feature_used = f"{feature_prefix}:{effective_model_option}"
+    if reference_url:
+        feature_used = f"{feature_used}:edit"
     ratio_label = current_image_ratio if current_image_ratio in IMAGE_RATIO_TO_SIZE else "1:1"
     image_size = IMAGE_RATIO_TO_SIZE.get(ratio_label, IMAGE_RATIO_TO_SIZE["1:1"])
+    if reference_url and not str(pollinations_media_service.api_key or "").strip():
+        reply_text = "Image edit needs image API access right now. Please retry after API balance resets."
+        await message.answer(reply_text, reply_markup=keyboard)
+        await _track_telegram_action(
+            tracking_service=tracking_service,
+            message=message,
+            message_type="image",
+            user_message=user_text,
+            bot_reply=reply_text,
+            model_used=model_label,
+            success=False,
+            image_increment=1,
+            feature_used=f"{feature_used}:missing_api_access",
+        )
+        return
     guardrail_reply = guardrail_response_for_user_query(user_text, ratio_label)
     if guardrail_reply:
         reply_text = guardrail_reply if not _is_internal_rule_block(guardrail_reply) else _image_request_blocked_text()
@@ -3787,7 +4174,14 @@ async def _process_image_message(
             return
 
     await _maybe_send_engagement(message)
-    enhanced_prompt = build_enhanced_image_prompt(user_text, ratio=ratio_label) or user_text
+    base_prompt = user_text
+    if reference_url:
+        base_prompt = (
+            f"{user_text}\n\n"
+            "Edit the referenced image while preserving core subject identity, style, and scene continuity "
+            "unless the user explicitly asks to change them."
+        )
+    enhanced_prompt = build_enhanced_image_prompt(base_prompt, ratio=ratio_label) or base_prompt
     prompt_hash = hashlib.sha256(user_text.encode("utf-8")).hexdigest()[:12]
     logger.info(
         "TELEGRAM IMAGE ENHANCED | user=%s ratio=%s prompt_hash=%s enhanced_len=%s",
@@ -3802,7 +4196,27 @@ async def _process_image_message(
     fallback_notice: str | None = None
     try:
         async with ChatActionSender.upload_photo(bot=message.bot, chat_id=message.chat.id):
-            if effective_model_option == IMAGE_MODEL_OPTION_JO:
+            if reference_url:
+                pollinations_model_id = _pollinations_image_model_id_for_option(
+                    effective_model_option,
+                    pollinations_media_service,
+                ) or CHAT_INLINE_IMAGE_DEFAULT_MODEL
+                effective_model_option = _resolve_image_model_option(pollinations_model_id)
+                effective_model_label = _image_model_label(effective_model_option)
+                provider_source = "pollinations"
+                feature_used = f"{feature_prefix}:{effective_model_option}:edit"
+                generated = await asyncio.wait_for(
+                    pollinations_media_service.generate_image(
+                        prompt=enhanced_prompt,
+                        model=pollinations_model_id,
+                        size=image_size,
+                        enhance=True,
+                        image=reference_url,
+                        quality="high",
+                    ),
+                    timeout=TELEGRAM_IMAGE_TIMEOUT_SECONDS,
+                )
+            elif effective_model_option == IMAGE_MODEL_OPTION_JO:
                 generated = await asyncio.wait_for(
                     image_generation_service.generate_image(
                         enhanced_prompt,
@@ -3823,6 +4237,7 @@ async def _process_image_message(
                             model=pollinations_model_id,
                             size=image_size,
                             enhance=True,
+                            quality="high",
                         ),
                         timeout=TELEGRAM_IMAGE_TIMEOUT_SECONDS,
                     )
@@ -3952,6 +4367,17 @@ async def _process_image_message(
         if fallback_notice
         else "Image generated successfully."
     )
+    stored_media_url = str(generated.image_url or "").strip() or None
+    if generated.image_bytes and not stored_media_url and str(pollinations_media_service.api_key or "").strip():
+        try:
+            stored_media_url = await pollinations_media_service.upload_media_bytes(
+                media_bytes=generated.image_bytes,
+                mime_type="image/png",
+                file_name="jo_ai_generated.png",
+            )
+        except Exception:
+            logger.warning("Failed to upload generated image for future edit context.", exc_info=True)
+
     if generated.image_bytes:
         image_file = BufferedInputFile(generated.image_bytes, filename="jo_ai_generated.png")
         sent = await message.answer_photo(
@@ -3982,6 +4408,16 @@ async def _process_image_message(
                 media_status="available",
             ),
         )
+        sent_file_id = sent.photo[-1].file_id if sent.photo else None
+        await _remember_generated_image_context(
+            session_manager=session_manager,
+            message=message,
+            prompt_text=user_text,
+            telegram_file_id=sent_file_id,
+            media_url=stored_media_url,
+            user_id=message.from_user.id if message.from_user else None,
+            generated_message_id=sent.message_id,
+        )
         return
 
     if generated.image_url:
@@ -4011,6 +4447,16 @@ async def _process_image_message(
                 media_origin="generated",
                 media_status="available",
             ),
+        )
+        sent_file_id = sent.photo[-1].file_id if sent.photo else None
+        await _remember_generated_image_context(
+            session_manager=session_manager,
+            message=message,
+            prompt_text=user_text,
+            telegram_file_id=sent_file_id,
+            media_url=stored_media_url or generated.image_url,
+            user_id=message.from_user.id if message.from_user else None,
+            generated_message_id=sent.message_id,
         )
         return
 
@@ -4184,6 +4630,7 @@ async def _process_video_message(
     pollinations_media_service: PollinationsMediaService,
     current_duration_seconds: int | None,
     current_aspect_ratio: str | None,
+    current_model_option: str | None,
     join_confirmed: bool,
     tracking_service: SupabaseTrackingService | None,
 ) -> None:
@@ -4195,8 +4642,34 @@ async def _process_video_message(
         if str(current_aspect_ratio or "").strip() in VIDEO_ASPECT_RATIO_OPTIONS
         else DEFAULT_VIDEO_ASPECT_RATIO
     )
-    model_used = VIDEO_MODEL_LABEL_GROK_TEXT_TO_VIDEO
-    feature_used = "video_generation:grok_text_to_video"
+    _ = current_model_option
+    selected_model_option = VIDEO_MODEL_OPTION_JO
+    selected_model_label = _video_model_label(selected_model_option)
+    model_used = selected_model_label
+    feature_used = "video_generation:jo_native"
+    provider_source = "jo_ai"
+
+    async def _track_video_failure(reply_text: str, *, reason: str, media_status: str = "failed") -> None:
+        await message.answer(reply_text, reply_markup=_video_prompt_reply_keyboard())
+        await _track_telegram_action(
+            tracking_service=tracking_service,
+            message=message,
+            message_type="video",
+            user_message=user_text,
+            bot_reply=reply_text,
+            model_used=model_used,
+            success=False,
+            message_increment=1,
+            feature_used=feature_used,
+            media=TrackingMedia(
+                media_type="video",
+                provider_source=provider_source,
+                media_origin="generated",
+                media_status=media_status,
+                media_error_reason=reason,
+            ),
+        )
+
     if message.from_user and not join_confirmed:
         reply_text = _video_join_required_text()
         await _send_video_join_required_step(message)
@@ -4215,43 +4688,17 @@ async def _process_video_message(
     guardrail_reply = guardrail_response_for_user_query(user_text, aspect_ratio, str(duration_seconds))
     if guardrail_reply:
         reply_text = guardrail_reply if not _is_internal_rule_block(guardrail_reply) else _image_request_blocked_text()
-        await message.answer(reply_text, reply_markup=_video_prompt_reply_keyboard())
-        await _track_telegram_action(
-            tracking_service=tracking_service,
-            message=message,
-            message_type="video",
-            user_message=user_text,
-            bot_reply=reply_text,
-            model_used=model_used,
-            success=False,
-            message_increment=1,
-            feature_used=feature_used,
-        )
+        await _track_video_failure(reply_text, reason="guardrail_blocked")
         return
 
     moderation_result = moderate_grok_generation_prompt(user_text)
     if moderation_result.blocked:
         block_reason = grok_safety_reason_code(moderation_result)
         reply_text = _grok_safety_blocked_text("video")
-        await message.answer(reply_text, reply_markup=_video_prompt_reply_keyboard())
-        await _track_telegram_action(
-            tracking_service=tracking_service,
-            message=message,
-            message_type="video",
-            user_message=user_text,
-            bot_reply=reply_text,
-            model_used=model_used,
-            success=False,
-            message_increment=1,
-            feature_used=f"{feature_used}:safety_blocked",
-            media=TrackingMedia(
-                media_type="video",
-                provider_source="pollinations",
-                media_origin="generated",
-                media_status="blocked",
-                media_error_reason=block_reason,
-            ),
-        )
+        original_feature = feature_used
+        feature_used = f"{feature_used}:safety_blocked"
+        await _track_video_failure(reply_text, reason=block_reason, media_status="blocked")
+        feature_used = original_feature
         return
 
     await _maybe_send_engagement(message)
@@ -4267,109 +4714,65 @@ async def _process_video_message(
             or video_prompt
         )
 
-    progress_text = "Creating your video quickly..." if TELEGRAM_VIDEO_FAST_MODE else "Creating your video..."
+    progress_text = f"Creating {selected_model_label}..."
     progress_message = await _send_progress_message(message, progress_text)
     try:
         async with ChatActionSender.typing(bot=message.bot, chat_id=message.chat.id):
-            generated = await asyncio.wait_for(
-                pollinations_media_service.generate_video(
+            gif_bytes, gif_mime_type = await asyncio.wait_for(
+                _generate_jo_video_animation(
                     prompt=video_prompt,
-                    model=pollinations_media_service.video_model_grok_text_to_video,
-                    duration_seconds=duration_seconds,
                     aspect_ratio=aspect_ratio,
-                    enhance=not TELEGRAM_VIDEO_FAST_MODE,
-                    audio=False,
+                    duration_seconds=duration_seconds,
+                    pollinations_media_service=pollinations_media_service,
                 ),
                 timeout=TELEGRAM_VIDEO_TIMEOUT_SECONDS,
             )
+            generated = GeneratedVideoResult(video_bytes=gif_bytes, video_url=None, mime_type=gif_mime_type)
     except asyncio.TimeoutError:
         await _clear_progress_message(progress_message)
         reply_text = "Video generation timed out. Please retry."
-        await message.answer(reply_text, reply_markup=_video_prompt_reply_keyboard())
-        await _track_telegram_action(
-            tracking_service=tracking_service,
-            message=message,
-            message_type="video",
-            user_message=user_text,
-            bot_reply=reply_text,
-            model_used=model_used,
-            success=False,
-            message_increment=1,
-            feature_used=feature_used,
-            media=TrackingMedia(
-                media_type="video",
-                provider_source="pollinations",
-                media_origin="generated",
-                media_status="failed",
-                media_error_reason="timeout",
-            ),
-        )
+        await _track_video_failure(reply_text, reason="timeout")
         return
     except AIServiceError as exc:
         await _clear_progress_message(progress_message)
         reply_text = _friendly_error_text("Video generation is temporarily unavailable", exc)
-        await message.answer(reply_text, reply_markup=_video_prompt_reply_keyboard())
-        await _track_telegram_action(
-            tracking_service=tracking_service,
-            message=message,
-            message_type="video",
-            user_message=user_text,
-            bot_reply=reply_text,
-            model_used=model_used,
-            success=False,
-            message_increment=1,
-            feature_used=feature_used,
-            media=TrackingMedia(
-                media_type="video",
-                provider_source="pollinations",
-                media_origin="generated",
-                media_status="failed",
-                media_error_reason=reply_text,
-            ),
-        )
+        await _track_video_failure(reply_text, reason=reply_text)
         return
     except Exception:
         await _clear_progress_message(progress_message)
         logger.exception("Unexpected video generation error.")
         reply_text = _friendly_error_text("Unexpected video generation error")
-        await message.answer(reply_text, reply_markup=_video_prompt_reply_keyboard())
-        await _track_telegram_action(
-            tracking_service=tracking_service,
-            message=message,
-            message_type="video",
-            user_message=user_text,
-            bot_reply=reply_text,
-            model_used=model_used,
-            success=False,
-            message_increment=1,
-            feature_used=feature_used,
-            media=TrackingMedia(
-                media_type="video",
-                provider_source="pollinations",
-                media_origin="generated",
-                media_status="failed",
-                media_error_reason=reply_text,
-            ),
-        )
+        await _track_video_failure(reply_text, reason=reply_text)
         return
 
     await _clear_progress_message(progress_message)
     caption = (
-        f"<b>{VIDEO_MODEL_LABEL_GROK_TEXT_TO_VIDEO}</b>\n"
+        f"<b>{selected_model_label}</b>\n"
         f"Duration: <b>{duration_seconds}s</b> | Ratio: <b>{html.escape(aspect_ratio)}</b>"
     )
 
     if generated.video_bytes:
-        file_name = "jo_ai_video.mp4"
-        if (generated.mime_type or "").lower() == "video/webm":
-            file_name = "jo_ai_video.webm"
-        video_file = BufferedInputFile(generated.video_bytes, filename=file_name)
-        sent = await message.answer_video(
-            video=video_file,
-            caption=caption,
-            reply_markup=_video_prompt_reply_keyboard(),
-        )
-        storage_path = f"telegram_file:{sent.video.file_id}" if sent.video else None
+        mime_type = (generated.mime_type or "").strip().lower()
+        storage_path = None
+        if mime_type == "image/gif":
+            animation_file = BufferedInputFile(generated.video_bytes, filename="jo_ai_video.gif")
+            sent = await message.answer_animation(
+                animation=animation_file,
+                caption=caption,
+                reply_markup=_video_prompt_reply_keyboard(),
+            )
+            storage_path = f"telegram_file:{sent.animation.file_id}" if sent.animation else None
+        else:
+            file_name = "jo_ai_video.mp4"
+            if mime_type == "video/webm":
+                file_name = "jo_ai_video.webm"
+            video_file = BufferedInputFile(generated.video_bytes, filename=file_name)
+            sent = await message.answer_video(
+                video=video_file,
+                caption=caption,
+                reply_markup=_video_prompt_reply_keyboard(),
+            )
+            storage_path = f"telegram_file:{sent.video.file_id}" if sent.video else None
         await _track_telegram_action(
             tracking_service=tracking_service,
             message=message,
@@ -4385,7 +4788,7 @@ async def _process_video_message(
                 media_url=generated.video_url,
                 storage_path=storage_path,
                 mime_type=generated.mime_type,
-                provider_source="pollinations",
+                provider_source=provider_source,
                 media_origin="generated",
                 media_status="available",
             ),
@@ -4414,7 +4817,7 @@ async def _process_video_message(
                 media_url=generated.video_url,
                 storage_path=storage_path,
                 mime_type=generated.mime_type,
-                provider_source="pollinations",
+                provider_source=provider_source,
                 media_origin="generated",
                 media_status="available",
             ),
@@ -4422,25 +4825,7 @@ async def _process_video_message(
         return
 
     reply_text = "Video generation did not return a playable result."
-    await message.answer(reply_text, reply_markup=_video_prompt_reply_keyboard())
-    await _track_telegram_action(
-        tracking_service=tracking_service,
-        message=message,
-        message_type="video",
-        user_message=user_text,
-        bot_reply=reply_text,
-        model_used=model_used,
-        success=False,
-        message_increment=1,
-        feature_used=feature_used,
-        media=TrackingMedia(
-            media_type="video",
-            provider_source="pollinations",
-            media_origin="generated",
-            media_status="missing",
-            media_error_reason="video payload missing",
-        ),
-    )
+    await _track_video_failure(reply_text, reason="video payload missing", media_status="missing")
 
 
 @router.message(ActiveFeatureFilter(Feature.JO_AI))
@@ -4468,4 +4853,5 @@ async def jo_ai_unexpected_input(
         success=False,
         message_increment=1,
     )
+
 

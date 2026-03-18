@@ -46,11 +46,16 @@ class UserSession:
     jo_ai_image_model: str | None = None
     jo_ai_video_duration: int | None = None
     jo_ai_video_aspect_ratio: str | None = None
+    jo_ai_video_model: str | None = None
     jo_ai_video_join_link_clicked: bool = False
     jo_ai_video_join_confirmed: bool = False
     jo_ai_kimi_waiting_image: bool = False
     jo_ai_last_image_file_id: str | None = None
     jo_ai_last_image_prompt: str | None = None
+    jo_ai_last_generated_image_file_id: str | None = None
+    jo_ai_last_generated_image_prompt: str | None = None
+    jo_ai_last_generated_image_url: str | None = None
+    jo_ai_last_generated_image_message_id: int | None = None
     jo_ai_code_waiting_file: bool = False
     jo_ai_code_file_name: str | None = None
     jo_ai_code_file_content: str | None = None

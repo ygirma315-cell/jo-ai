@@ -887,6 +887,8 @@ class PollinationsMediaService:
         model: str,
         size: str = "1024x1024",
         enhance: bool = True,
+        image: str | list[str] | None = None,
+        quality: Literal["standard", "hd", "low", "medium", "high"] | str | None = None,
     ) -> GeneratedImageResult:
         guardrail_response = guardrail_response_for_user_query(prompt)
         if guardrail_response:
@@ -907,6 +909,15 @@ class PollinationsMediaService:
             "response_format": "b64_json",
             "enhance": bool(enhance),
         }
+        normalized_quality = str(quality or "").strip().lower()
+        if normalized_quality in {"standard", "hd", "low", "medium", "high"}:
+            payload["quality"] = normalized_quality
+        if isinstance(image, str) and image.strip():
+            payload["image"] = image.strip()
+        elif isinstance(image, list):
+            image_list = [str(item).strip() for item in image if str(item).strip()]
+            if image_list:
+                payload["image"] = image_list
         data = await _post_pollinations_json(
             api_key=effective_key,
             path="/v1/images/generations",
@@ -925,6 +936,55 @@ class PollinationsMediaService:
         if image_url:
             return GeneratedImageResult(image_bytes=None, image_url=image_url)
         raise AIServiceError("Image payload is missing.")
+
+    async def upload_media_bytes(
+        self,
+        *,
+        media_bytes: bytes,
+        mime_type: str = "image/jpeg",
+        file_name: str = "source.jpg",
+    ) -> str:
+        payload_bytes = bytes(media_bytes or b"")
+        if not payload_bytes:
+            raise AIServiceError("Source media is empty.")
+        effective_key = str(self.api_key or "").strip()
+        if not effective_key:
+            raise AIServiceError(SAFE_SERVICE_UNAVAILABLE_MESSAGE)
+
+        media_base_url = "https://media.pollinations.ai"
+        upload_url = f"{media_base_url}/upload"
+        timeout = aiohttp.ClientTimeout(total=50)
+        headers = {
+            "Authorization": f"Bearer {effective_key}",
+            "Accept": "application/json",
+        }
+        form = aiohttp.FormData()
+        form.add_field(
+            "file",
+            payload_bytes,
+            filename=(file_name or "source.jpg"),
+            content_type=(mime_type or "application/octet-stream"),
+        )
+
+        async with aiohttp.ClientSession(timeout=timeout) as session:
+            try:
+                async with session.post(upload_url, headers=headers, data=form) as response:
+                    raw_body = await response.text()
+            except (aiohttp.ClientError, asyncio.TimeoutError) as exc:
+                raise AIServiceError(SAFE_SERVICE_UNAVAILABLE_MESSAGE) from exc
+
+        if response.status >= 400:
+            detail = _extract_api_error(raw_body)
+            raise AIServiceError(_friendly_pollinations_error(detail, response.status))
+
+        parsed = _safe_json(raw_body)
+        media_url = str(parsed.get("url") or "").strip()
+        if media_url:
+            return media_url
+        media_id = str(parsed.get("id") or "").strip()
+        if media_id:
+            return f"{media_base_url}/{media_id}"
+        raise AIServiceError("Could not resolve uploaded media URL.")
 
     async def generate_video(
         self,
