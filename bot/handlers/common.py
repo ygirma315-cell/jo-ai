@@ -69,18 +69,8 @@ MENU_HINT_TEXT = (
 
 AI_TOOLS_TEXT = (
     "🤖 <b>AI Tools Menu</b>\n\n"
-    "Choose your workspace:\n"
-    "• 💬 Chat AI\n"
-    "• 💠 Gemini Chat (temporarily disabled)\n"
-    "• ⚡ Generate code\n"
-    "• 🔍 Research\n"
-    "• ✨ Build prompts\n"
-    "• 🧠 DeepSeek\n"
-    "• 🎨 Generate images\n"
-    "• 🎬 Generate videos\n"
-    "• 🖼️ Vision mode\n"
-    "• 🔊 Text-to-Speech\n"
-    "• 🎧 GPT Audio"
+    "Choose your workspace from the 3-column keyboard below.\n"
+    "Tip: start with Chat AI if you want the fastest path."
 )
 
 

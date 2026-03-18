@@ -79,17 +79,8 @@ logger = logging.getLogger(__name__)
 
 JO_AI_MENU_TEXT = (
     "<b>JO AI Tools</b>\n\n"
-    "Choose a mode:\n"
-    "- JO AI Chat\n"
-    "- Code Generator\n"
-    "- Research\n"
-    "- DeepSeek\n"
-    "- Prompt Generator\n"
-    "- Image Generation\n"
-    "- Video Generation\n"
-    "- JO AI Vision\n"
-    "- Text-to-Speech\n\n"
-    "- GPT Audio\n\n"
+    "Pick a mode from the buttons below.\n"
+    "The menu is arranged for quicker navigation.\n\n"
     "Tip: use /help any time for guidance."
 )
 
@@ -179,6 +170,7 @@ VIDEO_ASPECT_RATIO_TOKEN_MAP = {
 VIDEO_ASPECT_RATIO_OPTIONS = {"16:9", "9:16"}
 VIDEO_DURATION_OPTIONS = {4, 6, 8}
 TELEGRAM_VIDEO_TIMEOUT_SECONDS = 220
+TELEGRAM_VIDEO_FAST_MODE = True
 _raw_video_join_chat_id = (
     str(
         os.getenv("VIDEO_JOIN_CHAT_ID")
@@ -217,6 +209,14 @@ TTS_EMOTION_LABELS = {
     "calm": "Calm",
     "serious": "Serious",
 }
+
+SENSITIVE_PUBLIC_ERROR_DETAIL_PATTERN = re.compile(
+    r"\b("
+    r"pollinations?|nvidia|openai|gemini|deepseek|kimi|provider|backend|model|"
+    r"api(?:\s|-)?key|endpoint|base(?:\s|-)?url|token|credential|secret"
+    r")\b",
+    re.IGNORECASE,
+)
 
 
 def _video_join_required_text() -> str:
@@ -721,12 +721,10 @@ async def _send_prompt_details_step(message: Message) -> None:
 
 
 async def _send_image_intro(message: Message) -> None:
-    available_models_text = "\n".join(f"- {label}" for label, _token in _image_model_keyboard_options())
     await _send_step_message(
         message,
         "<b>Image Generation is active</b>\n\n"
-        "Step 1/2: Choose an image model.\n"
-        f"Options:\n{available_models_text}",
+        "Step 1/2: Choose an image model from the buttons below.",
         reply_markup=image_model_keyboard(DEFAULT_IMAGE_MODEL_OPTION, _image_model_keyboard_options()),
     )
 
@@ -761,7 +759,8 @@ async def _send_video_intro(
         message,
         "<b>Video Generation is active</b>\n\n"
         f"Mode: <b>{VIDEO_MODEL_LABEL_GROK_TEXT_TO_VIDEO}</b>\n"
-        "Set duration and aspect ratio, then tap <b>Generate Video</b>.",
+        "Set duration and aspect ratio, then tap <b>Generate Video</b>.\n"
+        "Fast mode is enabled for quicker renders.",
         reply_markup=video_options_keyboard(duration_seconds, aspect_ratio),
     )
 
@@ -1137,12 +1136,22 @@ def _parse_code_reply(reply_text: str, fallback_title: str) -> ParsedCodeReply:
     )
 
 
+def _public_error_detail(exc: Exception | None) -> str:
+    if exc is None:
+        return ""
+    safe_detail = " ".join(str(exc).split()).strip()
+    if not safe_detail or safe_detail == SAFE_SERVICE_UNAVAILABLE_MESSAGE:
+        return ""
+    if SENSITIVE_PUBLIC_ERROR_DETAIL_PATTERN.search(safe_detail):
+        return "Service temporarily unavailable. Please retry shortly."
+    return safe_detail[:220]
+
+
 def _friendly_error_text(title: str, exc: Exception | None = None) -> str:
     detail = ""
-    if exc is not None:
-        safe_detail = str(exc).strip()
-        if safe_detail and safe_detail != SAFE_SERVICE_UNAVAILABLE_MESSAGE:
-            detail = f"\nReason: {html.escape(safe_detail[:220])}"
+    safe_detail = _public_error_detail(exc)
+    if safe_detail:
+        detail = f"\nReason: {html.escape(safe_detail)}"
     message = (
         f"Warning: <b>{title}</b>\n"
         f"{BRANDING_LINE}\n"
@@ -3714,7 +3723,7 @@ async def _process_image_message(
                             prompt=enhanced_prompt,
                             model=pollinations_model_id,
                             size=image_size,
-                            enhance=True,
+                            enhance=False,
                         ),
                         timeout=TELEGRAM_IMAGE_TIMEOUT_SECONDS,
                     )
@@ -3965,7 +3974,7 @@ async def _process_gpt_audio_message(
                     prompt=enhanced_prompt,
                     model=pollinations_media_service.audio_model_gpt_audio,
                     voice=pollinations_media_service.audio_voice_gpt_audio,
-                    enhance=True,
+                    enhance=False,
                 ),
                 timeout=GPT_AUDIO_TIMEOUT_SECONDS,
             )
@@ -4147,22 +4156,29 @@ async def _process_video_message(
         return
 
     await _maybe_send_engagement(message)
-    enhanced_prompt = build_enhanced_video_prompt(
-        user_text,
-        aspect_ratio=aspect_ratio,
-        duration_seconds=duration_seconds,
-    ) or user_text
+    normalized_prompt = " ".join(user_text.split())
+    video_prompt = normalized_prompt or user_text
+    if not TELEGRAM_VIDEO_FAST_MODE:
+        video_prompt = (
+            build_enhanced_video_prompt(
+                user_text,
+                aspect_ratio=aspect_ratio,
+                duration_seconds=duration_seconds,
+            )
+            or video_prompt
+        )
 
-    progress_message = await _send_progress_message(message, "Creating your video...")
+    progress_text = "Creating your video quickly..." if TELEGRAM_VIDEO_FAST_MODE else "Creating your video..."
+    progress_message = await _send_progress_message(message, progress_text)
     try:
         async with ChatActionSender.typing(bot=message.bot, chat_id=message.chat.id):
             generated = await asyncio.wait_for(
                 pollinations_media_service.generate_video(
-                    prompt=enhanced_prompt,
+                    prompt=video_prompt,
                     model=pollinations_media_service.video_model_grok_text_to_video,
                     duration_seconds=duration_seconds,
                     aspect_ratio=aspect_ratio,
-                    enhance=True,
+                    enhance=not TELEGRAM_VIDEO_FAST_MODE,
                     audio=False,
                 ),
                 timeout=TELEGRAM_VIDEO_TIMEOUT_SECONDS,
