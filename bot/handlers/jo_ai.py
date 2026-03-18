@@ -79,8 +79,17 @@ logger = logging.getLogger(__name__)
 
 JO_AI_MENU_TEXT = (
     "<b>JO AI Tools</b>\n\n"
-    "Pick a mode from the buttons below.\n"
-    "The menu is arranged for quicker navigation.\n\n"
+    "Choose a mode:\n"
+    "- JO AI Chat\n"
+    "- Code Generator\n"
+    "- Research\n"
+    "- DeepSeek\n"
+    "- Prompt Generator\n"
+    "- Image Generation\n"
+    "- Video Generation\n"
+    "- JO AI Vision\n"
+    "- Text-to-Speech\n\n"
+    "- GPT Audio\n\n"
     "Tip: use /help any time for guidance."
 )
 
@@ -352,8 +361,26 @@ MAX_CODE_UPLOAD_BYTES = 1_500_000
 TELEGRAM_TRACKING_TIMEOUT_SECONDS = 4.0
 TELEGRAM_IMAGE_TIMEOUT_SECONDS = 120
 GEMINI_TEMP_DISABLED = True
+CHAT_INLINE_IMAGE_DEFAULT_MODEL = "imagen-4"
 DEBUG_INTENT_PATTERN = re.compile(
     r"\b(debug|fix|error|exception|traceback|bug|issue|crash|failing|failure|broken|not working)\b",
+    flags=re.IGNORECASE,
+)
+CHAT_IMAGE_REQUEST_PATTERN = re.compile(
+    r"\b(generate|create|make|draw|design|render|illustrate|paint|imagine)\b[\s\S]{0,40}"
+    r"\b(image|photo|picture|art|logo|poster|thumbnail|wallpaper|avatar|portrait|icon|cover)\b",
+    flags=re.IGNORECASE,
+)
+CHAT_IMAGE_PREFIX_PATTERN = re.compile(
+    r"^\s*(image|img|photo|picture|art|logo|poster|thumbnail)\s*[:\-]",
+    flags=re.IGNORECASE,
+)
+CHAT_IMAGE_CONTEXT_HINT_PATTERN = re.compile(
+    r"\b(same|previous|earlier|before|above|as discussed|from our chat|based on|continue|match the style)\b",
+    flags=re.IGNORECASE,
+)
+CHAT_IMAGE_EXCLUSION_PATTERN = re.compile(
+    r"\b(image prompt|prompt for image|optimize my prompt|improve my prompt|describe image|analyze image)\b",
     flags=re.IGNORECASE,
 )
 
@@ -635,6 +662,7 @@ async def _send_chat_intro(message: Message) -> None:
     await message.answer(
         "<b>Step 1: JO AI Chat is active</b>\n\n"
         "Send your message and I will reply clearly.\n"
+        "If you want an image here in chat, say: <code>generate an image of ...</code>.\n"
         "Use Back for AI tools, or Main Menu to leave this flow.",
         reply_markup=jo_chat_keyboard("joai:menu"),
     )
@@ -1223,6 +1251,44 @@ def _compact_history_entry(text: str, limit: int = CHAT_HISTORY_ENTRY_MAX_CHARS)
 
 def _is_code_debug_request(text: str) -> bool:
     return bool(DEBUG_INTENT_PATTERN.search(text or ""))
+
+
+def _looks_like_chat_image_request(text: str) -> bool:
+    normalized = " ".join(str(text or "").split())
+    if not normalized:
+        return False
+    if CHAT_IMAGE_EXCLUSION_PATTERN.search(normalized):
+        return False
+    if CHAT_IMAGE_PREFIX_PATTERN.search(normalized):
+        return True
+    return bool(CHAT_IMAGE_REQUEST_PATTERN.search(normalized))
+
+
+def _build_chat_inline_image_prompt(user_text: str, history: list[dict[str, str]]) -> str:
+    cleaned_request = " ".join(str(user_text or "").split())
+    if not cleaned_request:
+        return ""
+    if not CHAT_IMAGE_CONTEXT_HINT_PATTERN.search(cleaned_request):
+        return cleaned_request
+
+    snippets: list[str] = []
+    for item in reversed(history[-8:]):
+        role = str(item.get("role") or "").strip().lower()
+        content = " ".join(str(item.get("content") or "").split())
+        if role not in {"user", "assistant"} or not content:
+            continue
+        label = "User" if role == "user" else "Assistant"
+        snippets.append(f"{label}: {content[:180]}")
+        if len(snippets) >= 4:
+            break
+    if not snippets:
+        return cleaned_request
+    snippets.reverse()
+    context_blob = " | ".join(snippets)
+    return (
+        f"{cleaned_request}\n\n"
+        f"Keep visual continuity with this recent chat context: {context_blob}"
+    )
 
 
 def _code_filename_for_language(lang: str) -> str:
@@ -2218,6 +2284,35 @@ async def handle_jo_ai_text(
     user_text = text
 
     if mode == JoAIMode.CHAT:
+        if _looks_like_chat_image_request(user_text):
+            inline_ratio = image_ratio if image_ratio in IMAGE_RATIO_TO_SIZE else "1:1"
+            inline_model = image_model or (
+                CHAT_INLINE_IMAGE_DEFAULT_MODEL
+                if str(pollinations_media_service.api_key or "").strip()
+                else IMAGE_MODEL_OPTION_JO
+            )
+            inline_prompt = _build_chat_inline_image_prompt(user_text, history_snapshot)
+            await _process_image_message(
+                message,
+                inline_prompt,
+                session_manager,
+                image_generation_service,
+                pollinations_media_service,
+                inline_ratio,
+                inline_model,
+                tracking_service,
+                reply_markup=_chat_reply_keyboard(),
+                feature_used_prefix="chat_image_generation",
+            )
+            if message.from_user:
+                async with session_manager.lock(message.from_user.id) as session:
+                    if session.active_feature == Feature.JO_AI and session.jo_ai_mode == JoAIMode.CHAT:
+                        session.jo_ai_chat_history.append(("user", _compact_history_entry(user_text)))
+                        session.jo_ai_chat_history.append(
+                            ("assistant", _compact_history_entry("Generated an image from your chat request."))
+                        )
+            return
+
         await _process_chat_message(
             message,
             user_text,
@@ -3632,8 +3727,12 @@ async def _process_image_message(
     current_image_ratio: str | None,
     current_image_model: str | None,
     tracking_service: SupabaseTrackingService | None,
+    reply_markup: InlineKeyboardMarkup | None = None,
+    feature_used_prefix: str = "image_generation",
 ) -> None:
     _ = session_manager
+    keyboard = reply_markup or _image_prompt_reply_keyboard()
+    feature_prefix = (feature_used_prefix or "image_generation").strip() or "image_generation"
     model_option = _resolve_image_model_option(current_image_model)
     model_label = _image_model_label(model_option)
     requested_model_option = model_option
@@ -3641,13 +3740,13 @@ async def _process_image_message(
     effective_model_option = model_option
     effective_model_label = model_label
     provider_source = "jo_ai" if effective_model_option == IMAGE_MODEL_OPTION_JO else "pollinations"
-    feature_used = f"image_generation:{effective_model_option}"
+    feature_used = f"{feature_prefix}:{effective_model_option}"
     ratio_label = current_image_ratio if current_image_ratio in IMAGE_RATIO_TO_SIZE else "1:1"
     image_size = IMAGE_RATIO_TO_SIZE.get(ratio_label, IMAGE_RATIO_TO_SIZE["1:1"])
     guardrail_reply = guardrail_response_for_user_query(user_text, ratio_label)
     if guardrail_reply:
         reply_text = guardrail_reply if not _is_internal_rule_block(guardrail_reply) else _image_request_blocked_text()
-        await message.answer(reply_text, reply_markup=_image_prompt_reply_keyboard())
+        await message.answer(reply_text, reply_markup=keyboard)
         await _track_telegram_action(
             tracking_service=tracking_service,
             message=message,
@@ -3666,7 +3765,7 @@ async def _process_image_message(
         if moderation_result.blocked:
             block_reason = grok_safety_reason_code(moderation_result)
             reply_text = _grok_safety_blocked_text("image")
-            await message.answer(reply_text, reply_markup=_image_prompt_reply_keyboard())
+            await message.answer(reply_text, reply_markup=keyboard)
             await _track_telegram_action(
                 tracking_service=tracking_service,
                 message=message,
@@ -3723,7 +3822,7 @@ async def _process_image_message(
                             prompt=enhanced_prompt,
                             model=pollinations_model_id,
                             size=image_size,
-                            enhance=False,
+                            enhance=True,
                         ),
                         timeout=TELEGRAM_IMAGE_TIMEOUT_SECONDS,
                     )
@@ -3732,9 +3831,9 @@ async def _process_image_message(
                         raise
                     fallback_notice = str(exc).strip()[:220]
                     effective_model_option = IMAGE_MODEL_OPTION_JO
-                    effective_model_label = IMAGE_MODEL_LABEL_JO
+                    effective_model_label = IMAGE_MODEL_LABELS[IMAGE_MODEL_OPTION_JO]
                     provider_source = "jo_ai"
-                    feature_used = f"image_generation:{requested_model_option}:fallback_to_{effective_model_option}"
+                    feature_used = f"{feature_prefix}:{requested_model_option}:fallback_to_{effective_model_option}"
                     generated = await asyncio.wait_for(
                         image_generation_service.generate_image(
                             enhanced_prompt,
@@ -3746,7 +3845,7 @@ async def _process_image_message(
     except asyncio.TimeoutError:
         await _clear_progress_message(progress_message)
         reply_text = "Image generation timed out. Please retry."
-        await message.answer(reply_text, reply_markup=_image_prompt_reply_keyboard())
+        await message.answer(reply_text, reply_markup=keyboard)
         await _track_telegram_action(
             tracking_service=tracking_service,
             message=message,
@@ -3770,7 +3869,7 @@ async def _process_image_message(
         await _clear_progress_message(progress_message)
         if _is_internal_rule_block(str(exc)):
             reply_text = _image_request_blocked_text()
-            await message.answer(reply_text, reply_markup=_image_prompt_reply_keyboard())
+            await message.answer(reply_text, reply_markup=keyboard)
             await _track_telegram_action(
                 tracking_service=tracking_service,
                 message=message,
@@ -3799,7 +3898,7 @@ async def _process_image_message(
             reply_text = _image_generation_failed_text(confirmed_unavailable=True)
         else:
             reply_text = _friendly_error_text("Image generation failed", exc)
-        await message.answer(reply_text, reply_markup=_image_prompt_reply_keyboard())
+        await message.answer(reply_text, reply_markup=keyboard)
         await _track_telegram_action(
             tracking_service=tracking_service,
             message=message,
@@ -3823,7 +3922,7 @@ async def _process_image_message(
         await _clear_progress_message(progress_message)
         logger.exception("Unexpected image generation error.")
         reply_text = _image_generation_failed_text(confirmed_unavailable=False)
-        await message.answer(reply_text, reply_markup=_image_prompt_reply_keyboard())
+        await message.answer(reply_text, reply_markup=keyboard)
         await _track_telegram_action(
             tracking_service=tracking_service,
             message=message,
@@ -3858,7 +3957,7 @@ async def _process_image_message(
         sent = await message.answer_photo(
             photo=image_file,
             caption=original_prompt_caption,
-            reply_markup=_image_prompt_reply_keyboard(),
+            reply_markup=keyboard,
         )
         storage_path = None
         if sent.photo:
@@ -3889,7 +3988,7 @@ async def _process_image_message(
         sent = await message.answer_photo(
             photo=generated.image_url,
             caption=original_prompt_caption,
-            reply_markup=_image_prompt_reply_keyboard(),
+            reply_markup=keyboard,
         )
         storage_path = None
         if sent.photo:
@@ -3916,7 +4015,7 @@ async def _process_image_message(
         return
 
     reply_text = _image_generation_failed_text(confirmed_unavailable=True)
-    await message.answer(reply_text, reply_markup=_image_prompt_reply_keyboard())
+    await message.answer(reply_text, reply_markup=keyboard)
     await _track_telegram_action(
         tracking_service=tracking_service,
         message=message,

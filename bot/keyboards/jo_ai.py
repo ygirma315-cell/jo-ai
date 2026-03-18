@@ -22,7 +22,7 @@ def jo_ai_menu_keyboard() -> InlineKeyboardMarkup:
     builder.button(text="🔊 Text-to-Speech", callback_data="joai:tts")
     builder.button(text="GPT Audio", callback_data="joai:gpt_audio")
     _append_back_main(builder, "menu:ai_tools")
-    builder.adjust(3, 3, 3, 1, 2)
+    builder.adjust(2, 2, 2, 2, 2, 2)
     return builder.as_markup()
 
 
@@ -66,7 +66,7 @@ def image_ratio_keyboard() -> InlineKeyboardMarkup:
     builder.button(text="9:16", callback_data="joaiimg:ratio:9_16")
     builder.button(text="🧩 Model", callback_data="joaiimg:model_menu")
     _append_back_main(builder, "joai:image")
-    builder.adjust(3, 3)
+    builder.adjust(2, 1, 1, 2)
     return builder.as_markup()
 
 
@@ -81,10 +81,7 @@ def image_model_keyboard(
         prefix = "✅ " if token == selected else ""
         builder.button(text=f"{prefix}{label}", callback_data=f"joaiimg:model:{token}")
     _append_back_main(builder, "joaiimg:ratio_menu")
-    full_rows, remainder = divmod(len(options), 3)
-    layout = [3] * full_rows
-    if remainder:
-        layout.append(remainder)
+    layout = [1] * len(options)
     layout.append(2)
     builder.adjust(*layout)
     return builder.as_markup()
@@ -108,7 +105,7 @@ def video_options_keyboard(
         builder.button(text=f"{prefix}{label}", callback_data=f"joaivid:ratio:{token}")
     builder.button(text="🎬 Generate Video", callback_data="joaivid:generate")
     _append_back_main(builder, "joai:video")
-    builder.adjust(3, 3, 2)
+    builder.adjust(3, 2, 1, 2)
     return builder.as_markup()
 
 
@@ -118,7 +115,7 @@ def tts_language_keyboard() -> InlineKeyboardMarkup:
     builder.button(text="🇪🇸 Spanish", callback_data="joaitts:lang:es")
     builder.button(text="🇫🇷 French", callback_data="joaitts:lang:fr")
     _append_back_main(builder, "joai:menu")
-    builder.adjust(3, 2)
+    builder.adjust(2, 1, 2)
     return builder.as_markup()
 
 
@@ -128,7 +125,7 @@ def tts_voice_keyboard() -> InlineKeyboardMarkup:
     builder.button(text="🎙️ Male", callback_data="joaitts:voice:male")
     builder.button(text="🧬 Voice Clone", callback_data="joaitts:clone")
     _append_back_main(builder, "joaitts:lang_menu")
-    builder.adjust(3, 2)
+    builder.adjust(2, 1, 2)
     return builder.as_markup()
 
 
@@ -138,11 +135,9 @@ def tts_style_keyboard(style_buttons: list[tuple[str, str]]) -> InlineKeyboardMa
         builder.button(text=label, callback_data=f"joaitts:style:{style_key}")
     builder.button(text="🧬 Voice Clone", callback_data="joaitts:clone")
     _append_back_main(builder, "joaitts:voice_menu")
-    style_count = len(style_buttons) + 1
-    full_rows, remainder = divmod(style_count, 3)
-    layout = [3] * full_rows
-    if remainder:
-        layout.append(remainder)
-    layout.append(2)
+    layout = [2] * (len(style_buttons) // 2)
+    if len(style_buttons) % 2:
+        layout.append(1)
+    layout.extend([1, 2])
     builder.adjust(*layout)
     return builder.as_markup()
