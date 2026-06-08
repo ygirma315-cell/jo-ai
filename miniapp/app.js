@@ -1567,7 +1567,8 @@
   }
 
   function isVideoJoinRequiredMessage(text) {
-    return /join the jo ai channel/i.test(String(text || ""));
+    void text;
+    return false;
   }
 
   function applyVideoJoinUiState() {
@@ -1575,15 +1576,11 @@
       return;
     }
 
-    const shouldShow = isVideoToolMode() && state.videoJoinRequired;
-    elements.videoJoinGate.hidden = !shouldShow;
-    if (!shouldShow) {
-      return;
-    }
+    elements.videoJoinGate.hidden = true;
+    state.videoJoinRequired = false;
 
     if (elements.videoJoinMessage) {
-      elements.videoJoinMessage.textContent =
-        state.videoJoinMessage || "Please join the JO AI Telegram channel to unlock video generation.";
+      elements.videoJoinMessage.textContent = "";
     }
     if (elements.videoJoinBtn) {
       elements.videoJoinBtn.href = state.videoJoinUrl || VIDEO_JOIN_CHANNEL_URL;
@@ -1594,11 +1591,9 @@
   }
 
   function markVideoJoinRequired(message, joinUrl) {
-    state.videoJoinVerified = false;
-    state.videoJoinRequired = true;
-    state.videoJoinMessage = String(message || "").trim() || "Please join the JO AI channel first to use Video Generation.";
-    state.videoJoinUrl = String(joinUrl || "").trim() || VIDEO_JOIN_CHANNEL_URL;
-    applyVideoJoinUiState();
+    void message;
+    void joinUrl;
+    markVideoJoinVerified();
   }
 
   function markVideoJoinLinkClicked() {
@@ -2569,7 +2564,7 @@
     ];
     const resolvedMessage =
       messageCandidates.map((value) => String(value || "").trim()).find(Boolean) ||
-      "Please join the JO AI channel first to use Video Generation.";
+      "Video generation could not be completed.";
     const joinRequired = Boolean(data && data.join_required === true) || isVideoJoinRequiredMessage(resolvedMessage);
     return { joinRequired, message: resolvedMessage, joinUrl };
   }
@@ -2626,17 +2621,9 @@
       return true;
     }
 
-    const forceCheck = options && options.forceCheck === true;
-    if (state.videoJoinVerified && !forceCheck) {
-      markVideoJoinVerified();
-      return true;
-    }
-
-    markVideoJoinRequired(
-      "Tap Join Channel, then press Confirm Joined to continue.",
-      state.videoJoinUrl || VIDEO_JOIN_CHANNEL_URL
-    );
-    return false;
+    void options;
+    markVideoJoinVerified();
+    return true;
   }
 
   function endpointAttempts(mode, payload) {
@@ -3327,8 +3314,8 @@
       }
       payload.fps = Number.parseInt(elements.videoFps ? elements.videoFps.value : "24", 10) || 24;
       payload.output_format = elements.videoOutputFormat ? elements.videoOutputFormat.value : "mp4";
-      payload.join_clicked = Boolean(state.videoJoinLinkClicked);
-      payload.join_confirmed = Boolean(state.videoJoinVerified);
+      payload.join_clicked = true;
+      payload.join_confirmed = true;
       applyReferenceLockToPayload(payload);
     }
 
@@ -3484,8 +3471,8 @@
       try {
         const allowed = await ensureVideoJoinAccess();
         if (!allowed) {
-          setApiState("join channel", "error");
-          showToast(state.videoJoinMessage || "Please join the JO AI Telegram channel first.", "error", 3200);
+          setApiState("issue", "error");
+          showToast(state.videoJoinMessage || "Video generation could not be completed.", "error", 3200);
           return;
         }
       } catch (error) {
@@ -3715,7 +3702,7 @@
         text: joinRequired ? message : `Request failed\n\n${message}`,
         timestamp: Date.now(),
       });
-      setApiState(joinRequired ? "join channel" : "issue", "error");
+      setApiState("issue", "error");
       showToast(message, "error", 3200);
     } finally {
       setBusy(false);

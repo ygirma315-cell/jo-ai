@@ -5,8 +5,8 @@ from aiogram.utils.keyboard import InlineKeyboardBuilder
 
 
 def _append_back_main(builder: InlineKeyboardBuilder, back_callback: str, back_text: str = "Back") -> None:
-    builder.button(text=back_text, callback_data=back_callback)
-    builder.button(text="Main Menu", callback_data="menu:main")
+    builder.button(text=f"⬅️ {back_text}", callback_data=back_callback)
+    builder.button(text="🏠 Main Menu", callback_data="menu:main")
 
 
 def jo_ai_menu_keyboard() -> InlineKeyboardMarkup:
@@ -61,10 +61,10 @@ def uploaded_image_keyboard(back_callback: str = "menu:ai_tools") -> InlineKeybo
 
 def image_ratio_keyboard() -> InlineKeyboardMarkup:
     builder = InlineKeyboardBuilder()
-    builder.button(text="1:1", callback_data="joaiimg:ratio:1_1")
-    builder.button(text="16:9", callback_data="joaiimg:ratio:16_9")
-    builder.button(text="9:16", callback_data="joaiimg:ratio:9_16")
-    builder.button(text="Model", callback_data="joaiimg:model_menu")
+    builder.button(text="⬛ 1:1", callback_data="joaiimg:ratio:1_1")
+    builder.button(text="🎬 16:9", callback_data="joaiimg:ratio:16_9")
+    builder.button(text="📱 9:16", callback_data="joaiimg:ratio:9_16")
+    builder.button(text="🤖 Model", callback_data="joaiimg:model_menu")
     _append_back_main(builder, "joai:image")
     builder.adjust(2, 1, 1, 2)
     return builder.as_markup()
@@ -82,7 +82,8 @@ def image_model_keyboard(
     builder = InlineKeyboardBuilder()
     for label, token in options:
         prefix = "[x] " if token == selected else ""
-        builder.button(text=f"{prefix}{label}", callback_data=f"joaiimg:model:{token}")
+        icon = "🎨" if "JO AI" in label else "🧠"
+        builder.button(text=f"{prefix}{icon} {label}", callback_data=f"joaiimg:model:{token}")
     _append_back_main(builder, "joaiimg:ratio_menu")
     layout = [1] * len(options)
     layout.append(2)
@@ -108,14 +109,16 @@ def video_options_keyboard(
     builder = InlineKeyboardBuilder()
     for value in duration_options:
         prefix = "[x] " if value == duration else ""
-        builder.button(text=f"{prefix}{value}s", callback_data=f"joaivid:duration:{value}")
+        builder.button(text=f"{prefix}⏱️ {value}s", callback_data=f"joaivid:duration:{value}")
     for label, token in ratio_options:
         prefix = "[x] " if label == ratio else ""
-        builder.button(text=f"{prefix}{label}", callback_data=f"joaivid:ratio:{token}")
+        icon = "📱" if label == "9:16" else "🎬"
+        builder.button(text=f"{prefix}{icon} {label}", callback_data=f"joaivid:ratio:{token}")
     for label, token in model_options:
         prefix = "[x] " if token == model_option else ""
-        builder.button(text=f"{prefix}{label}", callback_data=f"joaivid:model:{token}")
-    builder.button(text="Generate Video", callback_data="joaivid:generate")
+        icon = "🎥" if token == "jo_ai_video" else "⚡"
+        builder.button(text=f"{prefix}{icon} {label}", callback_data=f"joaivid:model:{token}")
+    builder.button(text="🎞️ Generate Video", callback_data="joaivid:generate")
     _append_back_main(builder, "joai:video")
     builder.adjust(4, 2, 2, 1, 2)
     return builder.as_markup()

@@ -6,7 +6,6 @@ import hashlib
 import html
 import io
 import logging
-import os
 import re
 from contextlib import suppress
 from typing import Literal
@@ -14,7 +13,7 @@ from typing import Literal
 from aiogram import F, Router
 from aiogram.filters import Command
 from aiogram.exceptions import TelegramBadRequest
-from aiogram.types import BufferedInputFile, CallbackQuery, InlineKeyboardButton, InlineKeyboardMarkup, Message
+from aiogram.types import BufferedInputFile, CallbackQuery, InlineKeyboardMarkup, Message
 from aiogram.utils.chat_action import ChatActionSender
 
 from bot.constants import (
@@ -189,24 +188,6 @@ VIDEO_ASPECT_RATIO_OPTIONS = {"16:9", "9:16"}
 VIDEO_DURATION_OPTIONS = {4, 5, 6, 8}
 TELEGRAM_VIDEO_TIMEOUT_SECONDS = 220
 TELEGRAM_VIDEO_FAST_MODE = True
-_raw_video_join_chat_id = (
-    str(
-        os.getenv("VIDEO_JOIN_CHAT_ID")
-        or os.getenv("VIDEO_JOIN_CHANNEL_USERNAME")
-        or "@JO_AI_CHAT_BOT"
-    )
-    .strip()
-)
-if _raw_video_join_chat_id and _raw_video_join_chat_id.lstrip("-").isdigit():
-    VIDEO_JOIN_CHAT_ID: str | int = int(_raw_video_join_chat_id)
-else:
-    VIDEO_JOIN_CHAT_ID = _raw_video_join_chat_id or "@JO_AI_CHAT_BOT"
-_default_video_join_url = (
-    f"https://t.me/{str(VIDEO_JOIN_CHAT_ID).lstrip('@')}"
-    if str(VIDEO_JOIN_CHAT_ID).startswith("@")
-    else "https://t.me/JO_AI_CHAT_BOT"
-)
-VIDEO_JOIN_CHANNEL_URL = str(os.getenv("VIDEO_JOIN_CHANNEL_URL") or _default_video_join_url).strip() or _default_video_join_url
 GPT_AUDIO_MODEL_LABEL = "GPT Audio"
 GPT_AUDIO_TIMEOUT_SECONDS = 120
 
@@ -235,27 +216,6 @@ SENSITIVE_PUBLIC_ERROR_DETAIL_PATTERN = re.compile(
     r")\b",
     re.IGNORECASE,
 )
-
-
-def _video_join_required_text() -> str:
-    return (
-        "Video generation requires a quick join confirmation.\n\n"
-        "1) Tap 'Join JO AI Channel'\n"
-        "2) Tap 'I Clicked Join Link'\n"
-        "3) Then tap 'Confirm Joined'\n\n"
-        "After that, you can generate videos."
-    )
-
-
-def _video_join_required_keyboard() -> InlineKeyboardMarkup:
-    return InlineKeyboardMarkup(
-        inline_keyboard=[
-            [InlineKeyboardButton(text="Join JO AI Channel", url=VIDEO_JOIN_CHANNEL_URL)],
-            [InlineKeyboardButton(text="I Clicked Join Link", callback_data="joaivid:open_channel")],
-            [InlineKeyboardButton(text="Confirm Joined", callback_data="joaivid:joined_check")],
-            [InlineKeyboardButton(text="Back", callback_data="joai:menu")],
-        ]
-    )
 
 
 def _normalize_image_model_token(value: str | None) -> str:
@@ -430,6 +390,7 @@ BOT_COMMAND_WITH_PAYLOAD_PATTERN = re.compile(
 )
 GROUP_IMAGE_FAILURE_TEXT = "We couldn't generate that image. Please try again."
 GROUP_AUDIO_FAILURE_TEXT = "We couldn't generate that audio. Please try again."
+GROUP_AI_FAILURE_TEXT = "I couldn't answer that. Please try again."
 
 
 @dataclass(slots=True)
@@ -513,6 +474,36 @@ def _compact_generation_failure_text(media_type: Literal["image", "audio", "vide
     if media_type == "video":
         return "We couldn't generate that video. Please try again."
     return GROUP_IMAGE_FAILURE_TEXT
+
+
+def _compact_group_ai_reply(text: str, limit: int = 3600) -> str:
+    normalized = str(text or "").strip()
+    if len(normalized) <= limit:
+        return normalized
+    return f"{normalized[:limit].rstrip()}\n\n[truncated]"
+
+
+def _replied_message_context(message: Message) -> str:
+    replied = getattr(message, "reply_to_message", None)
+    if replied is None:
+        return ""
+    text = str(getattr(replied, "text", None) or getattr(replied, "caption", None) or "").strip()
+    if not text:
+        return ""
+    author = getattr(replied, "from_user", None)
+    author_bits = []
+    if author is not None:
+        first_name = str(getattr(author, "first_name", "") or "").strip()
+        last_name = str(getattr(author, "last_name", "") or "").strip()
+        username = str(getattr(author, "username", "") or "").strip()
+        display_name = " ".join(part for part in (first_name, last_name) if part).strip()
+        if display_name:
+            author_bits.append(display_name)
+        if username:
+            author_bits.append(f"@{username}")
+    author_label = " ".join(author_bits).strip()
+    prefix = f"Replied message from {author_label}:\n" if author_label else "Replied message:\n"
+    return f"{prefix}{_compact_history_entry(text, limit=3000)}"
 
 
 def _chat_model_used(chat_service: ChatService, mode_options: dict[str, object]) -> str | None:
@@ -823,12 +814,12 @@ async def _send_prompt_details_step(message: Message) -> None:
     )
 
 
-async def _send_image_intro(message: Message) -> None:
+async def _send_image_intro(message: Message, selected_model: str | None = DEFAULT_IMAGE_MODEL_OPTION) -> None:
     await _send_step_message(
         message,
         "<b>Image Generation is active</b>\n\n"
         "Step 1/2: Choose an image model from the buttons below.",
-        reply_markup=image_model_keyboard(DEFAULT_IMAGE_MODEL_OPTION, _image_model_keyboard_options()),
+        reply_markup=image_model_keyboard(selected_model or DEFAULT_IMAGE_MODEL_OPTION, _image_model_keyboard_options()),
     )
 
 
@@ -885,18 +876,10 @@ async def _send_video_prompt_step(
     model_label = _video_model_label(model_option)
     await _send_step_message(
         message,
-        "Joined ✅\n\n"
+        "Settings saved.\n\n"
         f"Engine <b>{model_label}</b> | Duration <b>{duration_seconds}s</b> | Ratio <b>{html.escape(aspect_ratio)}</b>\n\n"
         "Send your video prompt now.",
         reply_markup=_video_prompt_reply_keyboard(),
-    )
-
-
-async def _send_video_join_required_step(message: Message) -> None:
-    await _send_step_message(
-        message,
-        _video_join_required_text(),
-        reply_markup=_video_join_required_keyboard(),
     )
 
 
@@ -1015,8 +998,7 @@ async def _switch_to_jo_ai_mode(user_id: int, mode: JoAIMode, session_manager: S
                 session.jo_ai_video_duration = None
                 session.jo_ai_video_aspect_ratio = None
                 session.jo_ai_video_model = None
-                session.jo_ai_video_join_link_clicked = False
-                session.jo_ai_video_join_confirmed = False
+            session.jo_ai_group_chat_id = None
             if mode != JoAIMode.KIMI_IMAGE_DESCRIBER:
                 session.jo_ai_kimi_waiting_image = False
                 session.jo_ai_last_image_prompt = None
@@ -1100,6 +1082,33 @@ async def _activate_mode(
         return
 
     await message.answer("Select a JO AI mode to continue.", reply_markup=jo_ai_menu_keyboard())
+
+
+async def _activate_group_mode(message: Message, user_id: int, mode: JoAIMode, session_manager: SessionManager) -> None:
+    await session_manager.switch_feature(user_id, Feature.JO_AI)
+    await _switch_to_jo_ai_mode(user_id, mode, session_manager)
+    async with session_manager.lock(user_id) as session:
+        session.jo_ai_group_chat_id = int(message.chat.id)
+        if mode == JoAIMode.IMAGE:
+            session.jo_ai_image_model = DEFAULT_POLLINATIONS_IMAGE_MODEL
+            session.jo_ai_image_ratio = None
+        elif mode == JoAIMode.VIDEO:
+            session.jo_ai_video_duration = DEFAULT_VIDEO_DURATION_SECONDS
+            session.jo_ai_video_aspect_ratio = DEFAULT_VIDEO_ASPECT_RATIO
+            session.jo_ai_video_model = DEFAULT_VIDEO_MODEL_OPTION
+
+
+async def _clear_group_mode(user_id: int, session_manager: SessionManager) -> None:
+    async with session_manager.lock(user_id) as session:
+        if session.active_feature != Feature.JO_AI or session.jo_ai_group_chat_id is None:
+            return
+        session.jo_ai_group_chat_id = None
+        session.jo_ai_mode = JoAIMode.MENU
+        session.jo_ai_image_ratio = None
+        session.jo_ai_image_model = None
+        session.jo_ai_video_duration = None
+        session.jo_ai_video_aspect_ratio = None
+        session.jo_ai_video_model = None
 
 
 async def _maybe_send_engagement(message: Message) -> None:
@@ -1636,9 +1645,139 @@ async def _send_formatted_ai_reply(
     )
 
 
+async def _process_group_ai_text_command(
+    message: Message,
+    user_text: str,
+    chat_service: ChatService,
+    tracking_service: SupabaseTrackingService | None,
+    *,
+    replied_context: str = "",
+) -> None:
+    model_used = (chat_service.model or "").strip() or None
+    command = "search"
+    command_label = "group_search"
+    failure_text = GROUP_AI_FAILURE_TEXT
+    cleaned_user_text = " ".join(str(user_text or "").split())
+    cleaned_context = str(replied_context or "").strip()
+    if not cleaned_user_text and not cleaned_context:
+        reply_text = "Use /serach with a question, or reply to a message with /serach."
+        await message.answer(reply_text)
+        await _track_telegram_action(
+            tracking_service=tracking_service,
+            message=message,
+            message_type="search",
+            user_message=user_text,
+            bot_reply=reply_text,
+            model_used=model_used,
+            success=False,
+            message_increment=1,
+            feature_used=f"{command_label}:missing_prompt",
+        )
+        return
+
+    if cleaned_context:
+        task = (
+            f"Extra instruction from the command: {cleaned_user_text}"
+            if cleaned_user_text
+            else "Answer the replied message as if the group asked you this directly."
+        )
+        prompt = (
+            "You are JO AI answering a Telegram group /search command. "
+            "Use the replied Telegram message below as the user's context. Do not claim you can read the whole group chat. "
+            "Answer directly and helpfully.\n\n"
+            f"{cleaned_context}\n\n{task}"
+        )
+        tracked_user_message = f"{cleaned_context}\n\n{task}"
+    else:
+        prompt = (
+            "You are JO AI answering a Telegram group /search command. "
+            "Give a clear, concise answer. If the user asks for live or very current facts, say you cannot verify live data here "
+            "and answer only from general knowledge.\n\n"
+            f"Search request: {cleaned_user_text}"
+        )
+        tracked_user_message = cleaned_user_text
+
+    progress_message = await _send_progress_message(message, "Trying to find answer...")
+    try:
+        async with ChatActionSender.typing(bot=message.bot, chat_id=message.chat.id):
+            reply = await chat_service.generate_reply(prompt, history=[], mode="chat")
+    except AIServiceError as exc:
+        await _clear_progress_message(progress_message)
+        logger.warning("Group %s command failed: %s", command, exc)
+        await message.answer(failure_text)
+        await _track_telegram_action(
+            tracking_service=tracking_service,
+            message=message,
+            message_type=command,
+            user_message=tracked_user_message,
+            bot_reply=failure_text,
+            model_used=model_used,
+            success=False,
+            message_increment=1,
+            feature_used=f"{command_label}:failed",
+        )
+        return
+    except Exception:
+        await _clear_progress_message(progress_message)
+        logger.exception("Unexpected group %s command error.", command)
+        await message.answer(failure_text)
+        await _track_telegram_action(
+            tracking_service=tracking_service,
+            message=message,
+            message_type=command,
+            user_message=tracked_user_message,
+            bot_reply=failure_text,
+            model_used=model_used,
+            success=False,
+            message_increment=1,
+            feature_used=f"{command_label}:failed",
+        )
+        return
+
+    await _clear_progress_message(progress_message)
+    reply_text = _compact_group_ai_reply(reply, limit=3200) or failure_text
+    await message.answer(html.escape(reply_text))
+    await _track_telegram_action(
+        tracking_service=tracking_service,
+        message=message,
+        message_type=command,
+        user_message=tracked_user_message,
+        bot_reply=reply,
+        model_used=model_used,
+        success=True,
+        message_increment=1,
+        feature_used=command_label,
+    )
+
+
+@router.message(Command("serach"))
+@router.message(Command("search"))
+async def group_search_command(
+    message: Message,
+    chat_service: ChatService,
+    tracking_service: SupabaseTrackingService | None = None,
+) -> None:
+    if not message.from_user:
+        return
+    if not _is_group_chat(message):
+        await message.answer("This shortcut is only available in groups.")
+        return
+    raw_text = (message.text or "").strip()
+    command = _command_name(raw_text) or "search"
+    prompt = _command_payload(raw_text, command) or ""
+    await _process_group_ai_text_command(
+        message,
+        prompt,
+        chat_service,
+        tracking_service,
+        replied_context=_replied_message_context(message),
+    )
+
+
 @router.message(Command("audio"))
 async def group_audio_command(
     message: Message,
+    session_manager: SessionManager,
     pollinations_media_service: PollinationsMediaService,
     tracking_service: SupabaseTrackingService | None = None,
 ) -> None:
@@ -1649,7 +1788,8 @@ async def group_audio_command(
         return
     prompt = _command_payload((message.text or "").strip(), "audio") or ""
     if not prompt:
-        await message.answer(GROUP_AUDIO_FAILURE_TEXT)
+        await _activate_group_mode(message, message.from_user.id, JoAIMode.GPT_AUDIO, session_manager)
+        await _send_gpt_audio_intro(message)
         return
     await _process_group_audio_command(
         message,
@@ -1715,7 +1855,8 @@ async def open_jo_ai_menu(
         if command == "image":
             prompt = _command_payload(raw_text, "image") or ""
             if not prompt:
-                await message.answer(GROUP_IMAGE_FAILURE_TEXT)
+                await _activate_group_mode(message, message.from_user.id, JoAIMode.IMAGE, session_manager)
+                await _send_image_intro(message, selected_model=DEFAULT_POLLINATIONS_IMAGE_MODEL)
                 return
             await _process_image_message(
                 message,
@@ -1723,12 +1864,32 @@ async def open_jo_ai_menu(
                 session_manager,
                 image_generation_service,
                 pollinations_media_service,
-                None,
-                DEFAULT_IMAGE_MODEL_OPTION,
+                "1:1",
+                DEFAULT_POLLINATIONS_IMAGE_MODEL,
                 tracking_service,
                 reply_markup=None,
                 feature_used_prefix="group_image_command",
-                show_progress=False,
+                show_progress=True,
+                compact_result=True,
+            )
+            return
+
+        if command == "video":
+            prompt = _command_payload(raw_text, "video") or ""
+            if not prompt:
+                await _activate_group_mode(message, message.from_user.id, JoAIMode.VIDEO, session_manager)
+                await _send_video_intro(message)
+                return
+            await _process_video_message(
+                message=message,
+                user_text=prompt,
+                pollinations_media_service=pollinations_media_service,
+                current_duration_seconds=DEFAULT_VIDEO_DURATION_SECONDS,
+                current_aspect_ratio=DEFAULT_VIDEO_ASPECT_RATIO,
+                current_model_option=DEFAULT_VIDEO_MODEL_OPTION,
+                tracking_service=tracking_service,
+                image_generation_service=image_generation_service,
+                show_progress=True,
                 compact_result=True,
             )
             return
@@ -1736,7 +1897,8 @@ async def open_jo_ai_menu(
         if command in {"audio", "gptaudio"}:
             prompt = _command_payload(raw_text, command) or ""
             if not prompt:
-                await message.answer(GROUP_AUDIO_FAILURE_TEXT)
+                await _activate_group_mode(message, message.from_user.id, JoAIMode.GPT_AUDIO, session_manager)
+                await _send_gpt_audio_intro(message)
                 return
             await _process_group_audio_command(
                 message,
@@ -1746,7 +1908,7 @@ async def open_jo_ai_menu(
             )
             return
 
-        await message.answer("In groups, use /image prompt or /audio text.")
+        await message.answer("In groups, use /image, /video, /audio, or reply with /serach.")
         return
 
     if text in {"/chat", MENU_AI_CHAT.lower()}:
@@ -2477,12 +2639,10 @@ async def prepare_video_generation(query: CallbackQuery, session_manager: Sessio
     duration_seconds = DEFAULT_VIDEO_DURATION_SECONDS
     aspect_ratio = DEFAULT_VIDEO_ASPECT_RATIO
     model_option = DEFAULT_VIDEO_MODEL_OPTION
-    join_confirmed = False
     async with session_manager.lock(query.from_user.id) as session:
         if session.active_feature != Feature.JO_AI or session.jo_ai_mode != JoAIMode.VIDEO:
             await query.answer("Video session expired. Send /video again.", show_alert=True)
             return
-        join_confirmed = bool(session.jo_ai_video_join_confirmed)
         if session.jo_ai_video_duration in VIDEO_DURATION_OPTIONS:
             duration_seconds = int(session.jo_ai_video_duration)
         else:
@@ -2494,70 +2654,8 @@ async def prepare_video_generation(query: CallbackQuery, session_manager: Sessio
         session.jo_ai_video_model = _resolve_video_model_option(session.jo_ai_video_model)
         model_option = session.jo_ai_video_model
 
-    if not join_confirmed:
-        await query.answer("Please join first, then tap Confirm Joined.", show_alert=True)
-        if isinstance(query.message, Message):
-            await _send_video_join_required_step(query.message)
-        return
-
-    await query.answer("Join confirmed.")
+    await query.answer("Video settings ready.")
     if isinstance(query.message, Message):
-        await _send_video_prompt_step(
-            query.message,
-            duration_seconds=duration_seconds,
-            aspect_ratio=aspect_ratio,
-            model_option=model_option,
-        )
-
-
-@router.callback_query(F.data == "joaivid:open_channel")
-async def mark_video_join_link_clicked(query: CallbackQuery, session_manager: SessionManager) -> None:
-    if not query.from_user:
-        await query.answer()
-        return
-
-    async with session_manager.lock(query.from_user.id) as session:
-        if session.active_feature != Feature.JO_AI or session.jo_ai_mode != JoAIMode.VIDEO:
-            await query.answer("Video session expired. Send /video again.", show_alert=True)
-            return
-        session.jo_ai_video_join_link_clicked = True
-        session.jo_ai_video_join_confirmed = False
-
-    await query.answer("Great. After joining, tap Confirm Joined.", show_alert=True)
-
-
-@router.callback_query(F.data == "joaivid:joined_check")
-async def check_video_join_after_button(query: CallbackQuery, session_manager: SessionManager) -> None:
-    if not query.from_user:
-        await query.answer()
-        return
-
-    duration_seconds = DEFAULT_VIDEO_DURATION_SECONDS
-    aspect_ratio = DEFAULT_VIDEO_ASPECT_RATIO
-    model_option = DEFAULT_VIDEO_MODEL_OPTION
-    async with session_manager.lock(query.from_user.id) as session:
-        if session.active_feature != Feature.JO_AI or session.jo_ai_mode != JoAIMode.VIDEO:
-            await query.answer("Video session expired. Send /video again.", show_alert=True)
-            return
-        if not bool(session.jo_ai_video_join_link_clicked):
-            await query.answer("Tap 'I Clicked Join Link' first, then confirm.", show_alert=True)
-            return
-        session.jo_ai_video_join_confirmed = True
-        if session.jo_ai_video_duration in VIDEO_DURATION_OPTIONS:
-            duration_seconds = int(session.jo_ai_video_duration)
-        else:
-            session.jo_ai_video_duration = DEFAULT_VIDEO_DURATION_SECONDS
-        if session.jo_ai_video_aspect_ratio in VIDEO_ASPECT_RATIO_OPTIONS:
-            aspect_ratio = str(session.jo_ai_video_aspect_ratio)
-        else:
-            session.jo_ai_video_aspect_ratio = DEFAULT_VIDEO_ASPECT_RATIO
-        session.jo_ai_video_model = _resolve_video_model_option(session.jo_ai_video_model)
-        model_option = session.jo_ai_video_model
-
-    await query.answer("Join confirmed.")
-    if isinstance(query.message, Message):
-        with suppress(TelegramBadRequest):
-            await query.message.delete()
         await _send_video_prompt_step(
             query.message,
             duration_seconds=duration_seconds,
@@ -2599,9 +2697,68 @@ async def handle_jo_ai_text(
 ) -> None:
     if not message.from_user:
         return
-    if _is_group_chat(message):
-        return
     text = (message.text or "").strip()
+    if _is_group_chat(message):
+        async with session_manager.lock(message.from_user.id) as session:
+            group_mode = session.jo_ai_mode if session.active_feature == Feature.JO_AI else JoAIMode.MENU
+            group_chat_id = session.jo_ai_group_chat_id
+            group_image_ratio = session.jo_ai_image_ratio
+            group_image_model = session.jo_ai_image_model
+            group_video_duration = session.jo_ai_video_duration
+            group_video_aspect_ratio = session.jo_ai_video_aspect_ratio
+            group_video_model_option = _resolve_video_model_option(session.jo_ai_video_model)
+
+        if group_chat_id != int(message.chat.id) or group_mode not in {
+            JoAIMode.IMAGE,
+            JoAIMode.VIDEO,
+            JoAIMode.GPT_AUDIO,
+        }:
+            return
+
+        try:
+            if group_mode == JoAIMode.IMAGE:
+                await _process_image_message(
+                    message,
+                    text,
+                    session_manager,
+                    image_generation_service,
+                    pollinations_media_service,
+                    group_image_ratio or "1:1",
+                    group_image_model or DEFAULT_POLLINATIONS_IMAGE_MODEL,
+                    tracking_service,
+                    reply_markup=None,
+                    feature_used_prefix="group_image_flow",
+                    show_progress=True,
+                    compact_result=True,
+                )
+                return
+
+            if group_mode == JoAIMode.VIDEO:
+                await _process_video_message(
+                    message=message,
+                    user_text=text,
+                    pollinations_media_service=pollinations_media_service,
+                    current_duration_seconds=group_video_duration,
+                    current_aspect_ratio=group_video_aspect_ratio,
+                    current_model_option=group_video_model_option,
+                    tracking_service=tracking_service,
+                    image_generation_service=image_generation_service,
+                    show_progress=True,
+                    compact_result=True,
+                )
+                return
+
+            await _process_group_audio_command(
+                message,
+                text,
+                pollinations_media_service,
+                tracking_service,
+                feature_used="group_audio_flow",
+            )
+            return
+        finally:
+            await _clear_group_mode(message.from_user.id, session_manager)
+
     if not text:
         reply_text = "Please send a text message to continue."
         await message.answer(reply_text)
@@ -2625,7 +2782,6 @@ async def handle_jo_ai_text(
         video_duration = session.jo_ai_video_duration
         video_aspect_ratio = session.jo_ai_video_aspect_ratio
         video_model_option = _resolve_video_model_option(session.jo_ai_video_model)
-        video_join_confirmed = bool(session.jo_ai_video_join_confirmed)
         last_generated_image_url = session.jo_ai_last_generated_image_url
         code_file_name = session.jo_ai_code_file_name
         code_file_content = session.jo_ai_code_file_content
@@ -2749,7 +2905,6 @@ async def handle_jo_ai_text(
                 current_duration_seconds=video_duration,
                 current_aspect_ratio=video_aspect_ratio,
                 current_model_option=selected_video_model,
-                join_confirmed=video_join_confirmed,
                 tracking_service=tracking_service,
                 reference_image_url=reference_image_url,
                 image_generation_service=image_generation_service,
@@ -2901,7 +3056,6 @@ async def handle_jo_ai_text(
             video_duration,
             video_aspect_ratio,
             video_model_option,
-            video_join_confirmed,
             tracking_service,
             image_generation_service=image_generation_service,
         )
@@ -4960,8 +5114,10 @@ async def _process_group_audio_command(
     user_text: str,
     pollinations_media_service: PollinationsMediaService,
     tracking_service: SupabaseTrackingService | None,
+    *,
+    show_progress: bool = True,
+    feature_used: str = "group_audio_command",
 ) -> None:
-    feature_used = "group_audio_command"
     failure_text = _compact_generation_failure_text("audio")
     guardrail_reply = guardrail_response_for_user_query(user_text)
     if guardrail_reply:
@@ -4984,6 +5140,7 @@ async def _process_group_audio_command(
         "Keep it natural and concise.\n\n"
         f"User request: {user_text}"
     )
+    progress_message = await _send_progress_message(message, "Generating your audio...") if show_progress else None
     try:
         async with ChatActionSender.typing(bot=message.bot, chat_id=message.chat.id):
             generated = await asyncio.wait_for(
@@ -4996,6 +5153,7 @@ async def _process_group_audio_command(
                 timeout=GPT_AUDIO_TIMEOUT_SECONDS,
             )
     except Exception:
+        await _clear_progress_message(progress_message)
         logger.exception("Group audio command failed.")
         await message.answer(failure_text)
         await _track_telegram_action(
@@ -5018,6 +5176,7 @@ async def _process_group_audio_command(
         )
         return
 
+    await _clear_progress_message(progress_message)
     extension = generated.file_extension if generated.file_extension else _tts_extension_for_mime_type(generated.mime_type)
     audio_file = BufferedInputFile(generated.audio_bytes, filename=f"jo_ai_audio.{extension}")
     prompt_caption = html.escape(" ".join(user_text.split())[:900])
@@ -5054,10 +5213,11 @@ async def _process_video_message(
     current_duration_seconds: int | None,
     current_aspect_ratio: str | None,
     current_model_option: str | None,
-    join_confirmed: bool,
     tracking_service: SupabaseTrackingService | None,
     reference_image_url: str | None = None,
     image_generation_service: ImageGenerationService | None = None,
+    show_progress: bool = True,
+    compact_result: bool = False,
 ) -> None:
     duration_seconds = int(current_duration_seconds or DEFAULT_VIDEO_DURATION_SECONDS)
     if duration_seconds not in VIDEO_DURATION_OPTIONS:
@@ -5076,13 +5236,14 @@ async def _process_video_message(
     )
 
     async def _track_video_failure(reply_text: str, *, reason: str, media_status: str = "failed") -> None:
-        await message.answer(reply_text, reply_markup=_video_prompt_reply_keyboard())
+        visible_reply_text = _compact_generation_failure_text("video") if compact_result else reply_text
+        await message.answer(visible_reply_text, reply_markup=None if compact_result else _video_prompt_reply_keyboard())
         await _track_telegram_action(
             tracking_service=tracking_service,
             message=message,
             message_type="video",
             user_message=user_text,
-            bot_reply=reply_text,
+            bot_reply=visible_reply_text,
             model_used=model_used,
             success=False,
             message_increment=1,
@@ -5096,21 +5257,6 @@ async def _process_video_message(
             ),
         )
 
-    if message.from_user and not join_confirmed:
-        reply_text = _video_join_required_text()
-        await _send_video_join_required_step(message)
-        await _track_telegram_action(
-            tracking_service=tracking_service,
-            message=message,
-            message_type="video",
-            user_message=user_text,
-            bot_reply=reply_text,
-            model_used=model_used,
-            success=False,
-            message_increment=1,
-            feature_used=feature_used,
-        )
-        return
     guardrail_reply = guardrail_response_for_user_query(user_text, aspect_ratio, str(duration_seconds))
     if guardrail_reply:
         reply_text = guardrail_reply if not _is_internal_rule_block(guardrail_reply) else _image_request_blocked_text()
@@ -5140,8 +5286,8 @@ async def _process_video_message(
             or video_prompt
         )
 
-    progress_text = f"Creating {selected_model_label}..."
-    progress_message = await _send_progress_message(message, progress_text)
+    progress_text = "Generating your video..." if compact_result else f"Creating {selected_model_label}..."
+    progress_message = await _send_progress_message(message, progress_text) if show_progress else None
     try:
         async with ChatActionSender.typing(bot=message.bot, chat_id=message.chat.id):
             if selected_model_option == VIDEO_MODEL_OPTION_JO_AI_VIDEO:
@@ -5201,10 +5347,16 @@ async def _process_video_message(
         return
 
     await _clear_progress_message(progress_message)
+    prompt_caption = html.escape(" ".join(user_text.split())[:900])
     caption = (
-        f"<b>{selected_model_label}</b>\n"
-        f"Duration: <b>{duration_seconds}s</b> | Ratio: <b>{html.escape(aspect_ratio)}</b>"
+        f"Prompt: {prompt_caption}"
+        if compact_result and prompt_caption
+        else (
+            f"<b>{selected_model_label}</b>\n"
+            f"Duration: <b>{duration_seconds}s</b> | Ratio: <b>{html.escape(aspect_ratio)}</b>"
+        )
     )
+    result_keyboard = None if compact_result else _video_prompt_reply_keyboard()
 
     if generated.video_bytes:
         mime_type = (generated.mime_type or "").strip().lower()
@@ -5214,7 +5366,7 @@ async def _process_video_message(
             sent = await message.answer_animation(
                 animation=animation_file,
                 caption=caption,
-                reply_markup=_video_prompt_reply_keyboard(),
+                reply_markup=result_keyboard,
             )
             storage_path = f"telegram_file:{sent.animation.file_id}" if sent.animation else None
         else:
@@ -5225,7 +5377,7 @@ async def _process_video_message(
             sent = await message.answer_video(
                 video=video_file,
                 caption=caption,
-                reply_markup=_video_prompt_reply_keyboard(),
+                reply_markup=result_keyboard,
             )
             storage_path = f"telegram_file:{sent.video.file_id}" if sent.video else None
         await _track_telegram_action(
@@ -5254,7 +5406,7 @@ async def _process_video_message(
         sent = await message.answer_video(
             video=generated.video_url,
             caption=caption,
-            reply_markup=_video_prompt_reply_keyboard(),
+            reply_markup=result_keyboard,
         )
         storage_path = f"telegram_file:{sent.video.file_id}" if sent.video else None
         await _track_telegram_action(

@@ -79,8 +79,7 @@ class SessionManager:
         session.jo_ai_video_duration = None
         session.jo_ai_video_aspect_ratio = None
         session.jo_ai_video_model = None
-        session.jo_ai_video_join_link_clicked = False
-        session.jo_ai_video_join_confirmed = False
+        session.jo_ai_group_chat_id = None
         session.jo_ai_kimi_waiting_image = False
         session.jo_ai_last_image_file_id = None
         session.jo_ai_last_image_prompt = None

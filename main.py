@@ -119,24 +119,6 @@ POLLINATIONS_FREE_IMAGE_MODELS: tuple[tuple[str, str], ...] = (
 POLLINATIONS_FREE_IMAGE_MODEL_IDS = frozenset(model_id for model_id, _label in POLLINATIONS_FREE_IMAGE_MODELS)
 VIDEO_MODEL_OPTION_GROK_TEXT_TO_VIDEO = "grok_text_to_video"
 VIDEO_MODEL_OPTION_JO_AI_VIDEO = "jo_ai_video"
-_raw_video_join_chat_id = (
-    str(
-        os.getenv("VIDEO_JOIN_CHAT_ID")
-        or os.getenv("VIDEO_JOIN_CHANNEL_USERNAME")
-        or "@JO_AI_CHAT_BOT"
-    )
-    .strip()
-)
-if _raw_video_join_chat_id and _raw_video_join_chat_id.lstrip("-").isdigit():
-    VIDEO_JOIN_CHAT_ID: str | int = int(_raw_video_join_chat_id)
-else:
-    VIDEO_JOIN_CHAT_ID = _raw_video_join_chat_id or "@JO_AI_CHAT_BOT"
-_default_video_join_url = (
-    f"https://t.me/{str(VIDEO_JOIN_CHAT_ID).lstrip('@')}"
-    if str(VIDEO_JOIN_CHAT_ID).startswith("@")
-    else "https://t.me/JO_AI_CHAT_BOT"
-)
-VIDEO_JOIN_CHANNEL_URL = str(os.getenv("VIDEO_JOIN_CHANNEL_URL") or _default_video_join_url).strip() or _default_video_join_url
 
 IMAGE_MODEL_OPTION_LABELS: dict[str, str] = {
     IMAGE_MODEL_OPTION_JO: IMAGE_MODEL_LABEL_JO,
@@ -1867,20 +1849,10 @@ async def _resolve_bot_username() -> str | None:
     return None
 
 
-def _video_join_required_text() -> str:
-    return (
-        "Please complete the video join step first.\n"
-        "Tap the JO AI channel link, then press Confirm Joined.\n"
-        f"Join here: {VIDEO_JOIN_CHANNEL_URL}"
-    )
-
-
 def _video_join_required_payload(*, request_id: str | None = None) -> dict[str, Any]:
     payload: dict[str, Any] = {
-        "error": _video_join_required_text(),
-        "join_required": True,
-        "join_url": VIDEO_JOIN_CHANNEL_URL,
-        "joined": False,
+        "join_required": False,
+        "joined": True,
     }
     if request_id:
         payload["request_id"] = request_id
@@ -5000,9 +4972,6 @@ async def video_endpoint(request: Request, payload: VideoRequest) -> JSONRespons
     conversation_id = _extract_conversation_id(request, identity, feature_used)
     referral_code = _extract_referral_code(request)
     jo_video_config = _effective_jo_video_config(settings)
-    manual_join_clicked = bool(payload.join_clicked)
-    manual_join_confirmed = bool(payload.join_confirmed)
-    manual_join_verified = manual_join_clicked and manual_join_confirmed
     user_prompt = payload.effective_prompt
     video_model_option = payload.effective_model_option
     if video_model_option == VIDEO_MODEL_OPTION_JO_AI_VIDEO and not bool(jo_video_config.get("enabled", True)):
@@ -5056,31 +5025,6 @@ async def video_endpoint(request: Request, payload: VideoRequest) -> JSONRespons
     if access_denied:
         _fail_jo_video_job(job_id, ACCESS_RESTRICTED_MESSAGE)
         return access_denied
-
-    if identity is None and not manual_join_verified:
-        _cancel_jo_video_job(job_id)
-        return JSONResponse(status_code=401, content=_video_join_required_payload(request_id=request_id))
-
-    join_required_message = _video_join_required_text()
-
-    if identity is not None and not manual_join_verified:
-        await _track_api_action(
-            identity=identity,
-            message_type="video",
-            user_message=user_prompt,
-            bot_reply=join_required_message,
-            model_used=video_model_label,
-            success=False,
-            message_increment=1,
-            frontend_source=frontend_source,
-            feature_used=f"{feature_used}:{video_model_option}",
-            conversation_id=conversation_id,
-            text_content=user_prompt,
-            mark_started=True,
-            referral_code=referral_code,
-        )
-        _cancel_jo_video_job(job_id)
-        return JSONResponse(status_code=403, content=_video_join_required_payload(request_id=request_id))
 
     if video_model_option == VIDEO_MODEL_OPTION_JO_AI_VIDEO and identity is not None:
         running_jobs = _running_jo_video_jobs_for_user(identity.telegram_id)
