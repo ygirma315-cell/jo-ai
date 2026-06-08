@@ -1931,95 +1931,6 @@
     }
   }
 
-  function normalizedImageActions(entry) {
-    const raw = entry && Array.isArray(entry.availableActions) ? entry.availableActions : [];
-    const fallback = [
-      "edit",
-      "remix",
-      "remove_object",
-      "change_detail",
-      "animate_this",
-      "use_as_reference",
-      "regenerate_similar",
-      "upscale",
-    ];
-    const source = raw.length ? raw : fallback;
-    return source
-      .map((value) => String(value || "").trim().toLowerCase())
-      .filter(Boolean);
-  }
-
-  function imageActionLabel(action) {
-    return {
-      edit: "Edit",
-      remix: "Remix",
-      remove_object: "Remove Object",
-      change_detail: "Change Detail",
-      animate_this: "Animate This",
-      use_as_reference: "Use as Reference",
-      regenerate_similar: "Regenerate Similar",
-      upscale: "Upscale",
-    }[action] || "Action";
-  }
-
-  function applyReferenceLockFromEntry(entry, options = {}) {
-    if (!entry || typeof entry !== "object") {
-      return null;
-    }
-    const seedValue = Number(entry.seed);
-    const lock = {
-      assetId: entry.assetId || "",
-      imageUrl: entry.imageUrl || entry.referenceImageUrl || "",
-      imageDataUrl: entry.imageDataUrl || "",
-      seed: Number.isFinite(seedValue) && seedValue > 0 ? seedValue : null,
-      similarityStrength: options.similarityStrength || "high",
-      editStrength: options.editStrength || "medium",
-      source: options.source || "user_action",
-    };
-    state.referenceLock = lock;
-    return lock;
-  }
-
-  function queueImageActionPrompt(action, entry) {
-    const lock = applyReferenceLockFromEntry(entry, {
-      similarityStrength: action === "upscale" ? "high" : "high",
-      editStrength: action === "upscale" ? "low" : "medium",
-      source: `image_action:${action}`,
-    });
-    if (!lock) {
-      showToast("No image reference found for this action.", "error");
-      return;
-    }
-
-    const promptByAction = {
-      edit: "Edit this image while keeping the same person, same background, and same style.",
-      remix: "Create a remix variation of this image while keeping the same identity and scene vibe.",
-      remove_object: "Remove the specified object from this image and keep everything else consistent.",
-      change_detail: "Keep the same image and change only the specific detail I request.",
-      animate_this: "Animate this image into a short cinematic video while preserving subject and background.",
-      use_as_reference: "",
-      regenerate_similar: "Generate a similar image with the same subject, style, and composition.",
-      upscale: "Upscale and enhance this image while preserving identity, background, and composition.",
-    };
-
-    const message = promptByAction[action] || "Use this image as the locked reference for the next generation.";
-    if (action === "use_as_reference") {
-      showToast("Reference locked. Send your next prompt.", "success");
-      return;
-    }
-
-    if (action === "animate_this" && elements.videoModel) {
-      elements.videoModel.value = "jo_ai_video";
-    }
-    if (elements.aiInput) {
-      elements.aiInput.value = message;
-      resizeComposerInput();
-      elements.aiInput.focus();
-      updateSendButtonState();
-    }
-    showToast("Reference locked. You can send this now.");
-  }
-
   function createMessageElement(entry) {
     const item = document.createElement("article");
     item.className = `message ${entry.role}${entry.pending ? " pending" : ""}`;
@@ -2139,38 +2050,6 @@
       image.alt = "Generated image";
       image.src = entry.imageDataUrl;
       body.appendChild(image);
-
-      const actions = normalizedImageActions(entry);
-      if (actions.length) {
-        const actionRow = document.createElement("div");
-        actionRow.className = "message-actions";
-        const allowed = new Set([
-          "edit",
-          "remix",
-          "remove_object",
-          "change_detail",
-          "animate_this",
-          "use_as_reference",
-          "regenerate_similar",
-          "upscale",
-        ]);
-        for (const action of actions) {
-          if (!allowed.has(action)) {
-            continue;
-          }
-          const button = document.createElement("button");
-          button.type = "button";
-          button.className = "btn small";
-          button.textContent = imageActionLabel(action);
-          button.addEventListener("click", () => {
-            queueImageActionPrompt(action, entry);
-          });
-          actionRow.appendChild(button);
-        }
-        if (actionRow.childElementCount) {
-          body.appendChild(actionRow);
-        }
-      }
     }
 
     bubble.appendChild(head);
@@ -3508,18 +3387,9 @@
         jo_ai_image_generate: "JO AI Image Generate",
         joai_image_generate: "JO AI Image Generate",
         chat_gbt: "GPT Image Mini",
-        grok_imagine: "Grok Imagine",
         "gpt-image-1-mini": "GPT Image Mini",
         gpt_image_1_mini: "GPT Image Mini",
         gptimage: "GPT Image Mini",
-        flux: "Flux Schnell",
-        zimage: "Z-Image Turbo",
-        klein: "Flux 2 Klein",
-        "imagen-4": "Imagen 4",
-        "flux-2-dev": "Flux 2 Dev",
-        "grok-imagine": "Grok Imagine",
-        dirtberry: "Dirtberry",
-        "dirtberry-pro": "Dirtberry Pro",
       };
       const modelLabel = modelLabelMap[payload.image_model] || "JO AI Image Generate";
       note = `Model: ${modelLabel} | Ratio: ${ratio}`;

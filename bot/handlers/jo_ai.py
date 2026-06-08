@@ -73,6 +73,7 @@ from bot.services.ai_service import (
     build_enhanced_image_prompt,
     build_enhanced_video_prompt,
 )
+from bot.services.jo_video_model import JOAIVideoModelEngine, JOAIVideoOptions
 from bot.services.session_manager import SessionManager
 from bot.services.tracking_service import SupabaseTrackingService, TrackingIdentity, TrackingMedia
 from bot.telegram_formatting import TelegramMessageFormatter
@@ -127,14 +128,6 @@ DEFAULT_POLLINATIONS_IMAGE_MODEL = "gptimage"
 
 POLLINATIONS_FREE_IMAGE_MODEL_OPTIONS: tuple[tuple[str, str], ...] = (
     ("gptimage", "GPT Image Mini"),
-    ("flux", "Flux Schnell"),
-    ("zimage", "Z-Image Turbo"),
-    ("klein", "Flux 2 Klein"),
-    ("imagen-4", "Imagen 4"),
-    ("flux-2-dev", "Flux 2 Dev"),
-    ("grok-imagine", "Grok Imagine"),
-    ("dirtberry", "Dirtberry"),
-    ("dirtberry-pro", "Dirtberry Pro"),
 )
 
 IMAGE_MODEL_LABELS = {
@@ -431,6 +424,12 @@ CHAT_VIDEO_ANIMATE_PATTERN = re.compile(
     r"\b(animate this|make it move|turn this into video|animate it)\b",
     flags=re.IGNORECASE,
 )
+BOT_COMMAND_WITH_PAYLOAD_PATTERN = re.compile(
+    r"^/(?P<command>[a-zA-Z0-9_]+)(?:@[a-zA-Z0-9_]+)?(?:\s+(?P<payload>[\s\S]*))?$",
+    flags=re.IGNORECASE,
+)
+GROUP_IMAGE_FAILURE_TEXT = "We couldn't generate that image. Please try again."
+GROUP_AUDIO_FAILURE_TEXT = "We couldn't generate that audio. Please try again."
 
 
 @dataclass(slots=True)
@@ -486,6 +485,34 @@ def _tracking_text_from_message(message: Message, fallback: str) -> str:
     if message.photo:
         return "[photo]"
     return fallback
+
+
+def _is_group_chat(message: Message) -> bool:
+    return str(getattr(message.chat, "type", "") or "").lower() in {"group", "supergroup"}
+
+
+def _command_payload(message_text: str, command: str) -> str | None:
+    match = BOT_COMMAND_WITH_PAYLOAD_PATTERN.match(str(message_text or "").strip())
+    if not match:
+        return None
+    if match.group("command").strip().lower() != command.strip().lower():
+        return None
+    return str(match.group("payload") or "").strip()
+
+
+def _command_name(message_text: str) -> str | None:
+    match = BOT_COMMAND_WITH_PAYLOAD_PATTERN.match(str(message_text or "").strip())
+    if not match:
+        return None
+    return match.group("command").strip().lower() or None
+
+
+def _compact_generation_failure_text(media_type: Literal["image", "audio", "video"]) -> str:
+    if media_type == "audio":
+        return GROUP_AUDIO_FAILURE_TEXT
+    if media_type == "video":
+        return "We couldn't generate that video. Please try again."
+    return GROUP_IMAGE_FAILURE_TEXT
 
 
 def _chat_model_used(chat_service: ChatService, mode_options: dict[str, object]) -> str | None:
@@ -1609,6 +1636,29 @@ async def _send_formatted_ai_reply(
     )
 
 
+@router.message(Command("audio"))
+async def group_audio_command(
+    message: Message,
+    pollinations_media_service: PollinationsMediaService,
+    tracking_service: SupabaseTrackingService | None = None,
+) -> None:
+    if not message.from_user:
+        return
+    if not _is_group_chat(message):
+        await message.answer("This shortcut is only available in groups.")
+        return
+    prompt = _command_payload((message.text or "").strip(), "audio") or ""
+    if not prompt:
+        await message.answer(GROUP_AUDIO_FAILURE_TEXT)
+        return
+    await _process_group_audio_command(
+        message,
+        prompt,
+        pollinations_media_service,
+        tracking_service,
+    )
+
+
 @router.message(Command("joai"))
 @router.message(Command("chat"))
 @router.message(Command("code"))
@@ -1646,11 +1696,59 @@ async def _send_formatted_ai_reply(
 @router.message(F.text == "AI Tools")
 @router.message(F.text == MENU_JO_AI)
 @router.message(F.text == "Jo AI")
-async def open_jo_ai_menu(message: Message, session_manager: SessionManager, miniapp_url: str | None) -> None:
+async def open_jo_ai_menu(
+    message: Message,
+    session_manager: SessionManager,
+    miniapp_url: str | None,
+    image_generation_service: ImageGenerationService,
+    pollinations_media_service: PollinationsMediaService,
+    tracking_service: SupabaseTrackingService | None = None,
+) -> None:
     if not message.from_user:
         return
 
-    text = (message.text or "").strip().lower()
+    raw_text = (message.text or "").strip()
+    text = raw_text.lower()
+    command = _command_name(raw_text)
+
+    if _is_group_chat(message):
+        if command == "image":
+            prompt = _command_payload(raw_text, "image") or ""
+            if not prompt:
+                await message.answer(GROUP_IMAGE_FAILURE_TEXT)
+                return
+            await _process_image_message(
+                message,
+                prompt,
+                session_manager,
+                image_generation_service,
+                pollinations_media_service,
+                None,
+                DEFAULT_IMAGE_MODEL_OPTION,
+                tracking_service,
+                reply_markup=None,
+                feature_used_prefix="group_image_command",
+                show_progress=False,
+                compact_result=True,
+            )
+            return
+
+        if command in {"audio", "gptaudio"}:
+            prompt = _command_payload(raw_text, command) or ""
+            if not prompt:
+                await message.answer(GROUP_AUDIO_FAILURE_TEXT)
+                return
+            await _process_group_audio_command(
+                message,
+                prompt,
+                pollinations_media_service,
+                tracking_service,
+            )
+            return
+
+        await message.answer("In groups, use /image prompt or /audio text.")
+        return
+
     if text in {"/chat", MENU_AI_CHAT.lower()}:
         await _activate_mode(message, message.from_user.id, JoAIMode.CHAT, session_manager, miniapp_url)
         return
@@ -2501,6 +2599,8 @@ async def handle_jo_ai_text(
 ) -> None:
     if not message.from_user:
         return
+    if _is_group_chat(message):
+        return
     text = (message.text or "").strip()
     if not text:
         reply_text = "Please send a text message to continue."
@@ -2652,6 +2752,7 @@ async def handle_jo_ai_text(
                 join_confirmed=video_join_confirmed,
                 tracking_service=tracking_service,
                 reference_image_url=reference_image_url,
+                image_generation_service=image_generation_service,
             )
             if message.from_user:
                 async with session_manager.lock(message.from_user.id) as session:
@@ -2802,6 +2903,7 @@ async def handle_jo_ai_text(
             video_model_option,
             video_join_confirmed,
             tracking_service,
+            image_generation_service=image_generation_service,
         )
         return
     if mode == JoAIMode.TEXT_TO_SPEECH:
@@ -2861,6 +2963,8 @@ async def handle_code_document_upload(
     tracking_service: SupabaseTrackingService | None = None,
 ) -> None:
     if not message.from_user or not message.document:
+        return
+    if _is_group_chat(message):
         return
 
     document = message.document
@@ -3071,6 +3175,8 @@ async def handle_kimi_photo(
     tracking_service: SupabaseTrackingService | None = None,
 ) -> None:
     if not message.from_user or not message.photo:
+        return
+    if _is_group_chat(message):
         return
 
     largest = message.photo[-1]
@@ -4295,8 +4401,10 @@ async def _process_image_message(
     reply_markup: InlineKeyboardMarkup | None = None,
     feature_used_prefix: str = "image_generation",
     reference_image_url: str | None = None,
+    show_progress: bool = True,
+    compact_result: bool = False,
 ) -> None:
-    keyboard = reply_markup or _image_prompt_reply_keyboard()
+    keyboard = None if compact_result else (reply_markup or _image_prompt_reply_keyboard())
     feature_prefix = (feature_used_prefix or "image_generation").strip() or "image_generation"
     reference_url = str(reference_image_url or "").strip() or None
     model_option = _resolve_image_model_option(current_image_model)
@@ -4315,6 +4423,8 @@ async def _process_image_message(
     image_size = IMAGE_RATIO_TO_SIZE.get(ratio_label, IMAGE_RATIO_TO_SIZE["1:1"])
     if reference_url and not str(pollinations_media_service.api_key or "").strip():
         reply_text = "Image edit needs image API access right now. Please retry after API balance resets."
+        if compact_result:
+            reply_text = _compact_generation_failure_text("image")
         await message.answer(reply_text, reply_markup=keyboard)
         await _track_telegram_action(
             tracking_service=tracking_service,
@@ -4331,6 +4441,8 @@ async def _process_image_message(
     guardrail_reply = guardrail_response_for_user_query(user_text, ratio_label)
     if guardrail_reply:
         reply_text = guardrail_reply if not _is_internal_rule_block(guardrail_reply) else _image_request_blocked_text()
+        if compact_result:
+            reply_text = _compact_generation_failure_text("image")
         await message.answer(reply_text, reply_markup=keyboard)
         await _track_telegram_action(
             tracking_service=tracking_service,
@@ -4350,6 +4462,8 @@ async def _process_image_message(
         if moderation_result.blocked:
             block_reason = grok_safety_reason_code(moderation_result)
             reply_text = _grok_safety_blocked_text("image")
+            if compact_result:
+                reply_text = _compact_generation_failure_text("image")
             await message.answer(reply_text, reply_markup=keyboard)
             await _track_telegram_action(
                 tracking_service=tracking_service,
@@ -4389,7 +4503,7 @@ async def _process_image_message(
         len(enhanced_prompt),
     )
 
-    progress_message = await _send_progress_message(message, "Creating your image...")
+    progress_message = await _send_progress_message(message, "Creating your image...") if show_progress else None
 
     fallback_notice: str | None = None
     try:
@@ -4458,6 +4572,8 @@ async def _process_image_message(
     except asyncio.TimeoutError:
         await _clear_progress_message(progress_message)
         reply_text = "Image generation timed out. Please retry."
+        if compact_result:
+            reply_text = _compact_generation_failure_text("image")
         await message.answer(reply_text, reply_markup=keyboard)
         await _track_telegram_action(
             tracking_service=tracking_service,
@@ -4482,6 +4598,8 @@ async def _process_image_message(
         await _clear_progress_message(progress_message)
         if _is_internal_rule_block(str(exc)):
             reply_text = _image_request_blocked_text()
+            if compact_result:
+                reply_text = _compact_generation_failure_text("image")
             await message.answer(reply_text, reply_markup=keyboard)
             await _track_telegram_action(
                 tracking_service=tracking_service,
@@ -4511,6 +4629,8 @@ async def _process_image_message(
             reply_text = _image_generation_failed_text(confirmed_unavailable=True)
         else:
             reply_text = _friendly_error_text("Image generation failed", exc)
+        if compact_result:
+            reply_text = _compact_generation_failure_text("image")
         await message.answer(reply_text, reply_markup=keyboard)
         await _track_telegram_action(
             tracking_service=tracking_service,
@@ -4535,6 +4655,8 @@ async def _process_image_message(
         await _clear_progress_message(progress_message)
         logger.exception("Unexpected image generation error.")
         reply_text = _image_generation_failed_text(confirmed_unavailable=False)
+        if compact_result:
+            reply_text = _compact_generation_failure_text("image")
         await message.answer(reply_text, reply_markup=keyboard)
         await _track_telegram_action(
             tracking_service=tracking_service,
@@ -4557,12 +4679,17 @@ async def _process_image_message(
         return
 
     await _clear_progress_message(progress_message)
-    result_keyboard = await _image_result_keyboard_for_user(
-        user_id=message.from_user.id if message.from_user else None,
-        session_manager=session_manager,
+    result_keyboard = (
+        None
+        if compact_result
+        else await _image_result_keyboard_for_user(
+            user_id=message.from_user.id if message.from_user else None,
+            session_manager=session_manager,
+        )
     )
-    original_prompt_caption = html.escape(" ".join(user_text.split())[:900]) or "Image generated."
-    if fallback_notice:
+    prompt_caption = html.escape(" ".join(user_text.split())[:900])
+    original_prompt_caption = f"Prompt: {prompt_caption}" if compact_result and prompt_caption else prompt_caption or "Image generated."
+    if fallback_notice and not compact_result:
         original_prompt_caption = f"{original_prompt_caption}\n\nFallback: JO AI image model used."
     success_reply = (
         f"Image generated successfully using JO AI fallback model (requested {requested_model_label})."
@@ -4663,6 +4790,8 @@ async def _process_image_message(
         return
 
     reply_text = _image_generation_failed_text(confirmed_unavailable=True)
+    if compact_result:
+        reply_text = _compact_generation_failure_text("image")
     await message.answer(reply_text, reply_markup=keyboard)
     await _track_telegram_action(
         tracking_service=tracking_service,
@@ -4826,6 +4955,98 @@ async def _process_gpt_audio_message(
     )
 
 
+async def _process_group_audio_command(
+    message: Message,
+    user_text: str,
+    pollinations_media_service: PollinationsMediaService,
+    tracking_service: SupabaseTrackingService | None,
+) -> None:
+    feature_used = "group_audio_command"
+    failure_text = _compact_generation_failure_text("audio")
+    guardrail_reply = guardrail_response_for_user_query(user_text)
+    if guardrail_reply:
+        await message.answer(failure_text)
+        await _track_telegram_action(
+            tracking_service=tracking_service,
+            message=message,
+            message_type="gpt_audio",
+            user_message=user_text,
+            bot_reply=failure_text,
+            model_used=GPT_AUDIO_MODEL_LABEL,
+            success=False,
+            message_increment=1,
+            feature_used=f"{feature_used}:blocked",
+        )
+        return
+
+    enhanced_prompt = (
+        "Generate a clear spoken audio response for this request. "
+        "Keep it natural and concise.\n\n"
+        f"User request: {user_text}"
+    )
+    try:
+        async with ChatActionSender.typing(bot=message.bot, chat_id=message.chat.id):
+            generated = await asyncio.wait_for(
+                pollinations_media_service.generate_audio(
+                    prompt=enhanced_prompt,
+                    model=pollinations_media_service.audio_model_gpt_audio,
+                    voice=pollinations_media_service.audio_voice_gpt_audio,
+                    enhance=False,
+                ),
+                timeout=GPT_AUDIO_TIMEOUT_SECONDS,
+            )
+    except Exception:
+        logger.exception("Group audio command failed.")
+        await message.answer(failure_text)
+        await _track_telegram_action(
+            tracking_service=tracking_service,
+            message=message,
+            message_type="gpt_audio",
+            user_message=user_text,
+            bot_reply=failure_text,
+            model_used=GPT_AUDIO_MODEL_LABEL,
+            success=False,
+            message_increment=1,
+            feature_used=f"{feature_used}:failed",
+            media=TrackingMedia(
+                media_type="audio",
+                provider_source="pollinations",
+                media_origin="generated",
+                media_status="failed",
+                media_error_reason=failure_text,
+            ),
+        )
+        return
+
+    extension = generated.file_extension if generated.file_extension else _tts_extension_for_mime_type(generated.mime_type)
+    audio_file = BufferedInputFile(generated.audio_bytes, filename=f"jo_ai_audio.{extension}")
+    prompt_caption = html.escape(" ".join(user_text.split())[:900])
+    sent = await message.answer_audio(
+        audio=audio_file,
+        caption=f"Prompt: {prompt_caption}" if prompt_caption else "Audio generated.",
+    )
+    storage_path = f"telegram_file:{sent.audio.file_id}" if sent.audio else None
+    await _track_telegram_action(
+        tracking_service=tracking_service,
+        message=message,
+        message_type="gpt_audio",
+        user_message=user_text,
+        bot_reply="Audio generated successfully.",
+        model_used=GPT_AUDIO_MODEL_LABEL,
+        success=True,
+        message_increment=1,
+        feature_used=feature_used,
+        media=TrackingMedia(
+            media_type="audio",
+            storage_path=storage_path,
+            mime_type=generated.mime_type,
+            provider_source="pollinations",
+            media_origin="generated",
+            media_status="available",
+        ),
+    )
+
+
 async def _process_video_message(
     message: Message,
     user_text: str,
@@ -4836,6 +5057,7 @@ async def _process_video_message(
     join_confirmed: bool,
     tracking_service: SupabaseTrackingService | None,
     reference_image_url: str | None = None,
+    image_generation_service: ImageGenerationService | None = None,
 ) -> None:
     duration_seconds = int(current_duration_seconds or DEFAULT_VIDEO_DURATION_SECONDS)
     if duration_seconds not in VIDEO_DURATION_OPTIONS:
@@ -4923,17 +5145,32 @@ async def _process_video_message(
     try:
         async with ChatActionSender.typing(bot=message.bot, chat_id=message.chat.id):
             if selected_model_option == VIDEO_MODEL_OPTION_JO_AI_VIDEO:
-                gif_bytes, gif_mime_type = await asyncio.wait_for(
-                    _generate_jo_video_animation(
-                        prompt=video_prompt,
-                        aspect_ratio=aspect_ratio,
-                        duration_seconds=duration_seconds,
-                        pollinations_media_service=pollinations_media_service,
-                        reference_image_url=reference_image_url,
+                safe_ratio: Literal["16:9", "9:16"] = "9:16" if aspect_ratio == "9:16" else "16:9"
+                engine = JOAIVideoModelEngine(
+                    pollinations_service=pollinations_media_service,
+                    image_service=image_generation_service,
+                )
+                engine_result = await asyncio.wait_for(
+                    engine.generate(
+                        JOAIVideoOptions(
+                            prompt=video_prompt,
+                            aspect_ratio=safe_ratio,
+                            duration_seconds=duration_seconds,
+                            scene_count=1,
+                            fps=12,
+                            output_format="gif",
+                            reference_image_url=reference_image_url,
+                            provider_level1_enabled=False,
+                            fallback_enabled=True,
+                        )
                     ),
                     timeout=TELEGRAM_VIDEO_TIMEOUT_SECONDS,
                 )
-                generated = GeneratedVideoResult(video_bytes=gif_bytes, video_url=None, mime_type=gif_mime_type)
+                generated = GeneratedVideoResult(
+                    video_bytes=engine_result.video_bytes,
+                    video_url=engine_result.video_url,
+                    mime_type=engine_result.mime_type,
+                )
             else:
                 generated = await asyncio.wait_for(
                     pollinations_media_service.generate_video(

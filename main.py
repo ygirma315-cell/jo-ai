@@ -115,14 +115,6 @@ IMAGE_MODEL_OPTION_GROK_IMAGINE = "grok_imagine"
 DEFAULT_POLLINATIONS_IMAGE_MODEL_OPTION = "gptimage"
 POLLINATIONS_FREE_IMAGE_MODELS: tuple[tuple[str, str], ...] = (
     ("gptimage", "GPT Image Mini"),
-    ("flux", "Flux Schnell"),
-    ("zimage", "Z-Image Turbo"),
-    ("klein", "Flux 2 Klein"),
-    ("imagen-4", "Imagen 4"),
-    ("flux-2-dev", "Flux 2 Dev"),
-    ("grok-imagine", "Grok Imagine"),
-    ("dirtberry", "Dirtberry"),
-    ("dirtberry-pro", "Dirtberry Pro"),
 )
 POLLINATIONS_FREE_IMAGE_MODEL_IDS = frozenset(model_id for model_id, _label in POLLINATIONS_FREE_IMAGE_MODELS)
 VIDEO_MODEL_OPTION_GROK_TEXT_TO_VIDEO = "grok_text_to_video"
@@ -2875,14 +2867,6 @@ def models_registry() -> dict[str, Any]:
         "image_models": [
             {"id": IMAGE_MODEL_OPTION_JO, "label": IMAGE_MODEL_LABEL_JO},
             {"id": "gptimage", "label": "GPT Image Mini"},
-            {"id": "flux", "label": "Flux Schnell"},
-            {"id": "zimage", "label": "Z-Image Turbo"},
-            {"id": "klein", "label": "Flux 2 Klein"},
-            {"id": "imagen-4", "label": "Imagen 4"},
-            {"id": "flux-2-dev", "label": "Flux 2 Dev"},
-            {"id": "grok-imagine", "label": "Grok Imagine"},
-            {"id": "dirtberry", "label": "Dirtberry"},
-            {"id": "dirtberry-pro", "label": "Dirtberry Pro"},
         ],
         "video_models": [
             {"id": VIDEO_MODEL_OPTION_GROK_TEXT_TO_VIDEO, "label": VIDEO_MODEL_LABEL_GROK_TEXT_TO_VIDEO, "enabled": True},
@@ -4865,16 +4849,7 @@ async def image_endpoint(request: Request, payload: ImageRequest) -> JSONRespons
             "asset_type": "image",
             "asset_id": uuid.uuid4().hex,
             "edit_mode": bool(reference_locked),
-            "available_actions": [
-                "edit",
-                "remix",
-                "remove_object",
-                "change_detail",
-                "animate_this",
-                "use_as_reference",
-                "regenerate_similar",
-                "upscale",
-            ],
+            "available_actions": [],
         }
         if fallback_reason:
             response_payload["fallback_applied"] = True

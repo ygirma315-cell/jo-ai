@@ -75,7 +75,10 @@ def image_model_keyboard(
     model_options: list[tuple[str, str]] | None = None,
 ) -> InlineKeyboardMarkup:
     selected = (selected_model or "").strip().lower()
-    options = model_options or [("JO AI Image Generate", "joai_image_generate")]
+    options = model_options or [
+        ("JO AI Image Generate", "joai_image_generate"),
+        ("GPT Image Mini", "gptimage"),
+    ]
     builder = InlineKeyboardBuilder()
     for label, token in options:
         prefix = "[x] " if token == selected else ""
@@ -120,16 +123,8 @@ def video_options_keyboard(
 
 def image_result_actions_keyboard(back_callback: str = "joaiimg:ratio_menu") -> InlineKeyboardMarkup:
     builder = InlineKeyboardBuilder()
-    builder.button(text="Edit", callback_data="joaiimg:action:edit")
-    builder.button(text="Remix", callback_data="joaiimg:action:remix")
-    builder.button(text="Remove Object", callback_data="joaiimg:action:remove_object")
-    builder.button(text="Change Detail", callback_data="joaiimg:action:change_detail")
-    builder.button(text="Animate This", callback_data="joaiimg:action:animate")
-    builder.button(text="Regenerate Similar", callback_data="joaiimg:action:regenerate_similar")
-    builder.button(text="Upscale", callback_data="joaiimg:action:upscale")
-    builder.button(text="Use as Reference", callback_data="joaiimg:action:use_ref")
     _append_back_main(builder, back_callback)
-    builder.adjust(2, 2, 2, 2, 2)
+    builder.adjust(2)
     return builder.as_markup()
 
 
