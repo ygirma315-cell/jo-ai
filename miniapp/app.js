@@ -215,13 +215,14 @@
       rows: 1,
       maxComposerHeight: 164,
       historyTitle: "Video results",
-      needsVideoDuration: true,
+      needsVideoDuration: false,
       needsVideoRatio: true,
-      needsVideoModel: true,
+      needsVideoModel: false,
+      needsVideoAdvanced: false,
       supportsVideoSave: true,
       defaultVideoDuration: "5",
       defaultVideoRatio: "9:16",
-      defaultVideoModel: "jo_ai_video",
+      defaultVideoModel: "grok_text_to_video",
       emptyTitle: "Create a video with JO AI",
       emptyCopy: "Describe a scene and your generated video will appear here.",
     },
@@ -2255,7 +2256,7 @@
       elements.videoRatio.value = "9:16";
     }
     if (elements.videoModel) {
-      elements.videoModel.value = "jo_ai_video";
+      elements.videoModel.value = "grok_text_to_video";
     }
     if (elements.videoNegativePrompt) {
       elements.videoNegativePrompt.value = "";
@@ -3036,7 +3037,7 @@
       elements.videoRatio.value = config.defaultVideoRatio;
     }
     if (elements.videoAdvancedWrap) {
-      elements.videoAdvancedWrap.hidden = !(config.needsVideoDuration || config.needsVideoRatio || config.needsVideoModel);
+      elements.videoAdvancedWrap.hidden = !config.needsVideoAdvanced;
     }
     if (elements.ttsLanguageWrap) {
       elements.ttsLanguageWrap.hidden = !config.needsTtsLanguage;
@@ -3299,7 +3300,7 @@
     }
 
     if (mode === "video") {
-      payload.video_model = elements.videoModel ? elements.videoModel.value : "jo_ai_video";
+      payload.video_model = elements.videoModel ? elements.videoModel.value : "grok_text_to_video";
       payload.duration_seconds = Number.parseInt(elements.videoDuration ? elements.videoDuration.value : "5", 10) || 5;
       payload.aspect_ratio = elements.videoRatio ? elements.videoRatio.value : "9:16";
       payload.negative_prompt = elements.videoNegativePrompt ? elements.videoNegativePrompt.value.trim() : "";
@@ -3373,10 +3374,10 @@
       const modelLabelMap = {
         jo_ai_image_generate: "JO AI Image Generate",
         joai_image_generate: "JO AI Image Generate",
-        chat_gbt: "GPT Image Mini",
-        "gpt-image-1-mini": "GPT Image Mini",
-        gpt_image_1_mini: "GPT Image Mini",
-        gptimage: "GPT Image Mini",
+        chat_gbt: "GPT Image Generator",
+        "gpt-image-1-mini": "GPT Image Generator",
+        gpt_image_1_mini: "GPT Image Generator",
+        gptimage: "GPT Image Generator",
       };
       const modelLabel = modelLabelMap[payload.image_model] || "JO AI Image Generate";
       note = `Model: ${modelLabel} | Ratio: ${ratio}`;
@@ -3388,7 +3389,7 @@
         jo_ai_video: "JO AI Video Model",
         grok_text_to_video: "Grok Text to Video",
       };
-      const modelLabel = videoModelMap[payload.video_model] || "JO AI Video Model";
+      const modelLabel = videoModelMap[payload.video_model] || "Grok Text to Video";
       note = `Model: ${modelLabel} | Duration: ${duration}s | Ratio: ${ratio}`;
     }
     if (mode === "code" && payload.code_file_name) {

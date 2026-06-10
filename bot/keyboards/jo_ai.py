@@ -59,11 +59,12 @@ def uploaded_image_keyboard(back_callback: str = "menu:ai_tools") -> InlineKeybo
     return builder.as_markup()
 
 
-def image_ratio_keyboard() -> InlineKeyboardMarkup:
+def image_ratio_keyboard(selected_model: str | None = None) -> InlineKeyboardMarkup:
     builder = InlineKeyboardBuilder()
-    builder.button(text="⬛ 1:1", callback_data="joaiimg:ratio:1_1")
-    builder.button(text="🎬 16:9", callback_data="joaiimg:ratio:16_9")
-    builder.button(text="📱 9:16", callback_data="joaiimg:ratio:9_16")
+    model_suffix = f":{str(selected_model or '').strip()}" if str(selected_model or "").strip() else ""
+    builder.button(text="⬛ 1:1", callback_data=f"joaiimg:ratio:1_1{model_suffix}")
+    builder.button(text="🎬 16:9", callback_data=f"joaiimg:ratio:16_9{model_suffix}")
+    builder.button(text="📱 9:16", callback_data=f"joaiimg:ratio:9_16{model_suffix}")
     builder.button(text="🤖 Model", callback_data="joaiimg:model_menu")
     _append_back_main(builder, "joai:image")
     builder.adjust(2, 1, 1, 2)
@@ -77,7 +78,7 @@ def image_model_keyboard(
     selected = (selected_model or "").strip().lower()
     options = model_options or [
         ("JO AI Image Generate", "joai_image_generate"),
-        ("GPT Image Mini", "gptimage"),
+        ("GPT Image Generator", "gptimage"),
     ]
     builder = InlineKeyboardBuilder()
     for label, token in options:

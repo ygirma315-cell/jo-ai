@@ -114,7 +114,7 @@ IMAGE_MODEL_OPTION_CHAT_GBT = "chat_gbt"
 IMAGE_MODEL_OPTION_GROK_IMAGINE = "grok_imagine"
 DEFAULT_POLLINATIONS_IMAGE_MODEL_OPTION = "gptimage"
 POLLINATIONS_FREE_IMAGE_MODELS: tuple[tuple[str, str], ...] = (
-    ("gptimage", "GPT Image Mini"),
+    ("gptimage", "GPT Image Generator"),
 )
 POLLINATIONS_FREE_IMAGE_MODEL_IDS = frozenset(model_id for model_id, _label in POLLINATIONS_FREE_IMAGE_MODELS)
 VIDEO_MODEL_OPTION_GROK_TEXT_TO_VIDEO = "grok_text_to_video"
@@ -2838,7 +2838,7 @@ def models_registry() -> dict[str, Any]:
         "ok": True,
         "image_models": [
             {"id": IMAGE_MODEL_OPTION_JO, "label": IMAGE_MODEL_LABEL_JO},
-            {"id": "gptimage", "label": "GPT Image Mini"},
+            {"id": "gptimage", "label": "GPT Image Generator"},
         ],
         "video_models": [
             {"id": VIDEO_MODEL_OPTION_GROK_TEXT_TO_VIDEO, "label": VIDEO_MODEL_LABEL_GROK_TEXT_TO_VIDEO, "enabled": True},
@@ -2849,7 +2849,7 @@ def models_registry() -> dict[str, Any]:
             },
         ],
         "defaults": {
-            "video_model": VIDEO_MODEL_OPTION_JO_AI_VIDEO if bool(jo_video_config.get("enabled", True)) else VIDEO_MODEL_OPTION_GROK_TEXT_TO_VIDEO,
+            "video_model": VIDEO_MODEL_OPTION_GROK_TEXT_TO_VIDEO,
             "aspect_ratio": default_video_ratio,
             "duration_seconds": 5,
             "scene_count": 1,

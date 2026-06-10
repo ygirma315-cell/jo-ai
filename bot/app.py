@@ -10,7 +10,16 @@ from aiogram.client.default import DefaultBotProperties
 from aiogram.client.session.aiohttp import AiohttpSession
 from aiogram.enums import ParseMode
 from aiogram.exceptions import TelegramBadRequest, TelegramForbiddenError, TelegramNetworkError
-from aiogram.types import BotCommand, MenuButtonCommands, MenuButtonWebApp, Update, WebAppInfo
+from aiogram.types import (
+    BotCommand,
+    BotCommandScopeAllGroupChats,
+    BotCommandScopeAllPrivateChats,
+    BotCommandScopeDefault,
+    MenuButtonCommands,
+    MenuButtonWebApp,
+    Update,
+    WebAppInfo,
+)
 from aiohttp import ClientConnectorError
 
 from bot.config import DEFAULT_MINIAPP_URL, load_settings
@@ -155,17 +164,24 @@ async def _configure_chat_menu_button(runtime: BotRuntime) -> bool:
 
 
 async def _configure_bot_commands(runtime: BotRuntime) -> bool:
-    commands = [
+    group_commands = [
         BotCommand(command="commands", description="Show JO AI group commands"),
         BotCommand(command="image", description="Generate an image from a prompt"),
         BotCommand(command="video", description="Generate a short video from a prompt"),
         BotCommand(command="audio", description="Generate audio from text"),
         BotCommand(command="serach", description="Ask JO AI or reply to a message"),
         BotCommand(command="search", description="Same as /serach"),
+    ]
+    private_commands = [
         BotCommand(command="joai", description="Open JO AI tools"),
+        BotCommand(command="image", description="Generate an image"),
+        BotCommand(command="video", description="Generate a video"),
+        BotCommand(command="audio", description="Generate audio"),
     ]
     try:
-        await runtime.bot.set_my_commands(commands)
+        await runtime.bot.set_my_commands(group_commands, scope=BotCommandScopeAllGroupChats())
+        await runtime.bot.set_my_commands(private_commands, scope=BotCommandScopeAllPrivateChats())
+        await runtime.bot.set_my_commands(private_commands, scope=BotCommandScopeDefault())
         logger.info("Configured Telegram bot command list.")
         runtime.last_startup_error = None
         return True

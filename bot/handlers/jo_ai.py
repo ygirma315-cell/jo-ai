@@ -11,9 +11,9 @@ from contextlib import suppress
 from typing import Literal
 
 from aiogram import F, Router
+from aiogram.exceptions import TelegramBadRequest, TelegramForbiddenError
 from aiogram.filters import Command
-from aiogram.exceptions import TelegramBadRequest
-from aiogram.types import BufferedInputFile, CallbackQuery, InlineKeyboardMarkup, Message
+from aiogram.types import BufferedInputFile, CallbackQuery, ChatMemberUpdated, InlineKeyboardMarkup, Message
 from aiogram.utils.chat_action import ChatActionSender
 
 from bot.constants import (
@@ -33,6 +33,7 @@ from bot.constants import (
     MENU_JO_AI,
 )
 from bot.filters.feature_filter import ActiveFeatureFilter
+from bot.group_commands import GROUP_COMMANDS_TEXT
 from bot.keyboards.jo_ai import (
     gemini_mode_keyboard,
     image_result_actions_keyboard,
@@ -126,7 +127,7 @@ DEFAULT_IMAGE_MODEL_OPTION = IMAGE_MODEL_OPTION_JO
 DEFAULT_POLLINATIONS_IMAGE_MODEL = "gptimage"
 
 POLLINATIONS_FREE_IMAGE_MODEL_OPTIONS: tuple[tuple[str, str], ...] = (
-    ("gptimage", "GPT Image Mini"),
+    ("gptimage", "GPT Image Generator"),
 )
 
 IMAGE_MODEL_LABELS = {
@@ -176,7 +177,7 @@ VIDEO_MODEL_LABELS = {
     VIDEO_MODEL_OPTION_GROK_TEXT_TO_VIDEO: VIDEO_MODEL_LABEL_GROK_TEXT_TO_VIDEO,
     VIDEO_MODEL_OPTION_JO_AI_VIDEO: VIDEO_MODEL_LABEL_JO_AI_VIDEO,
 }
-DEFAULT_VIDEO_MODEL_OPTION = VIDEO_MODEL_OPTION_JO_AI_VIDEO
+DEFAULT_VIDEO_MODEL_OPTION = VIDEO_MODEL_OPTION_GROK_TEXT_TO_VIDEO
 DEFAULT_VIDEO_DURATION_SECONDS = 5
 DEFAULT_VIDEO_ASPECT_RATIO = "9:16"
 JO_VIDEO_FRAME_MODEL = "imagen-4"
@@ -839,14 +840,18 @@ async def _send_image_intro(message: Message, selected_model: str | None = DEFAU
     )
 
 
-async def _send_image_ratio_step(message: Message, model_label: str | None = None) -> None:
+async def _send_image_ratio_step(
+    message: Message,
+    model_label: str | None = None,
+    model_option: str | None = None,
+) -> None:
     intro = f"Model <b>{html.escape(model_label)}</b> selected.\n\n" if model_label else ""
     await _send_step_message(
         message,
         f"{intro}Step 2/2: Choose an aspect ratio.\n"
         "Available ratios: 1:1, 16:9, 9:16.\n\n"
         "After selecting a ratio, send your image prompt.",
-        reply_markup=image_ratio_keyboard(),
+        reply_markup=image_ratio_keyboard(_resolve_image_model_option(model_option)),
     )
 
 
@@ -1663,15 +1668,23 @@ async def _send_formatted_ai_reply(
 
 @router.message(Command("commands"))
 async def show_group_commands(message: Message) -> None:
-    reply_text = (
-        "<b>JO AI group commands</b>\n\n"
-        "<code>/image cat</code> - generate an image\n"
-        "<code>/video cat running</code> - generate a short video\n"
-        "<code>/audio explain gravity</code> - generate audio\n"
-        "<code>/serach what is the capital of Ethiopia?</code> - ask JO AI\n"
-        "Reply to a message with <code>/serach</code> to answer that message."
-    )
-    await message.answer(reply_text)
+    await message.answer(GROUP_COMMANDS_TEXT)
+
+
+def _chat_member_status_value(value: object) -> str:
+    return str(getattr(value, "value", value) or "").strip().lower()
+
+
+@router.my_chat_member()
+async def show_group_commands_when_added(event: ChatMemberUpdated) -> None:
+    if event.chat.type not in {"group", "supergroup"}:
+        return
+    old_status = _chat_member_status_value(event.old_chat_member.status)
+    new_status = _chat_member_status_value(event.new_chat_member.status)
+    if old_status not in {"left", "kicked"} or new_status not in {"member", "administrator"}:
+        return
+    with suppress(TelegramBadRequest, TelegramForbiddenError):
+        await event.bot.send_message(event.chat.id, GROUP_COMMANDS_TEXT)
 
 
 async def _process_group_ai_text_command(
@@ -2378,17 +2391,19 @@ async def image_show_ratio_menu(query: CallbackQuery, session_manager: SessionMa
         await query.answer()
         return
     model_label: str = IMAGE_MODEL_LABELS[DEFAULT_IMAGE_MODEL_OPTION]
+    model_option = DEFAULT_IMAGE_MODEL_OPTION
     async with session_manager.lock(query.from_user.id) as session:
         if session.active_feature != Feature.JO_AI or session.jo_ai_mode != JoAIMode.IMAGE:
             await query.answer("Image session expired. Send /image again.", show_alert=True)
             return
         session.jo_ai_image_ratio = None
         session.jo_ai_image_model = _resolve_image_model_option(session.jo_ai_image_model)
+        model_option = session.jo_ai_image_model
         model_label = _image_model_label(session.jo_ai_image_model)
 
     await query.answer()
     if isinstance(query.message, Message):
-        await _send_image_ratio_step(query.message, model_label)
+        await _send_image_ratio_step(query.message, model_label, model_option)
 
 
 @router.callback_query(F.data == "joaiimg:model_menu")
@@ -2435,7 +2450,7 @@ async def choose_image_model(query: CallbackQuery, session_manager: SessionManag
 
     await query.answer(f"{model_label} selected.")
     if isinstance(query.message, Message):
-        await _send_image_ratio_step(query.message, model_label)
+        await _send_image_ratio_step(query.message, model_label, model_option)
 
 
 @router.callback_query(F.data.startswith("joaiimg:ratio:"))
@@ -2445,7 +2460,7 @@ async def choose_image_ratio(query: CallbackQuery, session_manager: SessionManag
         return
     raw = query.data or ""
     parts = raw.split(":")
-    if len(parts) != 3:
+    if len(parts) not in {3, 4}:
         await query.answer("Invalid ratio option.", show_alert=True)
         return
     ratio = IMAGE_RATIO_TOKEN_MAP.get(parts[2])
@@ -2454,12 +2469,13 @@ async def choose_image_ratio(query: CallbackQuery, session_manager: SessionManag
         return
 
     model_label = IMAGE_MODEL_LABELS[DEFAULT_IMAGE_MODEL_OPTION]
+    selected_model_from_callback = _resolve_image_model_option(parts[3].strip()) if len(parts) == 4 else None
     async with session_manager.lock(query.from_user.id) as session:
         if session.active_feature != Feature.JO_AI or session.jo_ai_mode != JoAIMode.IMAGE:
             await query.answer("Image session expired. Send /image again.", show_alert=True)
             return
         session.jo_ai_image_ratio = ratio
-        session.jo_ai_image_model = _resolve_image_model_option(session.jo_ai_image_model)
+        session.jo_ai_image_model = selected_model_from_callback or _resolve_image_model_option(session.jo_ai_image_model)
         model_label = _image_model_label(session.jo_ai_image_model)
 
     await query.answer(f"Ratio {ratio} selected.")
@@ -5419,8 +5435,13 @@ async def _process_video_message(
         return
     except AIServiceError as exc:
         await _clear_progress_message(progress_message)
-        reply_text = _friendly_error_text("Video generation is temporarily unavailable", exc)
-        await _track_video_failure(reply_text, reason=reply_text)
+        force_visible_text = False
+        if _is_pollinations_payment_error(exc):
+            reply_text = "Video generation can't run right now because the video API needs credits/payment."
+            force_visible_text = True
+        else:
+            reply_text = _friendly_error_text("Video generation is temporarily unavailable", exc)
+        await _track_video_failure(reply_text, reason=reply_text, force_visible_text=force_visible_text)
         return
     except Exception:
         await _clear_progress_message(progress_message)
