@@ -296,6 +296,22 @@ def _video_model_label(model_option: str | None) -> str:
     return VIDEO_MODEL_LABELS.get(normalized, VIDEO_MODEL_LABEL_JO_AI_VIDEO)
 
 
+def _video_feature_unavailable_text(
+    pollinations_media_service: PollinationsMediaService,
+    image_generation_service: ImageGenerationService | None = None,
+    *,
+    model_option: str | None = None,
+) -> str | None:
+    selected_model = _resolve_video_model_option(model_option)
+    has_pollinations = bool(str(pollinations_media_service.api_key or "").strip())
+    has_image_service = bool(image_generation_service and str(image_generation_service.api_key or "").strip())
+    if selected_model == VIDEO_MODEL_OPTION_GROK_TEXT_TO_VIDEO and not has_pollinations:
+        return "Video generation does not work right now because video API access is not configured."
+    if selected_model == VIDEO_MODEL_OPTION_JO_AI_VIDEO and not (has_pollinations or has_image_service):
+        return "Video generation does not work right now because video or image API access is not configured."
+    return None
+
+
 TTS_STYLE_PRESETS: dict[str, dict[str, dict[str, str]]] = {
     "female": {
         "natural": {"label": "Natural", "emotion": "neutral"},
@@ -856,8 +872,8 @@ async def _send_video_intro(
         message,
         "<b>Video Generation is active</b>\n\n"
         f"Engine: <b>{model_label}</b>\n"
-        "Set duration and aspect ratio, then tap <b>Generate Video</b>.\n"
-        "You can switch between Grok Text to Video and JO AI Video Model anytime.",
+        f"Default duration: <b>{DEFAULT_VIDEO_DURATION_SECONDS}s</b>\n\n"
+        "Choose the video ratio below.",
         reply_markup=video_options_keyboard(
             duration_seconds,
             aspect_ratio,
@@ -876,8 +892,8 @@ async def _send_video_prompt_step(
     model_label = _video_model_label(model_option)
     await _send_step_message(
         message,
-        "Settings saved.\n\n"
-        f"Engine <b>{model_label}</b> | Duration <b>{duration_seconds}s</b> | Ratio <b>{html.escape(aspect_ratio)}</b>\n\n"
+        "Ratio saved.\n\n"
+        f"Engine <b>{model_label}</b> | Ratio <b>{html.escape(aspect_ratio)}</b>\n\n"
         "Send your video prompt now.",
         reply_markup=_video_prompt_reply_keyboard(),
     )
@@ -1645,6 +1661,19 @@ async def _send_formatted_ai_reply(
     )
 
 
+@router.message(Command("commands"))
+async def show_group_commands(message: Message) -> None:
+    reply_text = (
+        "<b>JO AI group commands</b>\n\n"
+        "<code>/image cat</code> - generate an image\n"
+        "<code>/video cat running</code> - generate a short video\n"
+        "<code>/audio explain gravity</code> - generate audio\n"
+        "<code>/serach what is the capital of Ethiopia?</code> - ask JO AI\n"
+        "Reply to a message with <code>/serach</code> to answer that message."
+    )
+    await message.answer(reply_text)
+
+
 async def _process_group_ai_text_command(
     message: Message,
     user_text: str,
@@ -1877,6 +1906,14 @@ async def open_jo_ai_menu(
         if command == "video":
             prompt = _command_payload(raw_text, "video") or ""
             if not prompt:
+                unavailable_text = _video_feature_unavailable_text(
+                    pollinations_media_service,
+                    image_generation_service,
+                    model_option=DEFAULT_VIDEO_MODEL_OPTION,
+                )
+                if unavailable_text:
+                    await message.answer(unavailable_text)
+                    return
                 await _activate_group_mode(message, message.from_user.id, JoAIMode.VIDEO, session_manager)
                 await _send_video_intro(message)
                 return
@@ -1936,6 +1973,14 @@ async def open_jo_ai_menu(
         await _activate_mode(message, message.from_user.id, JoAIMode.IMAGE, session_manager, miniapp_url)
         return
     if text in {"/video", MENU_AI_VIDEO.lower()}:
+        unavailable_text = _video_feature_unavailable_text(
+            pollinations_media_service,
+            image_generation_service,
+            model_option=DEFAULT_VIDEO_MODEL_OPTION,
+        )
+        if unavailable_text:
+            await message.answer(unavailable_text, reply_markup=jo_ai_menu_keyboard())
+            return
         await _activate_mode(message, message.from_user.id, JoAIMode.VIDEO, session_manager, miniapp_url)
         return
     if text in {"/kimi", "/vision", MENU_AI_KIMI.lower()}:
@@ -2091,9 +2136,25 @@ async def enable_image_mode(query: CallbackQuery, session_manager: SessionManage
 
 
 @router.callback_query(F.data == "joai:video")
-async def enable_video_mode(query: CallbackQuery, session_manager: SessionManager, miniapp_url: str | None) -> None:
+async def enable_video_mode(
+    query: CallbackQuery,
+    session_manager: SessionManager,
+    miniapp_url: str | None,
+    pollinations_media_service: PollinationsMediaService,
+    image_generation_service: ImageGenerationService,
+) -> None:
     if not query.from_user:
         await query.answer()
+        return
+    unavailable_text = _video_feature_unavailable_text(
+        pollinations_media_service,
+        image_generation_service,
+        model_option=DEFAULT_VIDEO_MODEL_OPTION,
+    )
+    if unavailable_text:
+        await query.answer("Video generation is unavailable.", show_alert=True)
+        if isinstance(query.message, Message):
+            await query.message.answer(unavailable_text, reply_markup=jo_ai_menu_keyboard())
         return
     await query.answer()
     if isinstance(query.message, Message):
@@ -2622,7 +2683,7 @@ async def choose_video_ratio(query: CallbackQuery, session_manager: SessionManag
 
     await query.answer(f"Ratio {ratio} selected.")
     if isinstance(query.message, Message):
-        await _send_video_intro(
+        await _send_video_prompt_step(
             query.message,
             duration_seconds=duration_seconds,
             aspect_ratio=ratio,
@@ -5235,8 +5296,16 @@ async def _process_video_message(
         "jo_ai" if selected_model_option == VIDEO_MODEL_OPTION_JO_AI_VIDEO else "pollinations"
     )
 
-    async def _track_video_failure(reply_text: str, *, reason: str, media_status: str = "failed") -> None:
-        visible_reply_text = _compact_generation_failure_text("video") if compact_result else reply_text
+    async def _track_video_failure(
+        reply_text: str,
+        *,
+        reason: str,
+        media_status: str = "failed",
+        force_visible_text: bool = False,
+    ) -> None:
+        visible_reply_text = (
+            reply_text if force_visible_text else (_compact_generation_failure_text("video") if compact_result else reply_text)
+        )
         await message.answer(visible_reply_text, reply_markup=None if compact_result else _video_prompt_reply_keyboard())
         await _track_telegram_action(
             tracking_service=tracking_service,
@@ -5256,6 +5325,20 @@ async def _process_video_message(
                 media_error_reason=reason,
             ),
         )
+
+    unavailable_text = _video_feature_unavailable_text(
+        pollinations_media_service,
+        image_generation_service,
+        model_option=selected_model_option,
+    )
+    if unavailable_text:
+        await _track_video_failure(
+            unavailable_text,
+            reason="missing_api_access",
+            media_status="unavailable",
+            force_visible_text=True,
+        )
+        return
 
     guardrail_reply = guardrail_response_for_user_query(user_text, aspect_ratio, str(duration_seconds))
     if guardrail_reply:

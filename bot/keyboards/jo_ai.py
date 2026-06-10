@@ -81,7 +81,7 @@ def image_model_keyboard(
     ]
     builder = InlineKeyboardBuilder()
     for label, token in options:
-        prefix = "[x] " if token == selected else ""
+        prefix = "✅ " if token == selected else ""
         icon = "🎨" if "JO AI" in label else "🧠"
         builder.button(text=f"{prefix}{icon} {label}", callback_data=f"joaiimg:model:{token}")
     _append_back_main(builder, "joaiimg:ratio_menu")
@@ -96,31 +96,17 @@ def video_options_keyboard(
     selected_aspect_ratio: str | None = None,
     selected_model_option: str | None = None,
 ) -> InlineKeyboardMarkup:
-    duration = int(selected_duration_seconds or 5)
+    _ = (selected_duration_seconds, selected_model_option)
     ratio = (selected_aspect_ratio or "9:16").strip()
-    model_option = (selected_model_option or "jo_ai_video").strip().lower()
-    duration_options = (4, 5, 6, 8)
     ratio_options: tuple[tuple[str, str], ...] = (("16:9", "16_9"), ("9:16", "9_16"))
-    model_options: tuple[tuple[str, str], ...] = (
-        ("JO AI Video Model", "jo_ai_video"),
-        ("Grok Text to Video", "grok_text_to_video"),
-    )
 
     builder = InlineKeyboardBuilder()
-    for value in duration_options:
-        prefix = "[x] " if value == duration else ""
-        builder.button(text=f"{prefix}⏱️ {value}s", callback_data=f"joaivid:duration:{value}")
     for label, token in ratio_options:
-        prefix = "[x] " if label == ratio else ""
+        prefix = "✅ " if label == ratio else ""
         icon = "📱" if label == "9:16" else "🎬"
         builder.button(text=f"{prefix}{icon} {label}", callback_data=f"joaivid:ratio:{token}")
-    for label, token in model_options:
-        prefix = "[x] " if token == model_option else ""
-        icon = "🎥" if token == "jo_ai_video" else "⚡"
-        builder.button(text=f"{prefix}{icon} {label}", callback_data=f"joaivid:model:{token}")
-    builder.button(text="🎞️ Generate Video", callback_data="joaivid:generate")
     _append_back_main(builder, "joai:video")
-    builder.adjust(4, 2, 2, 1, 2)
+    builder.adjust(2, 2)
     return builder.as_markup()
 
 

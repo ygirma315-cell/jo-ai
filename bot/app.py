@@ -10,7 +10,7 @@ from aiogram.client.default import DefaultBotProperties
 from aiogram.client.session.aiohttp import AiohttpSession
 from aiogram.enums import ParseMode
 from aiogram.exceptions import TelegramBadRequest, TelegramForbiddenError, TelegramNetworkError
-from aiogram.types import MenuButtonCommands, MenuButtonWebApp, Update, WebAppInfo
+from aiogram.types import BotCommand, MenuButtonCommands, MenuButtonWebApp, Update, WebAppInfo
 from aiohttp import ClientConnectorError
 
 from bot.config import DEFAULT_MINIAPP_URL, load_settings
@@ -154,6 +154,31 @@ async def _configure_chat_menu_button(runtime: BotRuntime) -> bool:
         return False
 
 
+async def _configure_bot_commands(runtime: BotRuntime) -> bool:
+    commands = [
+        BotCommand(command="commands", description="Show JO AI group commands"),
+        BotCommand(command="image", description="Generate an image from a prompt"),
+        BotCommand(command="video", description="Generate a short video from a prompt"),
+        BotCommand(command="audio", description="Generate audio from text"),
+        BotCommand(command="serach", description="Ask JO AI or reply to a message"),
+        BotCommand(command="search", description="Same as /serach"),
+        BotCommand(command="joai", description="Open JO AI tools"),
+    ]
+    try:
+        await runtime.bot.set_my_commands(commands)
+        logger.info("Configured Telegram bot command list.")
+        runtime.last_startup_error = None
+        return True
+    except (TelegramNetworkError, ClientConnectorError, asyncio.TimeoutError) as exc:
+        runtime.last_startup_error = f"Command list setup failed: {exc}"
+        logger.warning("Telegram network unavailable while setting command list: %s", exc)
+        return False
+    except Exception:
+        runtime.last_startup_error = "Command list setup failed unexpectedly."
+        logger.warning("Failed to configure Telegram command list.", exc_info=True)
+        return False
+
+
 async def _notify_known_users_on_restart(runtime: BotRuntime) -> bool:
     sent_count = 0
     failed_count = 0
@@ -191,12 +216,13 @@ async def _notify_known_users_on_restart(runtime: BotRuntime) -> bool:
 async def _run_telegram_startup_tasks_once(runtime: BotRuntime) -> bool:
     webhook_ready = await _configure_telegram_webhook(runtime)
     menu_ready = await _configure_chat_menu_button(runtime)
+    commands_ready = await _configure_bot_commands(runtime)
 
     notifications_sent = True
     if _env_flag_enabled("SEND_RESTART_BROADCASTS", default=True):
         notifications_sent = await _notify_known_users_on_restart(runtime)
 
-    runtime.telegram_ready = webhook_ready and menu_ready and notifications_sent
+    runtime.telegram_ready = webhook_ready and menu_ready and commands_ready and notifications_sent
     return runtime.telegram_ready
 
 
