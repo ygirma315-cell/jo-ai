@@ -46,28 +46,42 @@
         <span id="authChip" class="chip">Locked</span>
       </div>
       <nav class="nav" id="nav">
-        <button class="nav-btn active" data-section="users">Users / Control</button>
+        <button class="nav-btn active" data-section="overview">Overview</button>
+        <button class="nav-btn" data-section="users">Users / Control</button>
         <button class="nav-btn" data-section="conversations">Conversations</button>
+        <button class="nav-btn" data-section="media">Media</button>
+        <button class="nav-btn" data-section="safety">Safety</button>
+        <button class="nav-btn" data-section="referrals">Referrals</button>
+        <button class="nav-btn" data-section="engagement">Engagement</button>
+        <button class="nav-btn" data-section="bot-status">Bot Status</button>
         <button class="nav-btn" data-section="settings">Settings</button>
+        <button class="nav-btn" data-section="logs">Logs</button>
       </nav>
     </aside>
 
     <main class="workspace">
       <header class="topbar">
         <button id="menuToggle" class="btn btn-ghost">Menu</button>
-        <h2 id="pageTitle">Users / Control</h2>
+        <h2 id="pageTitle">Overview</h2>
         <div class="top-actions">
           <button id="refreshBtn" class="btn">Refresh</button>
           <button id="logoutBtn" class="btn btn-danger">Logout</button>
         </div>
       </header>
       <nav class="section-tabs" aria-label="Admin sections">
-        <button class="section-tab active" data-section="users">Users / Control</button>
+        <button class="section-tab active" data-section="overview">Overview</button>
+        <button class="section-tab" data-section="users">Users / Control</button>
         <button class="section-tab" data-section="conversations">Conversations</button>
+        <button class="section-tab" data-section="media">Media</button>
+        <button class="section-tab" data-section="safety">Safety</button>
+        <button class="section-tab" data-section="referrals">Referrals</button>
+        <button class="section-tab" data-section="engagement">Engagement</button>
+        <button class="section-tab" data-section="bot-status">Bot Status</button>
         <button class="section-tab" data-section="settings">Settings</button>
+        <button class="section-tab" data-section="logs">Logs</button>
       </nav>
 
-      <section id="section-overview" class="section">
+      <section id="section-overview" class="section active">
         <div class="card-grid" id="overviewSummary"></div>
         <article class="card">
           <h3>Recent Activity</h3>
@@ -75,7 +89,7 @@
         </article>
       </section>
 
-      <section id="section-users" class="section active">
+      <section id="section-users" class="section">
         <article class="card">
           <h3>Users / Control</h3>
           <p class="muted">Search users, open profile details, send default or custom warnings, block, unblock, kick, or send a direct message.</p>

@@ -2188,7 +2188,7 @@ def _build_chat_payload(
 ) -> dict[str, object]:
     max_tokens_map = {
         "chat": 1200,
-        "code": 3600,
+        "code": 6000,
         "research": 2600,
         "prompt": 900,
         "image_prompt": 900,
@@ -2268,10 +2268,13 @@ def _system_instruction_for_mode(mode: ChatMode) -> str:
             "Role: act like a senior software engineer producing complete, correct, runnable code.\n"
             "Task: return the strongest implementation that satisfies the request with production-minded defaults.\n"
             "Default output must be one single complete file unless the request clearly needs a multi-file system.\n"
+            "Always put code inside fenced Markdown code blocks with the language name.\n"
+            "For each code block, include the intended filename immediately before it, for example: File: index.html.\n"
+            "If the user asks for downloadable HTML, return a complete standalone HTML file in one html code block.\n"
             "For complex builds, provide a short architecture summary, a file tree, complete key files, data model details, API contracts, validation, security notes, tests, and run/deploy steps.\n"
             "Never stop mid-file. Do not use placeholders like TODO, stub, or 'omitted for brevity'.\n"
             "If the response is long, continue until the implementation is complete.\n"
-            "Include concise setup and run instructions after the code."
+            "Include detailed setup and run instructions after the code."
         )
     if mode == "research":
         return (
@@ -2339,8 +2342,11 @@ def _enhance_user_prompt(
             f"Code request:\n{text}\n\n"
             f"{completion_contract}\n"
             "Return one complete file by default unless the request clearly needs multiple files.\n"
+            "Always format code in fenced Markdown code blocks with a language tag.\n"
+            "Put 'File: filename.ext' before every code block.\n"
+            "If the user asks for downloadable HTML, produce a complete standalone index.html file.\n"
             "When multiple files are necessary, label each file clearly and finish each one.\n"
-            "Do not omit code for brevity."
+            "Do not omit code for brevity. Prefer completeness over speed."
         )
     if mode == "research":
         return (

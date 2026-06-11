@@ -269,6 +269,7 @@ class SupabaseAdminService:
             response = (
                 client.table(config.users_table)
                 .select("telegram_id")
+                .gt("telegram_id", 0)
                 .ilike(field, like_value)
                 .limit(max_ids)
                 .execute()
@@ -348,9 +349,20 @@ class SupabaseAdminService:
         utc_today = _start_of_utc_day()
         today_iso = utc_today.isoformat()
 
-        total_users_response = client.table(config.users_table).select("telegram_id", count="exact").limit(1).execute()
+        total_users_response = (
+            client.table(config.users_table)
+            .select("telegram_id", count="exact")
+            .gt("telegram_id", 0)
+            .limit(1)
+            .execute()
+        )
         active_users_today_response = (
-            client.table(config.users_table).select("telegram_id", count="exact").gte("last_seen_at", today_iso).limit(1).execute()
+            client.table(config.users_table)
+            .select("telegram_id", count="exact")
+            .gt("telegram_id", 0)
+            .gte("last_seen_at", today_iso)
+            .limit(1)
+            .execute()
         )
         total_audio_response = (
             client.table(config.history_table)
@@ -361,18 +373,22 @@ class SupabaseAdminService:
         )
 
         totals_rows = self._fetch_all_user_totals()
-        total_users = len(totals_rows)
-        total_messages = sum(max(0, _safe_int(item.get("total_messages"))) for item in totals_rows)
-        total_images = sum(max(0, _safe_int(item.get("total_images"))) for item in totals_rows)
-        total_started_users = sum(1 for row in totals_rows if bool(row.get("has_started")))
+        user_rows = [row for row in totals_rows if _safe_int(row.get("telegram_id")) > 0]
+        group_rows = [row for row in totals_rows if _safe_int(row.get("telegram_id")) < 0]
+        total_users = len(user_rows)
+        total_groups = len(group_rows)
+        total_messages = sum(max(0, _safe_int(item.get("total_messages"))) for item in user_rows)
+        total_images = sum(max(0, _safe_int(item.get("total_images"))) for item in user_rows)
+        total_started_users = sum(1 for row in user_rows if bool(row.get("has_started")))
+        total_started_groups = sum(1 for row in group_rows if bool(row.get("has_started")))
         active_users = sum(
             1
-            for row in totals_rows
+            for row in user_rows
             if bool(row.get("is_active", True)) and not bool(row.get("is_blocked"))
         )
         blocked_users = sum(
             1
-            for row in totals_rows
+            for row in user_rows
             if bool(row.get("is_blocked")) or str(row.get("status") or "").strip().lower() in {"blocked", "unreachable"}
         )
         today_cutoff = utc_today
@@ -380,7 +396,7 @@ class SupabaseAdminService:
         new_users_today = 0
         new_users_week = 0
         referrals_total = 0
-        for row in totals_rows:
+        for row in user_rows:
             first_seen = _parse_timestamp(row.get("first_seen_at"))
             if first_seen and first_seen >= today_cutoff:
                 new_users_today += 1
@@ -443,6 +459,8 @@ class SupabaseAdminService:
                 "total_users": _response_count(total_users_response),
                 "unique_users": total_users,
                 "total_started_users": total_started_users,
+                "total_groups": total_groups,
+                "total_started_groups": total_started_groups,
                 "active_users": active_users,
                 "blocked_users": blocked_users,
                 "new_users_today": new_users_today,
@@ -662,7 +680,7 @@ class SupabaseAdminService:
                 "referral_code,referred_by,started_via_referral,last_engagement_sent_at,engagement_count"
             ),
             count="exact",
-        )
+        ).gt("telegram_id", 0)
         if search_term:
             numeric_id = _safe_int(search_term, default=0)
             if search_term.lstrip("-").isdigit() and numeric_id != 0:

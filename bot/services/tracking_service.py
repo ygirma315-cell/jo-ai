@@ -133,7 +133,10 @@ def _normalize_media_payload(media: TrackingMedia | None) -> TrackingMedia:
 
 
 def _referral_code_for_user(telegram_id: int) -> str:
-    return str(max(1, int(telegram_id)))
+    normalized_id = int(telegram_id)
+    if normalized_id < 0:
+        return f"group_{abs(normalized_id)}"
+    return str(max(1, normalized_id))
 
 
 def _sanitize_referral_code(value: str | None) -> str | None:
@@ -274,7 +277,7 @@ class SupabaseTrackingService:
         if not self.enabled:
             logger.warning("TRACKING FAILED user=unknown error=tracking backend disabled reason=%s", self._disabled_reason)
             return 0, 0
-        if identity is None or identity.telegram_id <= 0:
+        if identity is None or identity.telegram_id == 0:
             logger.warning("TRACKING FAILED user=unknown error=missing telegram identity")
             return 0, 0
 

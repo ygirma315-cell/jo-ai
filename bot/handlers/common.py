@@ -5,7 +5,7 @@ from aiogram.filters import Command, CommandStart
 from aiogram.types import CallbackQuery, Message
 
 from bot.constants import MENU_AI_TOOLS, MENU_CANCEL, MENU_HELP, MENU_REFERRAL, MENU_VERSION_MODELS
-from bot.group_commands import GROUP_COMMANDS_TEXT
+from bot.group_commands import GROUP_COMMANDS_TEXT, track_group_chat
 from bot.keyboards.menu import ai_tools_keyboard, main_menu_keyboard
 from bot.models.session import Feature
 from bot.runtime_info import format_release_summary_html, format_runtime_info_html
@@ -144,6 +144,12 @@ async def handle_start(
         )
 
     if message.chat.type in {"group", "supergroup"}:
+        await track_group_chat(
+            tracking_service,
+            message.chat,
+            feature_used="group_start",
+            bot_reply=GROUP_COMMANDS_TEXT,
+        )
         transition = await session_manager.switch_feature(message.from_user.id, Feature.NONE)
         if transition.notice:
             await message.answer(transition.notice)

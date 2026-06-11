@@ -1,14 +1,14 @@
 :root {
-  --bg: #060d19;
-  --surface: #0f1c31;
-  --surface-alt: #152742;
-  --line: #274264;
-  --text: #e5eeff;
-  --muted: #9bb0cf;
-  --brand: #3b82f6;
-  --brand-strong: #2563eb;
-  --danger: #ff6b81;
-  --radius: 12px;
+  --bg: #080805;
+  --surface: #12110b;
+  --surface-alt: #1c190d;
+  --line: #3c3315;
+  --text: #fff8db;
+  --muted: #c8b982;
+  --brand: #facc15;
+  --brand-strong: #eab308;
+  --danger: #ff6b6b;
+  --radius: 10px;
 }
 
 * {
@@ -24,7 +24,7 @@ body {
   margin: 0;
   min-height: 100%;
   font-family: "IBM Plex Sans", system-ui, sans-serif;
-  background: radial-gradient(circle at top right, #173669 0%, #0a1324 42%, #060d19 100%);
+  background: radial-gradient(circle at top right, #3b3105 0%, #171407 38%, #080805 100%);
   color: var(--text);
 }
 
@@ -38,7 +38,7 @@ body.sidebar-open {
   display: grid;
   place-items: center;
   padding: 16px;
-  background: rgba(3, 8, 18, 0.82);
+  background: rgba(5, 5, 3, 0.86);
   z-index: 40;
 }
 
@@ -48,7 +48,7 @@ body.sidebar-open {
   border-radius: 16px;
   border: 1px solid var(--line);
   padding: 22px;
-  box-shadow: 0 26px 60px rgba(2, 8, 20, 0.58);
+  box-shadow: 0 26px 60px rgba(0, 0, 0, 0.62);
 }
 
 .login-card h1 {
@@ -68,7 +68,7 @@ body.sidebar-open {
 
 .login-method label {
   font-size: 0.86rem;
-  color: #c8d7ef;
+  color: #f4df82;
   font-weight: 600;
 }
 
@@ -119,13 +119,13 @@ body.sidebar-open {
 }
 
 .sidebar {
-  background: #081224;
-  color: #e7efff;
+  background: #090806;
+  color: #fff6cf;
   padding: 14px;
   display: grid;
   grid-template-rows: auto 1fr;
   gap: 14px;
-  border-right: 1px solid #1c3253;
+  border-right: 1px solid #3b3212;
 }
 
 .brand {
@@ -142,9 +142,9 @@ body.sidebar-open {
 }
 
 .nav-btn {
-  border: 1px solid #2a4c74;
-  background: #11213a;
-  color: #dcebff;
+  border: 1px solid #4c3f15;
+  background: #161308;
+  color: #f7e8a1;
   border-radius: 10px;
   padding: 10px;
   text-align: left;
@@ -153,7 +153,8 @@ body.sidebar-open {
 
 .nav-btn.active,
 .nav-btn:hover {
-  background: #1a3a66;
+  background: #2a2208;
+  color: #fff4bd;
 }
 
 .workspace {
@@ -191,17 +192,17 @@ body.sidebar-open {
   gap: 8px;
   padding: 8px 12px;
   border-bottom: 1px solid var(--line);
-  background: #0d1a30;
+  background: #0e0c07;
   overflow-x: auto;
   overscroll-behavior-x: contain;
 }
 
 .section-tab {
   min-height: 36px;
-  border: 1px solid #2a4c74;
+  border: 1px solid #4c3f15;
   border-radius: 999px;
-  background: #11223b;
-  color: #cfe0ff;
+  background: #171308;
+  color: #f4df82;
   padding: 6px 12px;
   font-weight: 600;
   white-space: nowrap;
@@ -209,9 +210,9 @@ body.sidebar-open {
 }
 
 .section-tab.active {
-  border-color: #3b82f6;
-  background: #173867;
-  color: #eaf2ff;
+  border-color: var(--brand);
+  background: #3a2f08;
+  color: #fff7d2;
 }
 
 .section {
@@ -246,7 +247,7 @@ body.sidebar-open {
   background: var(--surface);
   border: 1px solid var(--line);
   border-radius: var(--radius);
-  box-shadow: 0 12px 28px rgba(0, 10, 28, 0.45);
+  box-shadow: 0 12px 28px rgba(0, 0, 0, 0.48);
 }
 
 .card {
@@ -264,7 +265,7 @@ body.sidebar-open {
 }
 
 .compact-metrics {
-  grid-template-columns: repeat(3, minmax(0, 1fr));
+  grid-template-columns: repeat(auto-fit, minmax(130px, 1fr));
   margin-top: 10px;
 }
 
@@ -307,8 +308,8 @@ body.sidebar-open {
 }
 
 .list-item.selected {
-  border-color: #3b82f6;
-  box-shadow: 0 0 0 2px rgba(59, 130, 246, 0.28);
+  border-color: var(--brand);
+  box-shadow: 0 0 0 2px rgba(250, 204, 21, 0.22);
 }
 
 .list-item h4 {
@@ -351,15 +352,15 @@ body.sidebar-open {
 }
 
 details.compact-text {
-  border: 1px solid rgba(64, 100, 151, 0.45);
+  border: 1px solid rgba(250, 204, 21, 0.24);
   border-radius: 8px;
   padding: 7px;
-  background: rgba(8, 18, 36, 0.38);
+  background: rgba(26, 22, 8, 0.52);
 }
 
 details.compact-text summary {
   cursor: pointer;
-  color: #d9e8ff;
+  color: #fff2ad;
 }
 
 details.compact-text p {
@@ -391,7 +392,7 @@ details.compact-text p {
   object-fit: contain;
   border: 1px solid var(--line);
   border-radius: 10px;
-  background: #0c1a2f;
+  background: #0b0904;
 }
 
 .media-video {
@@ -399,7 +400,7 @@ details.compact-text p {
   max-height: 320px;
   border: 1px solid var(--line);
   border-radius: 10px;
-  background: #070f1f;
+  background: #090805;
 }
 
 .form-grid {
@@ -419,10 +420,10 @@ details.compact-text p {
 .logs-box {
   margin: 0;
   padding: 10px;
-  background: #070f1f;
-  color: #d6e4ff;
+  background: #090805;
+  color: #fff4bd;
   border-radius: 10px;
-  border: 1px solid #29456a;
+  border: 1px solid #4c3f15;
   min-height: 300px;
   max-height: 70dvh;
   overflow: auto;
@@ -479,13 +480,13 @@ textarea {
 }
 
 .btn:hover {
-  background: #1a2d49;
+  background: #2a2208;
 }
 
 .btn-primary {
   border-color: var(--brand);
   background: var(--brand);
-  color: #fff;
+  color: #151006;
 }
 
 .btn-primary:hover {
@@ -493,13 +494,13 @@ textarea {
 }
 
 .btn-warning {
-  border-color: #d6a940;
-  color: #f9df9b;
-  background: #3a2d0d;
+  border-color: #facc15;
+  color: #ffeaa0;
+  background: #3a2f08;
 }
 
 .btn-warning:hover {
-  background: #4a3910;
+  background: #4a3a08;
 }
 
 .btn-danger {
@@ -517,14 +518,14 @@ textarea {
   border-radius: 999px;
   padding: 4px 10px;
   font-size: 0.8rem;
-  background: #183255;
-  color: #cfe0ff;
+  background: #241d08;
+  color: #ffeaa0;
 }
 
 .chip.ok-chip {
-  background: #12382f;
-  color: #9ef3cf;
-  border-color: #1f6a57;
+  background: #143325;
+  color: #a7f3d0;
+  border-color: #22734f;
 }
 
 .chip.danger-chip {
@@ -534,9 +535,9 @@ textarea {
 }
 
 .chip.muted-chip {
-  background: #182741;
-  color: #97adc9;
-  border-color: #2d466a;
+  background: #1e1a0e;
+  color: #bea969;
+  border-color: #3c3315;
 }
 
 .muted {
@@ -553,8 +554,9 @@ textarea {
   right: 12px;
   bottom: 12px;
   z-index: 80;
-  background: #102749;
-  color: #fff;
+  background: #1c1707;
+  color: #fff8db;
+  border: 1px solid var(--brand);
   border-radius: 10px;
   padding: 10px 12px;
   max-width: min(500px, calc(100vw - 24px));
@@ -621,7 +623,7 @@ textarea {
   }
 
   .compact-metrics {
-    grid-template-columns: repeat(3, minmax(0, 1fr));
+    grid-template-columns: repeat(2, minmax(0, 1fr));
   }
 
   .topbar {

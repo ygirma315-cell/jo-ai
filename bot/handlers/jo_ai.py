@@ -33,7 +33,7 @@ from bot.constants import (
     MENU_JO_AI,
 )
 from bot.filters.feature_filter import ActiveFeatureFilter
-from bot.group_commands import GROUP_COMMANDS_TEXT
+from bot.group_commands import GROUP_COMMANDS_TEXT, track_group_chat
 from bot.keyboards.jo_ai import (
     gemini_mode_keyboard,
     image_result_actions_keyboard,
@@ -358,7 +358,6 @@ MODE_RESULT_TITLE = {
 MAX_REPLY_CHARS = 3300
 CODE_FENCE_PATTERN = re.compile(r"```(?P<lang>[a-zA-Z0-9_+#.-]*)\n(?P<code>[\s\S]*?)```", re.MULTILINE)
 CHAT_HISTORY_ENTRY_MAX_CHARS = 1800
-LONG_CODE_ATTACHMENT_THRESHOLD = 2800
 EXTREME_CODE_LENGTH_THRESHOLD = 16000
 MAX_CODE_UPLOAD_BYTES = 1_500_000
 TELEGRAM_TRACKING_TIMEOUT_SECONDS = 4.0
@@ -1273,7 +1272,7 @@ def _parse_code_reply(reply_text: str, fallback_title: str) -> ParsedCodeReply:
     named_sections = _collect_named_sections(text_without_code)
 
     title = (named_sections.get("title") or [fallback_title])[0]
-    explanation_lines = named_sections.get("explanation") or _clean_list_block(text_without_code, max_items=4)
+    explanation_lines = named_sections.get("explanation") or _clean_list_block(text_without_code, max_items=8)
     lang = fenced_lang or (named_sections.get("code language") or [""])[0].strip().lower()
     lang = _guess_code_language(code, fallback=lang or "text")
     run_steps = named_sections.get("how to run") or _default_run_steps(lang)
@@ -1293,6 +1292,19 @@ def _parse_code_reply(reply_text: str, fallback_title: str) -> ParsedCodeReply:
         run_steps=run_steps,
         notes_lines=notes_lines,
     )
+
+
+def _format_code_generator_reply(parsed: ParsedCodeReply, code_body: str, code_lang: str) -> str:
+    sections: list[str] = []
+    if parsed.explanation_lines:
+        sections.append("Summary:\n" + "\n".join(f"- {line}" for line in parsed.explanation_lines[:8]))
+    if code_body.strip():
+        sections.append(f"Code:\n```{code_lang or 'text'}\n{code_body.rstrip()}\n```")
+    if parsed.run_steps:
+        sections.append("How to run:\n" + "\n".join(f"{index}. {line}" for index, line in enumerate(parsed.run_steps[:8], start=1)))
+    if parsed.notes_lines:
+        sections.append("Notes:\n" + "\n".join(f"- {line}" for line in parsed.notes_lines[:8]))
+    return "\n\n".join(section for section in sections if section.strip()).strip()
 
 
 def _public_error_detail(exc: Exception | None) -> str:
@@ -1583,7 +1595,7 @@ async def _send_code_generator_reply(
     code_body = parsed.code.strip() or normalized_reply
     code_lang = parsed.lang or _guess_code_language(code_body, fallback="text")
     file_name = _code_filename_for_language(code_lang)
-    attach_full_file = len(code_body) >= LONG_CODE_ATTACHMENT_THRESHOLD or len(normalized_reply) >= MAX_REPLY_CHARS
+    attach_full_file = True
     is_extremely_long = len(code_body) >= EXTREME_CODE_LENGTH_THRESHOLD
 
     if is_extremely_long:
@@ -1601,10 +1613,11 @@ async def _send_code_generator_reply(
             reply_markup=reply_markup,
         )
     else:
+        formatted_reply = _format_code_generator_reply(parsed, code_body, code_lang) or normalized_reply
         await formatter.send_rich_response(
             chat_id=message.chat.id,
             title="Code Result",
-            raw_text=normalized_reply,
+            raw_text=formatted_reply,
             reply_markup=reply_markup,
         )
 
@@ -1613,8 +1626,15 @@ async def _send_code_generator_reply(
         await message.bot.send_document(
             chat_id=message.chat.id,
             document=code_file,
-            caption=f"Full code file attached: {file_name}",
+            caption=f"Downloadable file attached: {file_name}",
         )
+        if len(CODE_FENCE_PATTERN.findall(normalized_reply)) > 1:
+            result_file = BufferedInputFile(normalized_reply.encode("utf-8"), filename="code_generator_result.md")
+            await message.bot.send_document(
+                chat_id=message.chat.id,
+                document=result_file,
+                caption="Full multi-file answer attached: code_generator_result.md",
+            )
 
 
 async def _send_progress_message(message: Message, text: str) -> Message | None:
@@ -1667,7 +1687,17 @@ async def _send_formatted_ai_reply(
 
 
 @router.message(Command("commands"))
-async def show_group_commands(message: Message) -> None:
+async def show_group_commands(
+    message: Message,
+    tracking_service: SupabaseTrackingService | None = None,
+) -> None:
+    if _is_group_chat(message):
+        await track_group_chat(
+            tracking_service,
+            message.chat,
+            feature_used="group_commands",
+            bot_reply=GROUP_COMMANDS_TEXT,
+        )
     await message.answer(GROUP_COMMANDS_TEXT)
 
 
@@ -1676,13 +1706,22 @@ def _chat_member_status_value(value: object) -> str:
 
 
 @router.my_chat_member()
-async def show_group_commands_when_added(event: ChatMemberUpdated) -> None:
+async def show_group_commands_when_added(
+    event: ChatMemberUpdated,
+    tracking_service: SupabaseTrackingService | None = None,
+) -> None:
     if event.chat.type not in {"group", "supergroup"}:
         return
     old_status = _chat_member_status_value(event.old_chat_member.status)
     new_status = _chat_member_status_value(event.new_chat_member.status)
     if old_status not in {"left", "kicked"} or new_status not in {"member", "administrator"}:
         return
+    await track_group_chat(
+        tracking_service,
+        event.chat,
+        feature_used="group_added",
+        bot_reply=GROUP_COMMANDS_TEXT,
+    )
     with suppress(TelegramBadRequest, TelegramForbiddenError):
         await event.bot.send_message(event.chat.id, GROUP_COMMANDS_TEXT)
 
@@ -1804,16 +1843,13 @@ async def group_search_command(
     if not _is_group_chat(message):
         await message.answer("This shortcut is only available in groups.")
         return
-    raw_text = (message.text or "").strip()
-    command = _command_name(raw_text) or "search"
-    prompt = _command_payload(raw_text, command) or ""
-    await _process_group_ai_text_command(
-        message,
-        prompt,
-        chat_service,
+    await track_group_chat(
         tracking_service,
-        replied_context=_replied_message_context(message),
+        message.chat,
+        feature_used="group_search_disabled",
+        bot_reply="Only /image and /audio are available in groups right now.",
     )
+    await message.answer("Only /image and /audio are available in groups right now.")
 
 
 @router.message(Command("audio"))
@@ -1828,16 +1864,22 @@ async def group_audio_command(
     if not _is_group_chat(message):
         await message.answer("This shortcut is only available in groups.")
         return
+    await track_group_chat(
+        tracking_service,
+        message.chat,
+        feature_used="group_audio",
+    )
     prompt = _command_payload((message.text or "").strip(), "audio") or ""
     if not prompt:
         await _activate_group_mode(message, message.from_user.id, JoAIMode.GPT_AUDIO, session_manager)
-        await _send_gpt_audio_intro(message)
+        await message.answer("Send the audio text now. Default voice settings will be used.")
         return
     await _process_group_audio_command(
         message,
         prompt,
         pollinations_media_service,
         tracking_service,
+        show_progress=False,
     )
 
 
@@ -1894,11 +1936,16 @@ async def open_jo_ai_menu(
     command = _command_name(raw_text)
 
     if _is_group_chat(message):
+        await track_group_chat(
+            tracking_service,
+            message.chat,
+            feature_used=f"group_command_{command or 'unknown'}",
+        )
         if command == "image":
             prompt = _command_payload(raw_text, "image") or ""
             if not prompt:
                 await _activate_group_mode(message, message.from_user.id, JoAIMode.IMAGE, session_manager)
-                await _send_image_intro(message, selected_model=DEFAULT_POLLINATIONS_IMAGE_MODEL)
+                await message.answer("Send the image prompt now. Default ratio is 1:1.")
                 return
             await _process_image_message(
                 message,
@@ -1911,54 +1958,31 @@ async def open_jo_ai_menu(
                 tracking_service,
                 reply_markup=None,
                 feature_used_prefix="group_image_command",
-                show_progress=True,
+                show_progress=False,
                 compact_result=True,
             )
             return
 
         if command == "video":
-            prompt = _command_payload(raw_text, "video") or ""
-            if not prompt:
-                unavailable_text = _video_feature_unavailable_text(
-                    pollinations_media_service,
-                    image_generation_service,
-                    model_option=DEFAULT_VIDEO_MODEL_OPTION,
-                )
-                if unavailable_text:
-                    await message.answer(unavailable_text)
-                    return
-                await _activate_group_mode(message, message.from_user.id, JoAIMode.VIDEO, session_manager)
-                await _send_video_intro(message)
-                return
-            await _process_video_message(
-                message=message,
-                user_text=prompt,
-                pollinations_media_service=pollinations_media_service,
-                current_duration_seconds=DEFAULT_VIDEO_DURATION_SECONDS,
-                current_aspect_ratio=DEFAULT_VIDEO_ASPECT_RATIO,
-                current_model_option=DEFAULT_VIDEO_MODEL_OPTION,
-                tracking_service=tracking_service,
-                image_generation_service=image_generation_service,
-                show_progress=True,
-                compact_result=True,
-            )
+            await message.answer("Video generation is not available in groups. Use /image or /audio.")
             return
 
         if command in {"audio", "gptaudio"}:
             prompt = _command_payload(raw_text, command) or ""
             if not prompt:
                 await _activate_group_mode(message, message.from_user.id, JoAIMode.GPT_AUDIO, session_manager)
-                await _send_gpt_audio_intro(message)
+                await message.answer("Send the audio text now. Default voice settings will be used.")
                 return
             await _process_group_audio_command(
                 message,
                 prompt,
                 pollinations_media_service,
                 tracking_service,
+                show_progress=False,
             )
             return
 
-        await message.answer("In groups, use /image, /video, /audio, or reply with /serach.")
+        await message.answer("In groups, use /start, /image, or /audio.")
         return
 
     if text in {"/chat", MENU_AI_CHAT.lower()}:
@@ -2781,13 +2805,9 @@ async def handle_jo_ai_text(
             group_chat_id = session.jo_ai_group_chat_id
             group_image_ratio = session.jo_ai_image_ratio
             group_image_model = session.jo_ai_image_model
-            group_video_duration = session.jo_ai_video_duration
-            group_video_aspect_ratio = session.jo_ai_video_aspect_ratio
-            group_video_model_option = _resolve_video_model_option(session.jo_ai_video_model)
 
         if group_chat_id != int(message.chat.id) or group_mode not in {
             JoAIMode.IMAGE,
-            JoAIMode.VIDEO,
             JoAIMode.GPT_AUDIO,
         }:
             return
@@ -2805,22 +2825,7 @@ async def handle_jo_ai_text(
                     tracking_service,
                     reply_markup=None,
                     feature_used_prefix="group_image_flow",
-                    show_progress=True,
-                    compact_result=True,
-                )
-                return
-
-            if group_mode == JoAIMode.VIDEO:
-                await _process_video_message(
-                    message=message,
-                    user_text=text,
-                    pollinations_media_service=pollinations_media_service,
-                    current_duration_seconds=group_video_duration,
-                    current_aspect_ratio=group_video_aspect_ratio,
-                    current_model_option=group_video_model_option,
-                    tracking_service=tracking_service,
-                    image_generation_service=image_generation_service,
-                    show_progress=True,
+                    show_progress=False,
                     compact_result=True,
                 )
                 return
@@ -2830,6 +2835,7 @@ async def handle_jo_ai_text(
                 text,
                 pollinations_media_service,
                 tracking_service,
+                show_progress=False,
                 feature_used="group_audio_flow",
             )
             return
@@ -4096,7 +4102,7 @@ async def _process_chat_message(
         )
         return
 
-    show_progress_message = mode not in {"chat", "code"}
+    show_progress_message = mode != "chat"
     if show_progress_message:
         await _maybe_send_engagement(message)
     progress_message: Message | None = None

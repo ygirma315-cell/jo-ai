@@ -19,7 +19,7 @@
 
   const state = {
     token: sessionStorage.getItem(TOKEN_STORAGE_KEY) || "",
-    section: "users",
+    section: "overview",
     pages: { users: 0, safety: 0, conversations: 0, media: 0, referrals: 0 },
     hasMore: { users: false, safety: false, conversations: false, media: false, referrals: false },
     totals: { users: 0, safety: 0, conversations: 0, media: 0, referrals: 0 },
@@ -654,6 +654,8 @@
         refs.overviewSummary.innerHTML = [
           metricCard("Unique users", formatNumber(summary.unique_users)),
           metricCard("Started users", formatNumber(summary.total_started_users)),
+          metricCard("Groups added", formatNumber(summary.total_groups)),
+          metricCard("Started groups", formatNumber(summary.total_started_groups)),
           metricCard("Active users", formatNumber(summary.active_users)),
           metricCard("Blocked/unreachable", formatNumber(summary.blocked_users)),
           metricCard("New users today", formatNumber(summary.new_users_today)),
@@ -702,6 +704,7 @@
         refs.usersSummary.innerHTML = [
           metricCard("Started bot", formatNumber(summary.total_started_users)),
           metricCard("Total users", formatNumber(state.totals.users)),
+          metricCard("Groups added", formatNumber(summary.total_groups)),
           metricCard("Active window", `${escapeHtml(refs.usersActiveWindow ? refs.usersActiveWindow.value : "7")}d`),
         ].join("");
       }

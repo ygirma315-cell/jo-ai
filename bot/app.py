@@ -165,12 +165,9 @@ async def _configure_chat_menu_button(runtime: BotRuntime) -> bool:
 
 async def _configure_bot_commands(runtime: BotRuntime) -> bool:
     group_commands = [
-        BotCommand(command="commands", description="Show JO AI group commands"),
+        BotCommand(command="start", description="Show JO AI group commands"),
         BotCommand(command="image", description="Generate an image from a prompt"),
-        BotCommand(command="video", description="Generate a short video from a prompt"),
         BotCommand(command="audio", description="Generate audio from text"),
-        BotCommand(command="serach", description="Ask JO AI or reply to a message"),
-        BotCommand(command="search", description="Same as /serach"),
     ]
     private_commands = [
         BotCommand(command="joai", description="Open JO AI tools"),
