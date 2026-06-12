@@ -44,6 +44,8 @@ IMAGE_MAX_POLL_SECONDS = 40
 IMAGE_PENDING_STATES = {"queued", "pending", "processing", "creating", "running", "in_progress"}
 IMAGE_FAILED_STATES = {"failed", "error", "cancelled", "canceled", "rejected"}
 MAX_AUTO_CONTINUATIONS = 6
+MAX_CONTEXT_HISTORY_MESSAGES = 6
+MAX_CONTEXT_HISTORY_CHARS = 900
 COMPLEX_CODE_REQUEST_PATTERN = re.compile(
     r"\b("
     r"full[\s-]?stack|full[\s-]?system|dashboard|admin|backend|frontend|api|database|schema|auth|oauth|"
@@ -123,6 +125,26 @@ logger = logging.getLogger(__name__)
 OpenAIServiceError = AIServiceError
 
 ChatMode = Literal["chat", "code", "research", "prompt", "image_prompt", "image_describe"]
+
+
+def _compact_history_messages(history: list[dict[str, str]] | None) -> list[dict[str, object]]:
+    if not history:
+        return []
+
+    compact: list[dict[str, object]] = []
+    for item in history[-MAX_CONTEXT_HISTORY_MESSAGES:]:
+        role = str(item.get("role") or "").strip().lower()
+        if role not in {"user", "assistant", "system"}:
+            continue
+
+        content = " ".join(str(item.get("content") or "").split())
+        if not content:
+            continue
+        if len(content) > MAX_CONTEXT_HISTORY_CHARS:
+            content = content[:MAX_CONTEXT_HISTORY_CHARS].rstrip() + " ...[trimmed]"
+
+        compact.append({"role": role, "content": content})
+    return compact
 
 
 def build_enhanced_image_prompt(raw_prompt: str, ratio: str = "1:1") -> str:
@@ -398,8 +420,7 @@ class ChatService:
             raise AIServiceError(SAFE_SERVICE_UNAVAILABLE_MESSAGE)
 
         messages: list[dict[str, object]] = [{"role": "system", "content": _system_instruction_for_mode(mode)}]
-        if history:
-            messages.extend(history)
+        messages.extend(_compact_history_messages(history))
         messages.append({"role": "user", "content": _enhance_user_prompt(mode, user_message)})
 
         selected_model = (model_override or self.model).strip()
@@ -2188,7 +2209,7 @@ def _build_chat_payload(
 ) -> dict[str, object]:
     max_tokens_map = {
         "chat": 1200,
-        "code": 6000,
+        "code": 8000,
         "research": 2600,
         "prompt": 900,
         "image_prompt": 900,
@@ -2211,7 +2232,7 @@ def _build_chat_payload(
 def _request_timeout_seconds_for_mode(mode: ChatMode) -> int:
     timeout_map = {
         "chat": 50,
-        "code": 120,
+        "code": 180,
         "research": 90,
         "prompt": 55,
         "image_prompt": 55,

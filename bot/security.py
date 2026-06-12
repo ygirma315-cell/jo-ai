@@ -54,6 +54,31 @@ _SENSITIVE_TARGETS = re.compile(
     re.IGNORECASE | re.VERBOSE,
 )
 
+_SECRET_TARGETS = re.compile(
+    r"""
+    \b(
+        system(?:\s|-)?prompt|
+        hidden(?:\s|-)?prompt|
+        hidden(?:\s|-)?instructions?|
+        developer(?:\s|-)?message|
+        chain(?:\s|-)?of(?:\s|-)?thought|
+        reasoning(?:\s|-)?trace|
+        \.env|
+        env(?:ironment)?(?:\s|-)?vars?|
+        environment(?:\s|-)?variables?|
+        api(?:\s|-)?keys?|
+        access(?:\s|-)?tokens?|
+        bearer|
+        authorization|
+        headers?|
+        secrets?|
+        credentials?|
+        webhook(?:\s|-)?secret
+    )\b
+    """,
+    re.IGNORECASE | re.VERBOSE,
+)
+
 _EXTRACTION_VERBS = re.compile(
     r"\b(reveal|show|tell|dump|print|display|list|return|output|extract|share|expose|leak|give|send)\b",
     re.IGNORECASE,
@@ -156,9 +181,11 @@ def contains_internal_detail_request(*parts: str | None) -> bool:
         return True
     if _SELF_DISCLOSURE.search(text):
         return True
-    if _EXTRACTION_VERBS.search(text) and _SENSITIVE_TARGETS.search(text):
+    if _EXTRACTION_VERBS.search(text) and _SECRET_TARGETS.search(text):
         return True
-    if _SELF_CONTEXT.search(text) and (_SENSITIVE_TARGETS.search(text) or _PROVIDER_NAMES.search(text)):
+    if _SELF_CONTEXT.search(text) and _EXTRACTION_VERBS.search(text) and (
+        _SENSITIVE_TARGETS.search(text) or _PROVIDER_NAMES.search(text)
+    ):
         return True
     return False
 

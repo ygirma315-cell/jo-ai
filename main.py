@@ -245,11 +245,11 @@ class TrackingRequestBase(BaseModel):
 
 
 class ChatRequest(TrackingRequestBase):
-    message: str = Field(min_length=1, max_length=32000)
+    message: str = Field(min_length=1, max_length=64000)
 
 
 class JOChatRequest(TrackingRequestBase):
-    message: str = Field(min_length=1, max_length=32000)
+    message: str = Field(min_length=1, max_length=64000)
     selected_model: str | None = Field(default=None, max_length=120)
     last_output_type: Literal["text", "image", "video", "audio", "code"] | None = Field(default=None)
     last_asset_id: str | None = Field(default=None, max_length=160)
@@ -330,7 +330,7 @@ class ImageRequest(TrackingRequestBase):
 
 
 class PromptRequest(TrackingRequestBase):
-    message: str = Field(min_length=1, max_length=32000)
+    message: str = Field(min_length=1, max_length=64000)
     prompt_type: str | None = Field(default=None, max_length=120)
 
     @property
@@ -340,7 +340,7 @@ class PromptRequest(TrackingRequestBase):
 
 class AITextRequest(TrackingRequestBase):
     mode: TextMode = "chat"
-    message: str = Field(min_length=1, max_length=32000)
+    message: str = Field(min_length=1, max_length=64000)
     prompt_type: str | None = Field(default=None, max_length=120)
     code_file_name: str | None = Field(default=None, max_length=240)
     code_file_base64: str | None = Field(default=None, max_length=4_000_000)
@@ -434,7 +434,7 @@ class GPTAudioRequest(TrackingRequestBase):
 
 
 class GeminiRequest(TrackingRequestBase):
-    message: str = Field(min_length=1, max_length=32000)
+    message: str = Field(min_length=1, max_length=64000)
     mode: GeminiMode | None = None
     model: str | None = Field(default=None, max_length=120)
     ratio: Literal["1:1", "16:9", "9:16"] | None = Field(default=None)
@@ -1319,8 +1319,6 @@ def _summary_for_very_long_code(code: str, file_name: str) -> str:
 def _build_code_attachment_payload(output: str) -> dict[str, str] | None:
     code, lang = _extract_code_and_lang(output)
     if not code:
-        return None
-    if len(code) < 2200:
         return None
     return {
         "code_file_name": _code_filename_for_lang(lang),

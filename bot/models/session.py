@@ -62,5 +62,5 @@ class UserSession:
     jo_ai_tts_voice: str | None = None
     jo_ai_tts_style: str | None = None
     jo_ai_tts_emotion: str | None = None
-    jo_ai_chat_history: deque[tuple[str, str]] = field(default_factory=lambda: deque(maxlen=20))
+    jo_ai_chat_history: deque[tuple[str, str]] = field(default_factory=lambda: deque(maxlen=6))
     last_updated: datetime = field(default_factory=lambda: datetime.now(timezone.utc))
