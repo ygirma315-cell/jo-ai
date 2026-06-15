@@ -202,6 +202,9 @@ async def handle_restart(
 @router.message(F.text == MENU_HELP)
 @router.message(F.text == "Help")
 async def handle_help(message: Message, miniapp_url: str | None) -> None:
+    if message.chat.type in {"group", "supergroup"}:
+        await message.answer(GROUP_COMMANDS_TEXT)
+        return
     await message.answer(HELP_TEXT, reply_markup=main_menu_keyboard(miniapp_url))
 
 

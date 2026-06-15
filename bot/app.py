@@ -166,6 +166,8 @@ async def _configure_chat_menu_button(runtime: BotRuntime) -> bool:
 async def _configure_bot_commands(runtime: BotRuntime) -> bool:
     group_commands = [
         BotCommand(command="start", description="Show JO AI group commands"),
+        BotCommand(command="ask", description="Ask JO AI a question"),
+        BotCommand(command="search", description="Ask JO AI a question"),
         BotCommand(command="image", description="Generate an image from a prompt"),
         BotCommand(command="audio", description="Generate audio from text"),
     ]
@@ -176,9 +178,11 @@ async def _configure_bot_commands(runtime: BotRuntime) -> bool:
         BotCommand(command="audio", description="Generate audio"),
     ]
     try:
+        await runtime.bot.delete_my_commands(scope=BotCommandScopeAllGroupChats())
+        await runtime.bot.delete_my_commands(scope=BotCommandScopeDefault())
         await runtime.bot.set_my_commands(group_commands, scope=BotCommandScopeAllGroupChats())
         await runtime.bot.set_my_commands(private_commands, scope=BotCommandScopeAllPrivateChats())
-        await runtime.bot.set_my_commands(private_commands, scope=BotCommandScopeDefault())
+        await runtime.bot.set_my_commands(group_commands, scope=BotCommandScopeDefault())
         logger.info("Configured Telegram bot command list.")
         runtime.last_startup_error = None
         return True

@@ -246,6 +246,21 @@ The Render service should:
 - receive Telegram webhooks at `/telegram/webhook`
 - not serve the static mini app
 
+Required Render environment:
+
+- `BOT_TOKEN`: the token from BotFather for this Telegram bot. You do not need Telegram `api_id` or `api_hash` for this bot runtime.
+- `NVIDIA_API_KEY`: required for the main AI features.
+- `PUBLIC_BASE_URL`: optional if Render provides `RENDER_EXTERNAL_URL`; set it to your public Render URL if webhook setup does not register automatically.
+
+After changing Render environment variables, redeploy/restart the service so startup can re-register the Telegram webhook and command list.
+
+Group behavior:
+
+- When the bot is added to a group, it sends the group command list.
+- In groups, use `/ask your question`, `/search your question`, `/image your prompt`, or `/audio your text`.
+- The most reliable group format is putting the prompt in the same command message, for example `/image sunset over Addis Ababa`.
+- If you want follow-up messages after `/image` or `/audio` without repeating the command, disable BotFather privacy mode for the bot; otherwise Telegram may only deliver commands, replies, and mentions.
+
 ### GitHub Pages
 
 GitHub Pages deploys the `miniapp/` folder using `.github/workflows/pages.yml`.

@@ -123,7 +123,8 @@ def _load_required_bot_token() -> tuple[str, str]:
         if value:
             return value, env_name
     raise RuntimeError(
-        "Missing required Telegram token. Set BOT_TOKEN (or TELEGRAM_BOT_TOKEN) in .env."
+        "Missing required Telegram token. Set BOT_TOKEN (or TELEGRAM_BOT_TOKEN) "
+        "in .env locally or in the Render service environment."
     )
 
 

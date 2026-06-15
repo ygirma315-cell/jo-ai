@@ -65,6 +65,7 @@ from bot.security import (
 from bot.services.ai_service import (
     AIServiceError,
     ChatService,
+    GeneratedAudioResult,
     GeneratedVideoResult,
     GeminiChatService,
     ImageGenerationService,
@@ -1732,21 +1733,23 @@ async def _process_group_ai_text_command(
     chat_service: ChatService,
     tracking_service: SupabaseTrackingService | None,
     *,
+    command: str = "search",
+    gemini_service: GeminiChatService | None = None,
     replied_context: str = "",
 ) -> None:
     model_used = (chat_service.model or "").strip() or None
-    command = "search"
-    command_label = "group_search"
+    command = str(command or "search").strip().lower() or "search"
+    command_label = f"group_{command}"
     failure_text = GROUP_AI_FAILURE_TEXT
     cleaned_user_text = " ".join(str(user_text or "").split())
     cleaned_context = str(replied_context or "").strip()
     if not cleaned_user_text and not cleaned_context:
-        reply_text = "Use /serach with a question, or reply to a message with /serach."
+        reply_text = f"Use /{command} with a question, for example /{command} explain this."
         await message.answer(reply_text)
         await _track_telegram_action(
             tracking_service=tracking_service,
             message=message,
-            message_type="search",
+            message_type=command,
             user_message=user_text,
             bot_reply=reply_text,
             model_used=model_used,
@@ -1763,7 +1766,7 @@ async def _process_group_ai_text_command(
             else "Answer the replied message as if the group asked you this directly."
         )
         prompt = (
-            "You are JO AI answering a Telegram group /search command. "
+            f"You are JO AI answering a Telegram group /{command} command. "
             "Use the replied Telegram message below as the user's context. Do not claim you can read the whole group chat. "
             "Answer directly and helpfully.\n\n"
             f"{cleaned_context}\n\n{task}"
@@ -1771,7 +1774,7 @@ async def _process_group_ai_text_command(
         tracked_user_message = f"{cleaned_context}\n\n{task}"
     else:
         prompt = (
-            "You are JO AI answering a Telegram group /search command. "
+            f"You are JO AI answering a Telegram group /{command} command. "
             "Give a clear, concise answer. If the user asks for live or very current facts, say you cannot verify live data here "
             "and answer only from general knowledge.\n\n"
             f"Search request: {cleaned_user_text}"
@@ -1779,28 +1782,36 @@ async def _process_group_ai_text_command(
         tracked_user_message = cleaned_user_text
 
     progress_message = await _send_progress_message(message, "Trying to find answer...")
+    reply: str | None = None
     try:
         async with ChatActionSender.typing(bot=message.bot, chat_id=message.chat.id):
             reply = await chat_service.generate_reply(prompt, history=[], mode="chat")
     except AIServiceError as exc:
         await _clear_progress_message(progress_message)
         logger.warning("Group %s command failed: %s", command, exc)
-        await message.answer(failure_text)
-        await _track_telegram_action(
-            tracking_service=tracking_service,
-            message=message,
-            message_type=command,
-            user_message=tracked_user_message,
-            bot_reply=failure_text,
-            model_used=model_used,
-            success=False,
-            message_increment=1,
-            feature_used=f"{command_label}:failed",
-        )
-        return
+        progress_message = None
     except Exception:
         await _clear_progress_message(progress_message)
         logger.exception("Unexpected group %s command error.", command)
+        progress_message = None
+
+    if reply is None and gemini_service is not None and str(getattr(gemini_service, "api_key", "") or "").strip():
+        progress_message = await _send_progress_message(message, "Trying another answer path...")
+        try:
+            async with ChatActionSender.typing(bot=message.bot, chat_id=message.chat.id):
+                reply = await gemini_service.generate_reply(prompt)
+            model_used = (gemini_service.model or "").strip() or model_used
+        except AIServiceError as exc:
+            await _clear_progress_message(progress_message)
+            logger.warning("Group %s Gemini fallback failed: %s", command, exc)
+            progress_message = None
+        except Exception:
+            await _clear_progress_message(progress_message)
+            logger.exception("Unexpected group %s Gemini fallback error.", command)
+            progress_message = None
+
+    if reply is None:
+        await _clear_progress_message(progress_message)
         await message.answer(failure_text)
         await _track_telegram_action(
             tracking_service=tracking_service,
@@ -1817,7 +1828,25 @@ async def _process_group_ai_text_command(
 
     await _clear_progress_message(progress_message)
     reply_text = _compact_group_ai_reply(reply, limit=3200) or failure_text
-    await message.answer(html.escape(reply_text))
+    try:
+        await message.answer(html.escape(reply_text))
+    except Exception:
+        logger.exception("Failed to send group %s reply.", command)
+        with suppress(Exception):
+            await message.answer(failure_text)
+        await _track_telegram_action(
+            tracking_service=tracking_service,
+            message=message,
+            message_type=command,
+            user_message=tracked_user_message,
+            bot_reply=failure_text,
+            model_used=model_used,
+            success=False,
+            message_increment=1,
+            feature_used=f"{command_label}:failed",
+        )
+        return
+
     await _track_telegram_action(
         tracking_service=tracking_service,
         message=message,
@@ -1831,11 +1860,13 @@ async def _process_group_ai_text_command(
     )
 
 
+@router.message(Command("ask"))
 @router.message(Command("serach"))
 @router.message(Command("search"))
 async def group_search_command(
     message: Message,
     chat_service: ChatService,
+    gemini_service: GeminiChatService,
     tracking_service: SupabaseTrackingService | None = None,
 ) -> None:
     if not message.from_user:
@@ -1843,13 +1874,29 @@ async def group_search_command(
     if not _is_group_chat(message):
         await message.answer("This shortcut is only available in groups.")
         return
+    raw_text = (message.text or "").strip()
+    command = _command_name(raw_text) or "search"
+    prompt = _command_payload(raw_text, command) or ""
+    replied_context = _replied_message_context(message)
     await track_group_chat(
         tracking_service,
         message.chat,
-        feature_used="group_search_disabled",
-        bot_reply="Only /image and /audio are available in groups right now.",
+        feature_used="group_search",
     )
-    await message.answer("Only /image and /audio are available in groups right now.")
+    try:
+        await _process_group_ai_text_command(
+            message,
+            prompt,
+            chat_service,
+            tracking_service,
+            command=command,
+            gemini_service=gemini_service,
+            replied_context=replied_context,
+        )
+    except Exception:
+        logger.exception("Group %s command crashed.", command)
+        with suppress(Exception):
+            await message.answer(GROUP_AI_FAILURE_TEXT)
 
 
 @router.message(Command("audio"))
@@ -1857,6 +1904,7 @@ async def group_audio_command(
     message: Message,
     session_manager: SessionManager,
     pollinations_media_service: PollinationsMediaService,
+    tts_service: TextToSpeechService,
     tracking_service: SupabaseTrackingService | None = None,
 ) -> None:
     if not message.from_user:
@@ -1871,14 +1919,14 @@ async def group_audio_command(
     )
     prompt = _command_payload((message.text or "").strip(), "audio") or ""
     if not prompt:
-        await _activate_group_mode(message, message.from_user.id, JoAIMode.GPT_AUDIO, session_manager)
-        await message.answer("Send the audio text now. Default voice settings will be used.")
+        await message.answer("Use /audio with text in the same message, for example /audio say hello.")
         return
     await _process_group_audio_command(
         message,
         prompt,
         pollinations_media_service,
         tracking_service,
+        tts_service=tts_service,
         show_progress=False,
     )
 
@@ -1926,6 +1974,7 @@ async def open_jo_ai_menu(
     miniapp_url: str | None,
     image_generation_service: ImageGenerationService,
     pollinations_media_service: PollinationsMediaService,
+    tts_service: TextToSpeechService,
     tracking_service: SupabaseTrackingService | None = None,
 ) -> None:
     if not message.from_user:
@@ -1970,19 +2019,19 @@ async def open_jo_ai_menu(
         if command in {"audio", "gptaudio"}:
             prompt = _command_payload(raw_text, command) or ""
             if not prompt:
-                await _activate_group_mode(message, message.from_user.id, JoAIMode.GPT_AUDIO, session_manager)
-                await message.answer("Send the audio text now. Default voice settings will be used.")
+                await message.answer("Use /audio with text in the same message, for example /audio say hello.")
                 return
             await _process_group_audio_command(
                 message,
                 prompt,
                 pollinations_media_service,
                 tracking_service,
+                tts_service=tts_service,
                 show_progress=False,
             )
             return
 
-        await message.answer("In groups, use /start, /image, or /audio.")
+        await message.answer("In groups, use /ask, /search, /image, or /audio.")
         return
 
     if text in {"/chat", MENU_AI_CHAT.lower()}:
@@ -2835,6 +2884,7 @@ async def handle_jo_ai_text(
                 text,
                 pollinations_media_service,
                 tracking_service,
+                tts_service=tts_service,
                 show_progress=False,
                 feature_used="group_audio_flow",
             )
@@ -5192,12 +5242,42 @@ async def _process_gpt_audio_message(
     )
 
 
+async def _send_group_audio_result(
+    message: Message,
+    generated: GeneratedAudioResult,
+    *,
+    caption: str,
+) -> tuple[Message | None, str | None]:
+    extension = generated.file_extension if generated.file_extension else _tts_extension_for_mime_type(generated.mime_type)
+    audio_bytes = bytes(generated.audio_bytes or b"")
+    if not audio_bytes:
+        return None, None
+
+    try:
+        audio_file = BufferedInputFile(audio_bytes, filename=f"jo_ai_audio.{extension}")
+        sent = await message.answer_audio(audio=audio_file, caption=caption)
+        storage_path = f"telegram_file:{sent.audio.file_id}" if sent.audio else None
+        return sent, storage_path
+    except Exception:
+        logger.warning("Telegram rejected group audio upload; trying document fallback.", exc_info=True)
+
+    try:
+        document_file = BufferedInputFile(audio_bytes, filename=f"jo_ai_audio.{extension}")
+        sent = await message.answer_document(document=document_file, caption=caption)
+        storage_path = f"telegram_file:{sent.document.file_id}" if sent.document else None
+        return sent, storage_path
+    except Exception:
+        logger.exception("Telegram rejected group audio document fallback.")
+        return None, None
+
+
 async def _process_group_audio_command(
     message: Message,
     user_text: str,
     pollinations_media_service: PollinationsMediaService,
     tracking_service: SupabaseTrackingService | None,
     *,
+    tts_service: TextToSpeechService | None = None,
     show_progress: bool = True,
     feature_used: str = "group_audio_command",
 ) -> None:
@@ -5224,6 +5304,8 @@ async def _process_group_audio_command(
         f"User request: {user_text}"
     )
     progress_message = await _send_progress_message(message, "Generating your audio...") if show_progress else None
+    generated: GeneratedAudioResult | None = None
+    provider_source = "pollinations"
     try:
         async with ChatActionSender.typing(bot=message.bot, chat_id=message.chat.id):
             generated = await asyncio.wait_for(
@@ -5236,8 +5318,26 @@ async def _process_group_audio_command(
                 timeout=GPT_AUDIO_TIMEOUT_SECONDS,
             )
     except Exception:
+        logger.exception("Group audio Pollinations path failed; trying TTS fallback.")
+
+    if generated is None and tts_service is not None:
+        provider_source = "tts"
+        try:
+            async with ChatActionSender.typing(bot=message.bot, chat_id=message.chat.id):
+                generated = await asyncio.wait_for(
+                    tts_service.generate_speech(
+                        user_text,
+                        language="en",
+                        voice="female",
+                        emotion="neutral",
+                    ),
+                    timeout=GPT_AUDIO_TIMEOUT_SECONDS,
+                )
+        except Exception:
+            logger.exception("Group audio TTS fallback failed.")
+
+    if generated is None:
         await _clear_progress_message(progress_message)
-        logger.exception("Group audio command failed.")
         await message.answer(failure_text)
         await _track_telegram_action(
             tracking_service=tracking_service,
@@ -5251,7 +5351,7 @@ async def _process_group_audio_command(
             feature_used=f"{feature_used}:failed",
             media=TrackingMedia(
                 media_type="audio",
-                provider_source="pollinations",
+                provider_source=provider_source,
                 media_origin="generated",
                 media_status="failed",
                 media_error_reason=failure_text,
@@ -5260,14 +5360,33 @@ async def _process_group_audio_command(
         return
 
     await _clear_progress_message(progress_message)
-    extension = generated.file_extension if generated.file_extension else _tts_extension_for_mime_type(generated.mime_type)
-    audio_file = BufferedInputFile(generated.audio_bytes, filename=f"jo_ai_audio.{extension}")
     prompt_caption = html.escape(" ".join(user_text.split())[:900])
-    sent = await message.answer_audio(
-        audio=audio_file,
-        caption=f"Prompt: {prompt_caption}" if prompt_caption else "Audio generated.",
-    )
-    storage_path = f"telegram_file:{sent.audio.file_id}" if sent.audio else None
+    caption = f"Prompt: {prompt_caption}" if prompt_caption else "Audio generated."
+    sent, storage_path = await _send_group_audio_result(message, generated, caption=caption)
+    if sent is None:
+        reply_text = "Audio was generated, but Telegram could not send the file. Try a shorter text."
+        await message.answer(reply_text)
+        await _track_telegram_action(
+            tracking_service=tracking_service,
+            message=message,
+            message_type="gpt_audio",
+            user_message=user_text,
+            bot_reply=reply_text,
+            model_used=GPT_AUDIO_MODEL_LABEL,
+            success=False,
+            message_increment=1,
+            feature_used=f"{feature_used}:send_failed",
+            media=TrackingMedia(
+                media_type="audio",
+                mime_type=generated.mime_type,
+                provider_source=provider_source,
+                media_origin="generated",
+                media_status="failed",
+                media_error_reason="telegram_send_failed",
+            ),
+        )
+        return
+
     await _track_telegram_action(
         tracking_service=tracking_service,
         message=message,
@@ -5282,7 +5401,7 @@ async def _process_group_audio_command(
             media_type="audio",
             storage_path=storage_path,
             mime_type=generated.mime_type,
-            provider_source="pollinations",
+            provider_source=provider_source,
             media_origin="generated",
             media_status="available",
         ),

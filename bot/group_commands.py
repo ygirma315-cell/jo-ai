@@ -10,10 +10,13 @@ logger = logging.getLogger(__name__)
 
 GROUP_COMMANDS_TEXT = (
     "<b>JO AI group commands</b>\n\n"
-    "<code>/start</code> - show this command list\n"
+    "<code>/start</code> - show this list\n"
+    "<code>/ask what is AI?</code> - ask JO AI a question\n"
+    "<code>/search what is AI?</code> - ask JO AI a question\n"
     "<code>/image cat</code> - generate an image\n"
     "<code>/audio say hello</code> - generate audio\n\n"
-    "Images use the default 1:1 ratio. Audio uses the default voice."
+    "Tip: in groups, use the prompt in the same command message, like "
+    "<code>/image sunset over Addis Ababa</code>."
 )
 
 
