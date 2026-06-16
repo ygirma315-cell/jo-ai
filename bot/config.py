@@ -14,6 +14,7 @@ DEFAULT_CODE_MODEL = "qwen/qwen2.5-coder-32b-instruct"
 DEFAULT_DEEPSEEK_MODEL = "deepseek-ai/deepseek-v3.2"
 DEFAULT_KIMI_MODEL = "moonshotai/kimi-k2.5"
 DEFAULT_VISION_MODEL = "meta/llama-3.2-11b-vision-instruct"
+DEFAULT_STT_MODEL = "openai/whisper-large-v3"
 DEFAULT_GEMINI_MODEL = "gemini-2.0-flash"
 DEFAULT_TTS_FUNCTION_ID = "bc45d9e9-7c78-4d56-9737-e27011962ba8"
 DEFAULT_AI_BASE_URL = "https://integrate.api.nvidia.com/v1"
@@ -85,6 +86,8 @@ class Settings:
     gemini_fallback_models: tuple[str, ...]
     tts_api_key: str | None
     tts_function_id: str
+    speech_to_text_api_key: str | None
+    speech_to_text_model: str
     supabase_url: str | None
     supabase_anon_key: str | None
     supabase_service_role_key: str | None
@@ -475,6 +478,15 @@ def load_settings() -> Settings:
     tts_api_key = _read_secret_env("NVIDIA_TTS_API_KEY") or _read_secret_env("TTS_API_KEY") or nvidia_api_key or ai_api_key
     tts_api_key = tts_api_key or None
     tts_function_id = _read_env("TTS_FUNCTION_ID") or DEFAULT_TTS_FUNCTION_ID
+    speech_to_text_api_key = (
+        _read_secret_env("NVIDIA_STT_API_KEY")
+        or _read_secret_env("STT_API_KEY")
+        or tts_api_key
+        or nvidia_api_key
+        or ai_api_key
+    )
+    speech_to_text_api_key = speech_to_text_api_key or None
+    speech_to_text_model = _read_env("STT_MODEL") or _read_env("NVIDIA_STT_MODEL") or DEFAULT_STT_MODEL
     supabase_url_raw, _supabase_url_source = _read_alias_env("SUPABASE_URL", "SUPABASE_PROJECT_URL")
     supabase_anon_key_raw, _supabase_anon_source = _read_alias_env("SUPABASE_ANON_KEY", "SUPABASE_PUBLISHABLE_KEY")
     supabase_service_role_key_raw, _supabase_service_role_source = _read_alias_env(
@@ -604,6 +616,8 @@ def load_settings() -> Settings:
         validation_warnings.append("Code generation credentials are missing. Code mode will use default chat credentials if available.")
     if not tts_api_key:
         validation_warnings.append("Text-to-Audio credentials are missing. TTS will use fallback synthesis.")
+    if not speech_to_text_api_key:
+        validation_warnings.append("Hear Audio credentials are missing. /hear will be unavailable.")
     if not pollinations_api_key:
         validation_warnings.append(
             "Pollinations credentials are missing. Image generation and image editing may be unavailable."
@@ -710,6 +724,8 @@ def load_settings() -> Settings:
         gemini_fallback_models=gemini_fallback_models,
         tts_api_key=tts_api_key,
         tts_function_id=tts_function_id,
+        speech_to_text_api_key=speech_to_text_api_key,
+        speech_to_text_model=speech_to_text_model,
         supabase_url=supabase_url,
         supabase_anon_key=supabase_anon_key,
         supabase_service_role_key=supabase_service_role_key,

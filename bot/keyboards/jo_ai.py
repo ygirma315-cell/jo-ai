@@ -14,10 +14,12 @@ def jo_ai_menu_keyboard() -> InlineKeyboardMarkup:
     builder.button(text="JO AI Chat", callback_data="joai:chat")
     builder.button(text="Code Generator", callback_data="joai:code")
     builder.button(text="Image Generation", callback_data="joai:image")
+    builder.button(text="Image Edit", callback_data="joai:image_edit")
     builder.button(text="Vision", callback_data="joai:kimi")
     builder.button(text="Text-to-Audio", callback_data="joai:tts")
+    builder.button(text="Hear Audio", callback_data="joai:hear")
     _append_back_main(builder, "menu:ai_tools")
-    builder.adjust(2, 2, 1, 2)
+    builder.adjust(2, 2, 2, 1, 2)
     return builder.as_markup()
 
 
@@ -108,8 +110,9 @@ def video_options_keyboard(
 
 def image_result_actions_keyboard(back_callback: str = "joaiimg:ratio_menu") -> InlineKeyboardMarkup:
     builder = InlineKeyboardBuilder()
+    builder.button(text="Edit Image", callback_data="joaiimg:action:edit")
     _append_back_main(builder, back_callback)
-    builder.adjust(2)
+    builder.adjust(1, 2)
     return builder.as_markup()
 
 

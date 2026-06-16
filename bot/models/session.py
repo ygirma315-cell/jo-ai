@@ -21,9 +21,11 @@ class JoAIMode(str, Enum):
     DEEP_ANALYSIS = "deep_analysis"
     PROMPT = "prompt"
     IMAGE = "image"
+    IMAGE_EDIT = "image_edit"
     VIDEO = "video"
     KIMI_IMAGE_DESCRIBER = "kimi_image_describer"
     TEXT_TO_SPEECH = "text_to_speech"
+    HEAR_AUDIO = "hear_audio"
     GPT_AUDIO = "gpt_audio"
 
 

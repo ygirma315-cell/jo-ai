@@ -21,8 +21,10 @@ WELCOME_TEXT = (
     "• 💬 Chat\n"
     "• ⚡ Code\n"
     "• 🎨 Image Generator\n"
+    "• 🖌 Image Edit\n"
     "• 🖼️ Vision\n"
     "• 🔊 Text-to-Audio\n"
+    "• 🎧 Hear Audio\n"
     "• 🔗 Referral tools\n"
     "• 🚀 Mini App access\n\n"
     "Send any message to begin."
@@ -34,8 +36,10 @@ HELP_TEXT = (
     "/chat - JO AI chat mode\n"
     "/code - code generator mode\n"
     "/image - image generator mode\n"
+    "/editimage - image edit mode\n"
     "/vision - vision mode (send photo)\n"
     "/tts - text-to-audio mode\n"
+    "/hear - audio-to-text mode\n"
     "/referral - your invite link\n\n"
     "<b>Navigation</b>\n"
     "Back = one step back in the current feature\n"
@@ -63,8 +67,10 @@ AI_TOOLS_TEXT = (
     "• 💬 Chat AI\n"
     "• ⚡ Generate code\n"
     "• 🎨 Generate images\n"
+    "• 🖌 Edit images\n"
     "• 🖼️ Vision mode\n"
-    "• 🔊 Text-to-Audio"
+    "• 🔊 Text-to-Audio\n"
+    "• 🎧 Hear Audio"
 )
 
 
@@ -147,7 +153,7 @@ async def handle_start(
     sections.append(WELCOME_TEXT)
     sections.append(
         "<b>Quick Start</b>\n"
-        "1) Tap <b>AI Tools</b> to choose chat, code, image, vision, or audio.\n"
+        "1) Tap <b>AI Tools</b> to choose chat, code, image, edit image, vision, or audio.\n"
         "2) Tap <b>Open App</b> to launch the Mini App.\n"
         "3) Tap <b>Version</b> for public build details."
     )

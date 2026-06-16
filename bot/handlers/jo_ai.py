@@ -29,7 +29,9 @@ from bot.constants import (
     MENU_AI_DEEPSEEK,
     MENU_AI_GEMINI,
     MENU_AI_GPT_AUDIO,
+    MENU_AI_HEAR,
     MENU_AI_IMAGE,
+    MENU_AI_IMAGE_EDIT,
     MENU_AI_VIDEO,
     MENU_AI_KIMI,
     MENU_AI_PROMPT,
@@ -77,6 +79,7 @@ from bot.services.ai_service import (
     GeminiChatService,
     ImageGenerationService,
     PollinationsMediaService,
+    SpeechToTextService,
     TextToSpeechService,
     build_enhanced_image_prompt,
     build_enhanced_video_prompt,
@@ -100,8 +103,10 @@ JO_AI_MENU_TEXT = (
     "- JO AI Chat\n"
     "- Code Generator\n"
     "- Image Generation\n"
+    "- Image Edit\n"
     "- JO AI Vision\n"
-    "- Text-to-Audio\n\n"
+    "- Text-to-Audio\n"
+    "- Hear Audio\n\n"
     "Tip: use /help any time for guidance."
 )
 REMOVED_MODE_NOTICE = (
@@ -860,6 +865,16 @@ async def _send_image_intro(message: Message, selected_model: str | None = DEFAU
     )
 
 
+async def _send_image_edit_intro(message: Message) -> None:
+    await _send_step_message(
+        message,
+        "<b>Image Edit is active</b>\n\n"
+        "Send an image, then reply to it with what you want changed.\n"
+        "If you just generated an image, tap <b>Edit Image</b> under it.",
+        reply_markup=jo_chat_keyboard("joai:menu"),
+    )
+
+
 async def _send_image_ratio_step(
     message: Message,
     model_label: str | None = None,
@@ -935,6 +950,15 @@ async def _send_tts_language_step(message: Message) -> None:
     )
 
 
+async def _send_hear_intro(message: Message) -> None:
+    await _send_step_message(
+        message,
+        "<b>Hear Audio is active</b>\n\n"
+        "Send or reply to a voice/audio file and I will write the speech as text.",
+        reply_markup=jo_chat_keyboard("joai:menu"),
+    )
+
+
 async def _send_tts_voice_step(message: Message, language_label: str | None = None) -> None:
     intro = f"<b>{html.escape(language_label)}</b> selected.\n\n" if language_label else ""
     await _send_step_message(
@@ -995,6 +1019,8 @@ def _uploaded_image_back_callback(session) -> str:
         return "joaiprompt:type_menu" if session.jo_ai_prompt_type else "joai:prompt"
     if session.jo_ai_mode == JoAIMode.IMAGE:
         return "joaiimg:ratio_menu" if session.jo_ai_image_ratio else "joai:image"
+    if session.jo_ai_mode == JoAIMode.IMAGE_EDIT:
+        return "joai:image_edit"
     if session.jo_ai_mode == JoAIMode.VIDEO:
         return "joaivid:options_menu"
     if session.jo_ai_mode == JoAIMode.TEXT_TO_SPEECH:
@@ -1005,6 +1031,8 @@ def _uploaded_image_back_callback(session) -> str:
         if session.jo_ai_tts_language:
             return "joaitts:lang_menu"
         return "joai:tts"
+    if session.jo_ai_mode == JoAIMode.HEAR_AUDIO:
+        return "joai:hear"
     if session.jo_ai_mode == JoAIMode.GPT_AUDIO:
         return "joai:gpt_audio"
     if session.jo_ai_mode == JoAIMode.KIMI_IMAGE_DESCRIBER:
@@ -1032,7 +1060,7 @@ async def _switch_to_jo_ai_mode(user_id: int, mode: JoAIMode, session_manager: S
                 session.jo_ai_chat_history.clear()
             if mode != JoAIMode.PROMPT:
                 session.jo_ai_prompt_type = None
-            if mode != JoAIMode.IMAGE:
+            if mode not in {JoAIMode.IMAGE, JoAIMode.IMAGE_EDIT}:
                 session.jo_ai_image_ratio = None
                 session.jo_ai_image_model = None
             if mode != JoAIMode.VIDEO:
@@ -1090,6 +1118,9 @@ async def _activate_mode(
                 session.jo_ai_image_model = DEFAULT_IMAGE_MODEL_OPTION
         await _send_image_intro(message)
         return
+    if mode == JoAIMode.IMAGE_EDIT:
+        await _send_image_edit_intro(message)
+        return
     if mode == JoAIMode.VIDEO:
         selected_duration = DEFAULT_VIDEO_DURATION_SECONDS
         selected_ratio = DEFAULT_VIDEO_ASPECT_RATIO
@@ -1114,6 +1145,9 @@ async def _activate_mode(
         return
     if mode == JoAIMode.TEXT_TO_SPEECH:
         await _send_tts_language_step(message)
+        return
+    if mode == JoAIMode.HEAR_AUDIO:
+        await _send_hear_intro(message)
         return
     if mode == JoAIMode.GPT_AUDIO:
         await _send_gpt_audio_intro(message)
@@ -1505,6 +1539,41 @@ def _extract_replied_image_file(message: Message) -> tuple[str | None, int | Non
 
 def _group_media_over_limit(file_size: int | None) -> bool:
     return bool(file_size and file_size > GROUP_MEDIA_LIMIT_BYTES)
+
+
+def _extract_audio_file_from_message(message: Message | None) -> tuple[str | None, int | None, str]:
+    if message is None:
+        return None, None, "audio.ogg"
+    voice = getattr(message, "voice", None)
+    if voice is not None:
+        return (
+            str(getattr(voice, "file_id", "") or "").strip() or None,
+            int(getattr(voice, "file_size", 0) or 0) or None,
+            "voice.ogg",
+        )
+    audio = getattr(message, "audio", None)
+    if audio is not None:
+        file_name = str(getattr(audio, "file_name", "") or "").strip() or "audio.mp3"
+        return (
+            str(getattr(audio, "file_id", "") or "").strip() or None,
+            int(getattr(audio, "file_size", 0) or 0) or None,
+            file_name,
+        )
+    document = getattr(message, "document", None)
+    if document is not None:
+        mime = str(getattr(document, "mime_type", "") or "").strip().lower()
+        if mime.startswith("audio/") or mime in {"application/ogg", "video/ogg"}:
+            file_name = str(getattr(document, "file_name", "") or "").strip() or "audio.ogg"
+            return (
+                str(getattr(document, "file_id", "") or "").strip() or None,
+                int(getattr(document, "file_size", 0) or 0) or None,
+                file_name,
+            )
+    return None, None, "audio.ogg"
+
+
+def _extract_replied_audio_file(message: Message) -> tuple[str | None, int | None, str]:
+    return _extract_audio_file_from_message(getattr(message, "reply_to_message", None))
 
 
 def _build_chat_inline_image_prompt(user_text: str, history: list[dict[str, str]]) -> str:
@@ -2130,6 +2199,83 @@ async def _process_group_image_edit_command(
     )
 
 
+async def _process_hear_audio_file(
+    message: Message,
+    *,
+    file_id: str,
+    file_size: int | None,
+    file_name: str,
+    speech_to_text_service: SpeechToTextService,
+    tracking_service: SupabaseTrackingService | None,
+    feature_used: str,
+    reply_markup=None,
+) -> None:
+    if _group_media_over_limit(file_size):
+        reply_text = "Audio limit is 10MB."
+        await message.answer(reply_text, reply_markup=reply_markup)
+        return
+
+    progress_message = await _send_progress_message(message, "Listening...")
+    try:
+        audio_bytes = await _download_telegram_file_bytes(message, file_id)
+        transcript = await speech_to_text_service.transcribe_audio(audio_bytes, file_name=file_name)
+    except Exception:
+        await _clear_progress_message(progress_message)
+        logger.exception("Audio transcription failed.")
+        reply_text = "Couldn't hear that audio. Try a clearer or shorter file."
+        await message.answer(reply_text, reply_markup=reply_markup)
+        await _track_telegram_action(
+            tracking_service=tracking_service,
+            message=message,
+            message_type="hear",
+            user_message=_tracking_text_from_message(message, "[audio]"),
+            bot_reply=reply_text,
+            model_used=speech_to_text_service.model,
+            success=False,
+            message_increment=1,
+            feature_used=f"{feature_used}:failed",
+        )
+        return
+
+    await _clear_progress_message(progress_message)
+    reply_text = _compact_group_ai_reply(transcript, limit=1800 if _is_group_chat(message) else 3600)
+    await message.answer(f"<b>Heard:</b>\n{html.escape(reply_text)}", reply_markup=reply_markup)
+    await _track_telegram_action(
+        tracking_service=tracking_service,
+        message=message,
+        message_type="hear",
+        user_message=_tracking_text_from_message(message, "[audio]"),
+        bot_reply=transcript,
+        model_used=speech_to_text_service.model,
+        success=True,
+        message_increment=1,
+        feature_used=feature_used,
+    )
+
+
+async def _process_group_hear_command(
+    message: Message,
+    user_text: str,
+    speech_to_text_service: SpeechToTextService,
+    tracking_service: SupabaseTrackingService | None,
+) -> None:
+    _ = user_text
+    file_id, file_size, file_name = _extract_replied_audio_file(message)
+    if not file_id:
+        await message.answer("Reply to voice/audio with /hear.", reply_markup=GROUP_REMOVE_KEYBOARD)
+        return
+    await _process_hear_audio_file(
+        message,
+        file_id=file_id,
+        file_size=file_size,
+        file_name=file_name,
+        speech_to_text_service=speech_to_text_service,
+        tracking_service=tracking_service,
+        feature_used="group_hear",
+        reply_markup=GROUP_REMOVE_KEYBOARD,
+    )
+
+
 @router.message(Command("ask"))
 @router.message(Command("serach"))
 @router.message(Command("search"))
@@ -2218,6 +2364,7 @@ async def group_audio_command(
 @router.message(Command("kimi"))
 @router.message(Command("vision"))
 @router.message(Command("tts"))
+@router.message(Command("hear"))
 @router.message(Command("gptaudio"))
 @router.message(F.text == MENU_AI_CHAT)
 @router.message(F.text == "JO AI Chat")
@@ -2229,6 +2376,9 @@ async def group_audio_command(
 @router.message(F.text == "Prompt Generator")
 @router.message(F.text == MENU_AI_IMAGE)
 @router.message(F.text == "Image Generator")
+@router.message(F.text == MENU_AI_IMAGE_EDIT)
+@router.message(F.text == "Image Edit")
+@router.message(F.text == "Edit Image")
 @router.message(F.text == MENU_AI_VIDEO)
 @router.message(F.text == "Video Generation")
 @router.message(F.text == MENU_AI_DEEPSEEK)
@@ -2236,6 +2386,9 @@ async def group_audio_command(
 @router.message(F.text == MENU_AI_KIMI)
 @router.message(F.text == MENU_AI_TTS)
 @router.message(F.text == "Text-to-Speech")
+@router.message(F.text == "Text-to-Audio")
+@router.message(F.text == MENU_AI_HEAR)
+@router.message(F.text == "Hear Audio")
 @router.message(F.text == MENU_AI_GPT_AUDIO)
 @router.message(F.text == "GPT Audio")
 @router.message(F.text == MENU_AI_TOOLS)
@@ -2250,6 +2403,7 @@ async def open_jo_ai_menu(
     image_generation_service: ImageGenerationService,
     pollinations_media_service: PollinationsMediaService,
     tts_service: TextToSpeechService,
+    speech_to_text_service: SpeechToTextService,
     code_api_key: str | None,
     code_model: str,
     kimi_api_key: str | None,
@@ -2337,6 +2491,16 @@ async def open_jo_ai_menu(
             )
             return
 
+        if command == "hear":
+            prompt = _command_payload(raw_text, "hear") or ""
+            await _process_group_hear_command(
+                message,
+                prompt,
+                speech_to_text_service,
+                tracking_service,
+            )
+            return
+
         if command in {"audio", "gptaudio"}:
             prompt = _command_payload(raw_text, command) or ""
             if not prompt:
@@ -2356,7 +2520,7 @@ async def open_jo_ai_menu(
             return
 
         await message.answer(
-            "In groups, use /ask, /search, /code, /image, /editimage, /vision, or /audio.",
+            "In groups, use /ask, /search, /code, /image, /editimage, /vision, /hear, or /audio.",
             reply_markup=GROUP_REMOVE_KEYBOARD,
         )
         return
@@ -2386,10 +2550,7 @@ async def open_jo_ai_menu(
         return
 
     if command == "editimage":
-        await message.answer(
-            "Image editing works in chat by replying to an image with your edit request.",
-            reply_markup=jo_ai_menu_keyboard(),
-        )
+        await _activate_mode(message, message.from_user.id, JoAIMode.IMAGE_EDIT, session_manager, miniapp_url)
         return
 
     if text in {"/chat", MENU_AI_CHAT.lower()}:
@@ -2416,6 +2577,9 @@ async def open_jo_ai_menu(
     if text in {"/image", MENU_AI_IMAGE.lower()}:
         await _activate_mode(message, message.from_user.id, JoAIMode.IMAGE, session_manager, miniapp_url)
         return
+    if text in {"/editimage", MENU_AI_IMAGE_EDIT.lower(), "image edit", "edit image"}:
+        await _activate_mode(message, message.from_user.id, JoAIMode.IMAGE_EDIT, session_manager, miniapp_url)
+        return
     if text in {"/video", MENU_AI_VIDEO.lower()}:
         unavailable_text = _video_feature_unavailable_text(
             pollinations_media_service,
@@ -2432,6 +2596,9 @@ async def open_jo_ai_menu(
         return
     if text in {"/tts", MENU_AI_TTS.lower()}:
         await _activate_mode(message, message.from_user.id, JoAIMode.TEXT_TO_SPEECH, session_manager, miniapp_url)
+        return
+    if text in {"/hear", MENU_AI_HEAR.lower(), "hear audio"}:
+        await _activate_mode(message, message.from_user.id, JoAIMode.HEAR_AUDIO, session_manager, miniapp_url)
         return
     if text in {"/gptaudio", MENU_AI_GPT_AUDIO.lower()}:
         await _activate_mode(message, message.from_user.id, JoAIMode.GPT_AUDIO, session_manager, miniapp_url)
@@ -2559,6 +2726,16 @@ async def enable_image_mode(query: CallbackQuery, session_manager: SessionManage
         await _activate_mode(query.message, query.from_user.id, JoAIMode.IMAGE, session_manager, miniapp_url)
 
 
+@router.callback_query(F.data == "joai:image_edit")
+async def enable_image_edit_mode(query: CallbackQuery, session_manager: SessionManager, miniapp_url: str | None) -> None:
+    if not query.from_user:
+        await query.answer()
+        return
+    await query.answer()
+    if isinstance(query.message, Message):
+        await _activate_mode(query.message, query.from_user.id, JoAIMode.IMAGE_EDIT, session_manager, miniapp_url)
+
+
 @router.callback_query(F.data == "joai:video")
 async def enable_video_mode(
     query: CallbackQuery,
@@ -2594,6 +2771,16 @@ async def enable_tts_mode(query: CallbackQuery, session_manager: SessionManager,
     await query.answer()
     if isinstance(query.message, Message):
         await _activate_mode(query.message, query.from_user.id, JoAIMode.TEXT_TO_SPEECH, session_manager, miniapp_url)
+
+
+@router.callback_query(F.data == "joai:hear")
+async def enable_hear_mode(query: CallbackQuery, session_manager: SessionManager, miniapp_url: str | None) -> None:
+    if not query.from_user:
+        await query.answer()
+        return
+    await query.answer()
+    if isinstance(query.message, Message):
+        await _activate_mode(query.message, query.from_user.id, JoAIMode.HEAR_AUDIO, session_manager, miniapp_url)
 
 
 @router.callback_query(F.data == "joai:gpt_audio")
@@ -2923,8 +3110,8 @@ async def handle_image_result_action(query: CallbackQuery, session_manager: Sess
         if not has_reference:
             await query.answer("No generated image found to use as reference.", show_alert=True)
             return
-        session.jo_ai_mode = JoAIMode.CHAT
         if action == "animate":
+            session.jo_ai_mode = JoAIMode.CHAT
             session.jo_ai_video_model = VIDEO_MODEL_OPTION_JO_AI_VIDEO
             if session.jo_ai_video_duration not in VIDEO_DURATION_OPTIONS:
                 session.jo_ai_video_duration = DEFAULT_VIDEO_DURATION_SECONDS
@@ -2935,26 +3122,34 @@ async def handle_image_result_action(query: CallbackQuery, session_manager: Sess
                 "Now send motion instructions (example: make her walk forward with cinematic camera movement)."
             )
         elif action == "edit":
+            session.jo_ai_mode = JoAIMode.IMAGE_EDIT
             prompt_hint = "Reference locked for edit. Send what to change (example: remove glasses)."
         elif action == "remix":
+            session.jo_ai_mode = JoAIMode.CHAT
             prompt_hint = "Reference locked for remix. Send how you want the variation to look."
         elif action == "remove_object":
+            session.jo_ai_mode = JoAIMode.IMAGE_EDIT
             prompt_hint = "Reference locked. Tell me which object to remove."
         elif action == "change_detail":
+            session.jo_ai_mode = JoAIMode.IMAGE_EDIT
             prompt_hint = "Reference locked. Tell me exactly which detail to change while keeping everything else the same."
         elif action == "regenerate_similar":
+            session.jo_ai_mode = JoAIMode.CHAT
             prompt_hint = "Reference locked. Send how similar you want the next version to be."
         elif action == "upscale":
+            session.jo_ai_mode = JoAIMode.IMAGE_EDIT
             prompt_hint = "Reference locked for upscale. Send any quality preference and I will enhance it."
         elif action == "use_ref":
+            session.jo_ai_mode = JoAIMode.CHAT
             prompt_hint = "Reference locked. Send your next image or video instruction."
 
     await query.answer("Reference locked.")
     if isinstance(query.message, Message):
+        back_callback = "joai:image_edit" if action in {"edit", "remove_object", "change_detail", "upscale"} else "joai:chat"
         await _send_step_message(
             query.message,
             prompt_hint,
-            reply_markup=jo_chat_keyboard("joai:chat"),
+            reply_markup=jo_chat_keyboard(back_callback),
         )
 
 
@@ -3514,6 +3709,61 @@ async def handle_jo_ai_text(
             tracking_service,
         )
         return
+    if mode == JoAIMode.IMAGE_EDIT:
+        reference_image_url: str | None = None
+        reference_file_id = _extract_reply_image_file_id(message)
+        if reference_file_id:
+            try:
+                reference_image_url = await _upload_reference_image_from_telegram(
+                    message=message,
+                    file_id=reference_file_id,
+                    pollinations_media_service=pollinations_media_service,
+                )
+            except Exception:
+                logger.exception("Failed to resolve replied image for Image Edit mode.")
+                await message.answer("I couldn't read the replied image. Send it again and reply with your edit.", reply_markup=jo_chat_keyboard("joai:image_edit"))
+                return
+        elif str(last_generated_image_url or "").strip():
+            reference_image_url = str(last_generated_image_url).strip()
+        else:
+            async with session_manager.lock(message.from_user.id) as session:
+                reference_file_id = (
+                    str(session.jo_ai_last_image_file_id or "").strip()
+                    or str(session.jo_ai_last_generated_image_file_id or "").strip()
+                    or None
+                )
+            if reference_file_id:
+                try:
+                    reference_image_url = await _upload_reference_image_from_telegram(
+                        message=message,
+                        file_id=reference_file_id,
+                        pollinations_media_service=pollinations_media_service,
+                    )
+                except Exception:
+                    logger.exception("Failed to resolve saved image for Image Edit mode.")
+                    reference_image_url = None
+
+        if not reference_image_url:
+            await message.answer(
+                "Reply to an image with your edit prompt, or generate an image and tap Edit Image.",
+                reply_markup=jo_chat_keyboard("joai:image_edit"),
+            )
+            return
+
+        await _process_image_message(
+            message,
+            user_text,
+            session_manager,
+            image_generation_service,
+            pollinations_media_service,
+            image_ratio or "1:1",
+            image_model or DEFAULT_POLLINATIONS_IMAGE_MODEL,
+            tracking_service,
+            reply_markup=jo_chat_keyboard("joai:image_edit"),
+            feature_used_prefix="image_edit",
+            reference_image_url=reference_image_url,
+        )
+        return
     if mode == JoAIMode.IMAGE:
         await _process_image_message(
             message,
@@ -3548,6 +3798,21 @@ async def handle_jo_ai_text(
             tts_style,
             tts_emotion,
             tracking_service,
+        )
+        return
+    if mode == JoAIMode.HEAR_AUDIO:
+        reply_text = "Send or reply to a voice/audio file and I will write it as text."
+        await message.answer(reply_text, reply_markup=jo_chat_keyboard("joai:hear"))
+        await _track_telegram_action(
+            tracking_service=tracking_service,
+            message=message,
+            message_type="hear",
+            user_message=text,
+            bot_reply=reply_text,
+            model_used=None,
+            success=False,
+            message_increment=1,
+            feature_used="hear_audio:waiting_audio",
         )
         return
     if mode == JoAIMode.GPT_AUDIO:
@@ -3587,11 +3852,49 @@ async def handle_jo_ai_text(
     )
 
 
+@router.message(F.voice)
+@router.message(F.audio)
+async def handle_hear_audio_upload(
+    message: Message,
+    session_manager: SessionManager,
+    speech_to_text_service: SpeechToTextService,
+    tracking_service: SupabaseTrackingService | None = None,
+) -> None:
+    if not message.from_user:
+        return
+    if _is_group_chat(message):
+        return
+
+    async with session_manager.lock(message.from_user.id) as session:
+        mode = session.jo_ai_mode if session.active_feature == Feature.JO_AI else JoAIMode.MENU
+
+    file_id, file_size, file_name = _extract_audio_file_from_message(message)
+    if not file_id:
+        return
+    if mode != JoAIMode.HEAR_AUDIO:
+        await message.answer("Open Hear Audio mode first, then send the voice/audio file.", reply_markup=jo_ai_menu_keyboard())
+        return
+
+    await _process_hear_audio_file(
+        message,
+        file_id=file_id,
+        file_size=file_size,
+        file_name=file_name,
+        speech_to_text_service=speech_to_text_service,
+        tracking_service=tracking_service,
+        feature_used="hear_audio",
+        reply_markup=jo_chat_keyboard("joai:hear"),
+    )
+
+
 @router.message(F.document)
 async def handle_code_document_upload(
     message: Message,
     session_manager: SessionManager,
     chat_service: ChatService,
+    image_generation_service: ImageGenerationService,
+    pollinations_media_service: PollinationsMediaService,
+    speech_to_text_service: SpeechToTextService,
     code_api_key: str | None,
     code_model: str,
     tracking_service: SupabaseTrackingService | None = None,
@@ -3603,7 +3906,68 @@ async def handle_code_document_upload(
 
     document = message.document
     mime_type = (document.mime_type or "").strip().lower()
+    async with session_manager.lock(message.from_user.id) as session:
+        mode = session.jo_ai_mode if session.active_feature == Feature.JO_AI else JoAIMode.MENU
+
+    if mime_type.startswith("audio/") or mime_type in {"application/ogg", "video/ogg"}:
+        if mode != JoAIMode.HEAR_AUDIO:
+            await message.answer("Open Hear Audio mode first, then send the audio file.", reply_markup=jo_ai_menu_keyboard())
+            return
+        file_id, file_size, file_name = _extract_audio_file_from_message(message)
+        if not file_id:
+            await message.answer("I couldn't read that audio file.", reply_markup=jo_chat_keyboard("joai:hear"))
+            return
+        await _process_hear_audio_file(
+            message,
+            file_id=file_id,
+            file_size=file_size,
+            file_name=file_name,
+            speech_to_text_service=speech_to_text_service,
+            tracking_service=tracking_service,
+            feature_used="hear_audio",
+            reply_markup=jo_chat_keyboard("joai:hear"),
+        )
+        return
+
     if mime_type.startswith("image/"):
+        if mode == JoAIMode.IMAGE_EDIT:
+            prompt = (message.caption or "").strip()
+            async with session_manager.lock(message.from_user.id) as session:
+                session.jo_ai_last_image_file_id = document.file_id
+                session.jo_ai_last_image_prompt = prompt or None
+            if prompt:
+                try:
+                    reference_image_url = await _upload_reference_image_from_telegram(
+                        message=message,
+                        file_id=document.file_id,
+                        pollinations_media_service=pollinations_media_service,
+                    )
+                except Exception:
+                    logger.exception("Failed to upload Image Edit document reference.")
+                    await message.answer(
+                        "I couldn't read that image. Send it again and reply with your edit.",
+                        reply_markup=jo_chat_keyboard("joai:image_edit"),
+                    )
+                    return
+                await _process_image_message(
+                    message,
+                    prompt,
+                    session_manager,
+                    image_generation_service,
+                    pollinations_media_service,
+                    "1:1",
+                    DEFAULT_POLLINATIONS_IMAGE_MODEL,
+                    tracking_service,
+                    reply_markup=jo_chat_keyboard("joai:image_edit"),
+                    feature_used_prefix="image_edit",
+                    reference_image_url=reference_image_url,
+                )
+                return
+            await message.answer(
+                "Image received. Reply to that image with your edit prompt.",
+                reply_markup=jo_chat_keyboard("joai:image_edit"),
+            )
+            return
         await _prompt_uploaded_image_action(
             message,
             session_manager,
@@ -3630,9 +3994,6 @@ async def handle_code_document_upload(
             ),
         )
         return
-
-    async with session_manager.lock(message.from_user.id) as session:
-        mode = session.jo_ai_mode if session.active_feature == Feature.JO_AI else JoAIMode.MENU
 
     if mode != JoAIMode.CODE:
         reply_text = "File upload analysis is available only in <b>Code Generator</b> mode."
@@ -3804,6 +4165,8 @@ async def handle_kimi_photo(
     message: Message,
     session_manager: SessionManager,
     chat_service: ChatService,
+    image_generation_service: ImageGenerationService,
+    pollinations_media_service: PollinationsMediaService,
     kimi_api_key: str | None,
     kimi_model: str,
     tracking_service: SupabaseTrackingService | None = None,
@@ -3820,8 +4183,65 @@ async def handle_kimi_photo(
         if mode == JoAIMode.KIMI_IMAGE_DESCRIBER:
             session.jo_ai_last_image_file_id = largest.file_id
             session.jo_ai_last_image_prompt = prompt_text or None
+        elif mode == JoAIMode.IMAGE_EDIT:
+            session.jo_ai_last_image_file_id = largest.file_id
+            session.jo_ai_last_image_prompt = prompt_text or None
         else:
             mode = JoAIMode.MENU
+
+    if mode == JoAIMode.IMAGE_EDIT:
+        if prompt_text:
+            try:
+                reference_image_url = await _upload_reference_image_from_telegram(
+                    message=message,
+                    file_id=largest.file_id,
+                    pollinations_media_service=pollinations_media_service,
+                )
+            except Exception:
+                logger.exception("Failed to upload Image Edit photo reference.")
+                await message.answer(
+                    "I couldn't read that image. Send it again and reply with your edit.",
+                    reply_markup=jo_chat_keyboard("joai:image_edit"),
+                )
+                return
+            await _process_image_message(
+                message,
+                prompt_text,
+                session_manager,
+                image_generation_service,
+                pollinations_media_service,
+                "1:1",
+                DEFAULT_POLLINATIONS_IMAGE_MODEL,
+                tracking_service,
+                reply_markup=jo_chat_keyboard("joai:image_edit"),
+                feature_used_prefix="image_edit",
+                reference_image_url=reference_image_url,
+            )
+            return
+        await message.answer(
+            "Image received. Reply to that image with your edit prompt.",
+            reply_markup=jo_chat_keyboard("joai:image_edit"),
+        )
+        await _track_telegram_action(
+            tracking_service=tracking_service,
+            message=message,
+            message_type="image_edit",
+            user_message=prompt_text or "[photo]",
+            bot_reply="Image received for edit.",
+            model_used=None,
+            success=True,
+            message_increment=1,
+            feature_used="image_edit:reference_received",
+            media=TrackingMedia(
+                media_type="image",
+                storage_path=f"telegram_file:{largest.file_id}",
+                mime_type="image/jpeg",
+                provider_source="telegram",
+                media_origin="upload",
+                media_status="available",
+            ),
+        )
+        return
 
     if mode != JoAIMode.KIMI_IMAGE_DESCRIBER:
         await _prompt_uploaded_image_action(message, session_manager, largest.file_id, prompt_text)

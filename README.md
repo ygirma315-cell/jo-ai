@@ -137,6 +137,7 @@ pip install -r requirements.txt
 - `CODE_API_KEY`
 - `NVIDIA_VISION_API_KEY`
 - `NVIDIA_TTS_API_KEY`
+- `NVIDIA_STT_API_KEY`
 - `IMAGE_EDIT_API_KEY`
 
 3. Run the backend/API:
@@ -199,11 +200,14 @@ Optional:
 - `NVIDIA_VISION_API_KEY`
 - `VISION_MODEL` (default: `meta/llama-3.2-11b-vision-instruct`)
 - `NVIDIA_TTS_API_KEY`
+- `NVIDIA_STT_API_KEY`
+- `STT_MODEL` (default: `openai/whisper-large-v3`)
 - `IMAGE_EDIT_API_KEY`
 - `SUPABASE_URL`
 - `SUPABASE_SERVICE_ROLE_KEY` (recommended for backend tracking writes)
 - `SUPABASE_ANON_KEY` (fallback only; can be blocked by RLS)
 - `SUPABASE_ALLOW_ANON_FALLBACK` (default `false`; keep disabled in production)
+- `ENFORCE_RESTRICTED_USERS` (default `false`; set true only if you want blocked Supabase users denied bot access)
 - `SUPABASE_DB_URL` (recommended; direct Postgres tracking backend)
 - `SUPABASE_USERS_TABLE` (default: `users`)
 - `SUPABASE_HISTORY_TABLE` (default: `history`)
@@ -262,6 +266,7 @@ Required Render environment:
 - `CODE_API_KEY`: recommended for Code Generator and group `/code`.
 - `NVIDIA_VISION_API_KEY`: recommended for Vision and group `/vision`.
 - `NVIDIA_TTS_API_KEY`: recommended for Text-to-Audio and group `/audio`.
+- `NVIDIA_STT_API_KEY`: optional clearer key for Hear Audio and group `/hear`; if unset, it falls back to the TTS/NVIDIA key.
 - `IMAGE_EDIT_API_KEY`: optional image-edit credential slot. Group `/editimage` also needs `POLLINATIONS_API_KEY` for the current edit backend.
 - `PUBLIC_BASE_URL`: optional if Render provides `RENDER_EXTERNAL_URL`; set it to your public Render URL if webhook setup does not register automatically.
 
@@ -270,9 +275,9 @@ After changing Render environment variables, redeploy/restart the service so sta
 Group behavior:
 
 - When the bot is added to a group, it sends the group command list.
-- In groups, use `/ask`, `/search`, `/code`, `/image`, `/editimage`, `/vision`, or `/audio`.
+- In groups, use `/ask`, `/search`, `/code`, `/image`, `/editimage`, `/vision`, `/hear`, or `/audio`.
 - The most reliable group format is putting the prompt in the same command message, for example `/image sunset over Addis Ababa`.
-- For `/editimage` and `/vision`, reply to an image with the command and prompt.
+- For `/editimage` and `/vision`, reply to an image with the command and prompt. For `/hear`, reply to a voice/audio message.
 - If you want follow-up messages after `/image` or `/audio` without repeating the command, disable BotFather privacy mode for the bot; otherwise Telegram may only deliver commands, replies, and mentions.
 
 ### GitHub Pages

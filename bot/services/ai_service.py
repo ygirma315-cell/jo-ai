@@ -6,6 +6,7 @@ from dataclasses import dataclass
 import hashlib
 import json
 import logging
+import mimetypes
 import re
 import time
 from typing import Any, Literal
@@ -876,6 +877,93 @@ class TextToSpeechService:
                 continue
 
         return None
+
+
+@dataclass
+class SpeechToTextService:
+    api_key: str | None = None
+    model: str = "openai/whisper-large-v3"
+    base_url: str = NVIDIA_BASE_URL
+
+    async def transcribe_audio(
+        self,
+        audio_bytes: bytes,
+        *,
+        file_name: str = "audio.ogg",
+        language: str | None = None,
+    ) -> str:
+        if not self.api_key:
+            raise AIServiceError(SAFE_SERVICE_UNAVAILABLE_MESSAGE)
+        payload = bytes(audio_bytes or b"")
+        if not payload:
+            raise AIServiceError("Audio file is empty.")
+
+        safe_file_name = str(file_name or "audio.ogg").strip() or "audio.ogg"
+        mime_type = mimetypes.guess_type(safe_file_name)[0] or "application/octet-stream"
+        form = aiohttp.FormData()
+        form.add_field("model", (self.model or "openai/whisper-large-v3").strip())
+        form.add_field("response_format", "json")
+        if language:
+            form.add_field("language", str(language).strip())
+        form.add_field(
+            "file",
+            payload,
+            filename=safe_file_name,
+            content_type=mime_type,
+        )
+
+        headers = {"Authorization": f"Bearer {self.api_key}"}
+        timeout = aiohttp.ClientTimeout(total=70)
+        endpoint = f"{self.base_url.rstrip('/')}/audio/transcriptions"
+        try:
+            async with aiohttp.ClientSession(timeout=timeout) as session:
+                async with session.post(endpoint, headers=headers, data=form) as response:
+                    body = await response.read()
+                    if response.status >= 400:
+                        detail = _extract_api_error_bytes(body)
+                        raise AIServiceError(detail or SAFE_SERVICE_UNAVAILABLE_MESSAGE)
+                    content_type = (response.headers.get("Content-Type") or "").lower()
+                    if "application/json" in content_type or body[:1] in {b"{", b"["}:
+                        parsed = _decode_json_bytes(body)
+                        text = _extract_transcription_text(parsed)
+                    else:
+                        text = body.decode("utf-8", errors="ignore").strip()
+        except asyncio.TimeoutError as exc:
+            raise AIServiceError("Audio transcription timed out.") from exc
+        except aiohttp.ClientError as exc:
+            raise AIServiceError(SAFE_SERVICE_UNAVAILABLE_MESSAGE) from exc
+
+        normalized = " ".join(str(text or "").split())
+        if not normalized:
+            raise AIServiceError("No speech detected.")
+        return normalized
+
+
+def _extract_transcription_text(data: Any) -> str:
+    if isinstance(data, dict):
+        for key in ("text", "transcript", "transcription", "output"):
+            value = data.get(key)
+            if isinstance(value, str) and value.strip():
+                return value.strip()
+        choices = data.get("choices")
+        if isinstance(choices, list) and choices:
+            first = choices[0]
+            if isinstance(first, dict):
+                message = first.get("message")
+                if isinstance(message, dict) and isinstance(message.get("content"), str):
+                    return message["content"].strip()
+                if isinstance(first.get("text"), str):
+                    return first["text"].strip()
+        segments = data.get("segments")
+        if isinstance(segments, list):
+            parts = [str(item.get("text") or "").strip() for item in segments if isinstance(item, dict)]
+            return " ".join(part for part in parts if part)
+    if isinstance(data, list):
+        parts = [_extract_transcription_text(item) for item in data]
+        return " ".join(part for part in parts if part)
+    if isinstance(data, str):
+        return data.strip()
+    return ""
 
 
 @dataclass

@@ -35,6 +35,7 @@ from bot.services.ai_service import (
     GeminiChatService,
     ImageGenerationService,
     PollinationsMediaService,
+    SpeechToTextService,
     TextToSpeechService,
 )
 from bot.services.session_manager import SessionManager
@@ -172,6 +173,7 @@ async def _configure_bot_commands(runtime: BotRuntime) -> bool:
         BotCommand(command="image", description="Generate an image from a prompt"),
         BotCommand(command="editimage", description="Edit a replied image"),
         BotCommand(command="vision", description="Analyze a replied image"),
+        BotCommand(command="hear", description="Transcribe replied audio"),
         BotCommand(command="audio", description="Generate audio from text"),
     ]
     private_commands = [
@@ -179,8 +181,10 @@ async def _configure_bot_commands(runtime: BotRuntime) -> bool:
         BotCommand(command="chat", description="Open JO AI chat"),
         BotCommand(command="code", description="Open code generator"),
         BotCommand(command="image", description="Generate an image"),
+        BotCommand(command="editimage", description="Edit an image"),
         BotCommand(command="vision", description="Analyze an image"),
         BotCommand(command="tts", description="Generate speech from text"),
+        BotCommand(command="hear", description="Transcribe audio to text"),
     ]
     try:
         await runtime.bot.delete_my_commands(scope=BotCommandScopeAllGroupChats())
@@ -329,6 +333,11 @@ async def create_bot_runtime() -> BotRuntime:
     dispatcher["tts_service"] = TextToSpeechService(
         api_key=settings.tts_api_key or settings.nvidia_api_key or settings.ai_api_key,
         function_id=settings.tts_function_id,
+    )
+    dispatcher["speech_to_text_service"] = SpeechToTextService(
+        api_key=settings.speech_to_text_api_key or settings.nvidia_api_key or settings.ai_api_key,
+        model=settings.speech_to_text_model,
+        base_url=settings.ai_base_url,
     )
     tracking_service = SupabaseTrackingService(settings)
     dispatcher["tracking_service"] = tracking_service

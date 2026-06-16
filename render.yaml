@@ -28,6 +28,8 @@ services:
         value: qwen/qwen2.5-coder-32b-instruct
       - key: VISION_MODEL
         value: meta/llama-3.2-11b-vision-instruct
+      - key: STT_MODEL
+        value: openai/whisper-large-v3
       - key: TTS_FUNCTION_ID
         value: bc45d9e9-7c78-4d56-9737-e27011962ba8
       # Manual check: keep this aligned with the final GitHub Pages URL for ygirma315-cell/jo-ai.
@@ -63,6 +65,8 @@ services:
         sync: false
       - key: NVIDIA_TTS_API_KEY
         sync: false
+      - key: NVIDIA_STT_API_KEY
+        sync: false
       - key: POLLINATIONS_API_KEY
         sync: false
       - key: TTS_API_KEY
@@ -91,6 +95,8 @@ services:
         value: "720"
       - key: ENGAGEMENT_BATCH_SIZE
         value: "30"
+      - key: ENFORCE_RESTRICTED_USERS
+        value: "false"
       - key: KEEPALIVE_SELF_PING_ENABLED
         value: "true"
       - key: KEEPALIVE_PING_INTERVAL_MINUTES

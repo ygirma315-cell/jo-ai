@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from contextlib import suppress
 import logging
+import os
 from typing import Any, Awaitable, Callable
 
 from aiogram import BaseMiddleware
@@ -14,6 +15,10 @@ from bot.services.tracking_service import SupabaseTrackingService
 logger = logging.getLogger(__name__)
 BLOCKED_ACCESS_NOTICE = "Your access to this bot is currently restricted. Contact support for help."
 BLOCKED_ACCESS_ALERT = "Access restricted."
+
+
+def _enforce_restricted_users() -> bool:
+    return os.getenv("ENFORCE_RESTRICTED_USERS", "").strip().lower() in {"1", "true", "yes", "on"}
 
 
 class UserActionLoggingMiddleware(BaseMiddleware):
@@ -47,6 +52,7 @@ class UserActionLoggingMiddleware(BaseMiddleware):
             user_id is not None
             and isinstance(tracking_service, SupabaseTrackingService)
             and tracking_service.enabled
+            and _enforce_restricted_users()
         ):
             try:
                 restricted = await tracking_service.is_user_access_restricted(int(user_id))

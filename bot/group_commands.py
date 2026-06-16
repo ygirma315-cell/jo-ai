@@ -17,7 +17,8 @@ GROUP_COMMANDS_TEXT = (
     "<code>/image cat</code> - generate an image\n"
     "<code>/editimage make it brighter</code> - reply to an image and edit it\n"
     "<code>/vision explain this</code> - reply to an image and analyze it\n"
-    "<code>/audio say hello</code> - generate audio\n\n"
+    "<code>/audio say hello</code> - generate audio\n"
+    "<code>/hear</code> - reply to voice/audio and transcribe it\n\n"
     "Use commands only in groups, like <code>/image sunset over Addis Ababa</code>."
 )
 
