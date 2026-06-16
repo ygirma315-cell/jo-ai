@@ -2,11 +2,11 @@
 
 from aiogram import F, Router
 from aiogram.filters import Command, CommandStart
-from aiogram.types import CallbackQuery, Message
+from aiogram.types import CallbackQuery, Message, ReplyKeyboardRemove
 
 from bot.constants import MENU_AI_TOOLS, MENU_CANCEL, MENU_HELP, MENU_REFERRAL, MENU_VERSION_MODELS
 from bot.group_commands import GROUP_COMMANDS_TEXT, track_group_chat
-from bot.keyboards.menu import ai_tools_keyboard, main_menu_keyboard
+from bot.keyboards.menu import ai_tools_keyboard, join_channel_keyboard, main_menu_keyboard
 from bot.models.session import Feature
 from bot.runtime_info import format_release_summary_html, format_runtime_info_html
 from bot.security import DEVELOPER_HANDLE
@@ -20,11 +20,9 @@ WELCOME_TEXT = (
     "Use the menu to choose a mode:\n"
     "• 💬 Chat\n"
     "• ⚡ Code\n"
-    "• 🔍 Research\n"
-    "• 🎨 Image and vision\n"
-    "• 🎬 Video\n"
-    "• 🔊 Text-to-Speech\n"
-    "• 🎧 GPT Audio\n"
+    "• 🎨 Image Generator\n"
+    "• 🖼️ Vision\n"
+    "• 🔊 Text-to-Audio\n"
     "• 🔗 Referral tools\n"
     "• 🚀 Mini App access\n\n"
     "Send any message to begin."
@@ -34,17 +32,10 @@ HELP_TEXT = (
     "<b>Help Center</b>\n\n"
     "<b>AI Commands</b>\n"
     "/chat - JO AI chat mode\n"
-    "/gemini - Gemini mode (temporarily disabled)\n"
     "/code - code generator mode\n"
-    "/research - research mode\n"
-    "/prompt - prompt generator mode\n"
     "/image - image generator mode\n"
-    "/video - video generation mode\n"
-    "/analysis - DeepSeek mode\n"
-    "/deepseek - DeepSeek mode\n"
     "/vision - vision mode (send photo)\n"
-    "/tts - text-to-speech mode\n"
-    "/gptaudio - GPT Audio mode\n"
+    "/tts - text-to-audio mode\n"
     "/referral - your invite link\n\n"
     "<b>Navigation</b>\n"
     "Back = one step back in the current feature\n"
@@ -52,9 +43,7 @@ HELP_TEXT = (
     "<b>Other Commands</b>\n"
     "/version - show public version info\n"
     "/menu - return to main menu\n\n"
-    "I am JO AI Chat, created by JO AI Chat / @GRPBUYER3.\n"
-    "Internal backend, provider, and model details are not shared.\n"
-    f"For JO API access, contact {DEVELOPER_HANDLE}."
+    f"JO AI Chat Bot was made by JO AI Chat / {DEVELOPER_HANDLE}."
 )
 
 MENU_HINT_TEXT = (
@@ -72,16 +61,10 @@ AI_TOOLS_TEXT = (
     "🤖 <b>AI Tools Menu</b>\n\n"
     "Choose your workspace:\n"
     "• 💬 Chat AI\n"
-    "• 💠 Gemini Chat (temporarily disabled)\n"
     "• ⚡ Generate code\n"
-    "• 🔍 Research\n"
-    "• ✨ Build prompts\n"
-    "• 🧠 DeepSeek\n"
     "• 🎨 Generate images\n"
-    "• 🎬 Generate videos\n"
     "• 🖼️ Vision mode\n"
-    "• 🔊 Text-to-Speech\n"
-    "• 🎧 GPT Audio"
+    "• 🔊 Text-to-Audio"
 )
 
 
@@ -119,6 +102,7 @@ async def handle_start(
     message: Message,
     session_manager: SessionManager,
     miniapp_url: str | None,
+    main_channel_url: str | None,
     runtime_info: dict[str, object],
     tracking_service: SupabaseTrackingService | None = None,
 ) -> None:
@@ -152,8 +136,8 @@ async def handle_start(
         )
         transition = await session_manager.switch_feature(message.from_user.id, Feature.NONE)
         if transition.notice:
-            await message.answer(transition.notice)
-        await message.answer(GROUP_COMMANDS_TEXT)
+            await message.answer(transition.notice, reply_markup=ReplyKeyboardRemove(remove_keyboard=True))
+        await message.answer(GROUP_COMMANDS_TEXT, reply_markup=ReplyKeyboardRemove(remove_keyboard=True))
         return
 
     transition = await session_manager.switch_feature(message.from_user.id, Feature.NONE)
@@ -163,17 +147,21 @@ async def handle_start(
     sections.append(WELCOME_TEXT)
     sections.append(
         "<b>Quick Start</b>\n"
-        "1) Tap <b>AI Tools</b> to choose chat, code, research, prompts, image, video, or audio.\n"
+        "1) Tap <b>AI Tools</b> to choose chat, code, image, vision, or audio.\n"
         "2) Tap <b>Open App</b> to launch the Mini App.\n"
         "3) Tap <b>Version</b> for public build details."
     )
     if referral_code:
         sections.append("✅ Referral detected and applied.")
     sections.append(format_release_summary_html(runtime_info))
-    await message.answer(
-        "\n\n".join(part for part in sections if part.strip()),
-        reply_markup=main_menu_keyboard(miniapp_url),
-    )
+    welcome_body = "\n\n".join(part for part in sections if part.strip())
+    channel_keyboard = join_channel_keyboard(main_channel_url)
+    if channel_keyboard is not None:
+        await message.answer(welcome_body, reply_markup=channel_keyboard)
+        await message.answer("Choose a tool below.", reply_markup=main_menu_keyboard(miniapp_url))
+        return
+
+    await message.answer(welcome_body, reply_markup=main_menu_keyboard(miniapp_url))
 
 
 @router.message(Command("restart"))
@@ -203,7 +191,7 @@ async def handle_restart(
 @router.message(F.text == "Help")
 async def handle_help(message: Message, miniapp_url: str | None) -> None:
     if message.chat.type in {"group", "supergroup"}:
-        await message.answer(GROUP_COMMANDS_TEXT)
+        await message.answer(GROUP_COMMANDS_TEXT, reply_markup=ReplyKeyboardRemove(remove_keyboard=True))
         return
     await message.answer(HELP_TEXT, reply_markup=main_menu_keyboard(miniapp_url))
 

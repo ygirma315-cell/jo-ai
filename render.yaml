@@ -24,17 +24,17 @@ services:
         value: grok-imagine
       - key: POLLINATIONS_VIDEO_MODEL_GROK_TEXT_TO_VIDEO
         value: grok-video
-      - key: DEEPSEEK_MODEL
-        value: deepseek-ai/deepseek-v3.2
-      - key: KIMI_MODEL
-        value: moonshotai/kimi-k2.5
-      - key: GEMINI_MODEL
-        value: gemini-2.0-flash
+      - key: CODE_MODEL
+        value: qwen/qwen2.5-coder-32b-instruct
+      - key: VISION_MODEL
+        value: meta/llama-3.2-11b-vision-instruct
       - key: TTS_FUNCTION_ID
         value: bc45d9e9-7c78-4d56-9737-e27011962ba8
       # Manual check: keep this aligned with the final GitHub Pages URL for ygirma315-cell/jo-ai.
       - key: MINIAPP_URL
         value: https://ygirma315-cell.github.io/jo-ai/
+      - key: MAIN_CHANNEL_URL
+        sync: false
       - key: SUPABASE_URL
         sync: false
       - key: SUPABASE_SERVICE_ROLE_KEY
@@ -53,15 +53,17 @@ services:
         sync: false
       - key: NVIDIA_API_KEY
         sync: false
+      - key: CODE_API_KEY
+        sync: false
       - key: IMAGE_API_KEY
         sync: false
+      - key: IMAGE_EDIT_API_KEY
+        sync: false
+      - key: NVIDIA_VISION_API_KEY
+        sync: false
+      - key: NVIDIA_TTS_API_KEY
+        sync: false
       - key: POLLINATIONS_API_KEY
-        sync: false
-      - key: DEEPSEEK_API_KEY
-        sync: false
-      - key: KIMI_API_KEY
-        sync: false
-      - key: GEMINI_API_KEY
         sync: false
       - key: TTS_API_KEY
         sync: false

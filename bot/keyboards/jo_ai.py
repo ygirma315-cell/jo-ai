@@ -13,16 +13,11 @@ def jo_ai_menu_keyboard() -> InlineKeyboardMarkup:
     builder = InlineKeyboardBuilder()
     builder.button(text="JO AI Chat", callback_data="joai:chat")
     builder.button(text="Code Generator", callback_data="joai:code")
-    builder.button(text="Research", callback_data="joai:research")
-    builder.button(text="DeepSeek", callback_data="joai:deep_analysis")
-    builder.button(text="Prompt Generator", callback_data="joai:prompt")
     builder.button(text="Image Generation", callback_data="joai:image")
-    builder.button(text="Video Generation", callback_data="joai:video")
     builder.button(text="Vision", callback_data="joai:kimi")
-    builder.button(text="Text-to-Speech", callback_data="joai:tts")
-    builder.button(text="GPT Audio", callback_data="joai:gpt_audio")
+    builder.button(text="Text-to-Audio", callback_data="joai:tts")
     _append_back_main(builder, "menu:ai_tools")
-    builder.adjust(2, 2, 2, 2, 2, 2)
+    builder.adjust(2, 2, 1, 2)
     return builder.as_markup()
 
 

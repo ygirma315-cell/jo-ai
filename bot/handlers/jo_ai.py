@@ -13,7 +13,14 @@ from typing import Literal
 from aiogram import F, Router
 from aiogram.exceptions import TelegramBadRequest, TelegramForbiddenError
 from aiogram.filters import Command
-from aiogram.types import BufferedInputFile, CallbackQuery, ChatMemberUpdated, InlineKeyboardMarkup, Message
+from aiogram.types import (
+    BufferedInputFile,
+    CallbackQuery,
+    ChatMemberUpdated,
+    InlineKeyboardMarkup,
+    Message,
+    ReplyKeyboardRemove,
+)
 from aiogram.utils.chat_action import ChatActionSender
 
 from bot.constants import (
@@ -92,15 +99,13 @@ JO_AI_MENU_TEXT = (
     "Choose a mode:\n"
     "- JO AI Chat\n"
     "- Code Generator\n"
-    "- Research\n"
-    "- DeepSeek\n"
-    "- Prompt Generator\n"
     "- Image Generation\n"
-    "- Video Generation\n"
     "- JO AI Vision\n"
-    "- Text-to-Speech\n\n"
-    "- GPT Audio\n\n"
+    "- Text-to-Audio\n\n"
     "Tip: use /help any time for guidance."
+)
+REMOVED_MODE_NOTICE = (
+    "That mode was removed. Use JO AI Chat, Code Generator, Image Generator, Vision, or Text-to-Audio."
 )
 
 IMAGE_RATIO_LABELS = {
@@ -408,6 +413,8 @@ BOT_COMMAND_WITH_PAYLOAD_PATTERN = re.compile(
 GROUP_IMAGE_FAILURE_TEXT = "We couldn't generate that image. Please try again."
 GROUP_AUDIO_FAILURE_TEXT = "We couldn't generate that audio. Please try again."
 GROUP_AI_FAILURE_TEXT = "I couldn't answer that. Please try again."
+GROUP_REMOVE_KEYBOARD = ReplyKeyboardRemove(remove_keyboard=True)
+GROUP_MEDIA_LIMIT_BYTES = 10 * 1024 * 1024
 
 
 @dataclass(slots=True)
@@ -438,6 +445,15 @@ def _deep_analysis_mode_options(deepseek_api_key: str | None, deepseek_model: st
     if (deepseek_api_key or "").strip():
         mode_options["api_key_override"] = deepseek_api_key
         mode_options["model_override"] = deepseek_model
+    return mode_options
+
+
+def _code_mode_options(code_api_key: str | None, code_model: str) -> dict[str, object]:
+    mode_options = _default_mode_options()
+    if (code_api_key or "").strip():
+        mode_options["api_key_override"] = code_api_key
+    if (code_model or "").strip():
+        mode_options["model_override"] = code_model
     return mode_options
 
 
@@ -681,6 +697,10 @@ async def _show_jo_ai_menu(message: Message) -> None:
     await message.answer(JO_AI_MENU_TEXT, reply_markup=jo_ai_menu_keyboard())
 
 
+async def _send_removed_mode_notice(message: Message) -> None:
+    await message.answer(REMOVED_MODE_NOTICE, reply_markup=jo_ai_menu_keyboard())
+
+
 def _feature_reply_keyboard(back_callback: str) -> InlineKeyboardMarkup:
     return jo_chat_keyboard(back_callback)
 
@@ -907,7 +927,7 @@ async def _send_video_prompt_step(
 async def _send_tts_language_step(message: Message) -> None:
     await _send_step_message(
         message,
-        "<b>Text-to-Speech is active</b>\n\n"
+        "<b>Text-to-Audio is active</b>\n\n"
         "Step 1/4: Choose a language.\n"
         "After male or female, you'll get several voice-style choices.\n"
         "Voice cloning is not supported in this release yet.",
@@ -1328,8 +1348,7 @@ def _friendly_error_text(title: str, exc: Exception | None = None) -> str:
         f"Warning: <b>{title}</b>\n"
         f"{BRANDING_LINE}\n"
         "Please try again in a moment."
-        f"{detail}\n"
-        f"For JO API access, contact {DEVELOPER_HANDLE}."
+        f"{detail}"
     )
     if exc is not None:
         logger.warning("JO AI request failed.")
@@ -1342,7 +1361,8 @@ def _is_internal_rule_block(text: str | None) -> bool:
         return False
     if normalized == SAFE_INTERNAL_DETAILS_REFUSAL:
         return True
-    return "can't share internal backend or api details" in normalized.lower()
+    lowered = normalized.lower()
+    return "can't share internal backend or api details" in lowered or "internal backend or api details" in lowered
 
 
 def _is_service_unavailable_error(exc: Exception | None) -> bool:
@@ -1456,6 +1476,35 @@ def _extract_reply_image_file_id(message: Message) -> str | None:
         if mime.startswith("image/"):
             return str(getattr(document, "file_id", "") or "").strip() or None
     return None
+
+
+def _extract_image_file_from_message(message: Message | None) -> tuple[str | None, int | None]:
+    if message is None:
+        return None, None
+    photo = getattr(message, "photo", None)
+    if isinstance(photo, list) and photo:
+        largest = photo[-1]
+        return (
+            str(getattr(largest, "file_id", "") or "").strip() or None,
+            int(getattr(largest, "file_size", 0) or 0) or None,
+        )
+    document = getattr(message, "document", None)
+    if document is not None:
+        mime = str(getattr(document, "mime_type", "") or "").strip().lower()
+        if mime.startswith("image/"):
+            return (
+                str(getattr(document, "file_id", "") or "").strip() or None,
+                int(getattr(document, "file_size", 0) or 0) or None,
+            )
+    return None, None
+
+
+def _extract_replied_image_file(message: Message) -> tuple[str | None, int | None]:
+    return _extract_image_file_from_message(getattr(message, "reply_to_message", None))
+
+
+def _group_media_over_limit(file_size: int | None) -> bool:
+    return bool(file_size and file_size > GROUP_MEDIA_LIMIT_BYTES)
 
 
 def _build_chat_inline_image_prompt(user_text: str, history: list[dict[str, str]]) -> str:
@@ -1640,7 +1689,8 @@ async def _send_code_generator_reply(
 
 async def _send_progress_message(message: Message, text: str) -> Message | None:
     try:
-        return await message.answer(text)
+        reply_markup = GROUP_REMOVE_KEYBOARD if _is_group_chat(message) else None
+        return await message.answer(text, reply_markup=reply_markup)
     except Exception:
         return None
 
@@ -1699,7 +1749,7 @@ async def show_group_commands(
             feature_used="group_commands",
             bot_reply=GROUP_COMMANDS_TEXT,
         )
-    await message.answer(GROUP_COMMANDS_TEXT)
+    await message.answer(GROUP_COMMANDS_TEXT, reply_markup=GROUP_REMOVE_KEYBOARD)
 
 
 def _chat_member_status_value(value: object) -> str:
@@ -1724,7 +1774,7 @@ async def show_group_commands_when_added(
         bot_reply=GROUP_COMMANDS_TEXT,
     )
     with suppress(TelegramBadRequest, TelegramForbiddenError):
-        await event.bot.send_message(event.chat.id, GROUP_COMMANDS_TEXT)
+        await event.bot.send_message(event.chat.id, GROUP_COMMANDS_TEXT, reply_markup=GROUP_REMOVE_KEYBOARD)
 
 
 async def _process_group_ai_text_command(
@@ -1745,7 +1795,7 @@ async def _process_group_ai_text_command(
     cleaned_context = str(replied_context or "").strip()
     if not cleaned_user_text and not cleaned_context:
         reply_text = f"Use /{command} with a question, for example /{command} explain this."
-        await message.answer(reply_text)
+        await message.answer(reply_text, reply_markup=GROUP_REMOVE_KEYBOARD)
         await _track_telegram_action(
             tracking_service=tracking_service,
             message=message,
@@ -1768,7 +1818,7 @@ async def _process_group_ai_text_command(
         prompt = (
             f"You are JO AI answering a Telegram group /{command} command. "
             "Use the replied Telegram message below as the user's context. Do not claim you can read the whole group chat. "
-            "Answer directly and helpfully.\n\n"
+            "Answer directly in 1-4 short sentences unless the user asks for details. Be accurate and avoid filler.\n\n"
             f"{cleaned_context}\n\n{task}"
         )
         tracked_user_message = f"{cleaned_context}\n\n{task}"
@@ -1776,7 +1826,7 @@ async def _process_group_ai_text_command(
         prompt = (
             f"You are JO AI answering a Telegram group /{command} command. "
             "Give a clear, concise answer. If the user asks for live or very current facts, say you cannot verify live data here "
-            "and answer only from general knowledge.\n\n"
+            "and answer only from general knowledge. Keep it to 1-4 short sentences unless the user asks for details.\n\n"
             f"Search request: {cleaned_user_text}"
         )
         tracked_user_message = cleaned_user_text
@@ -1812,7 +1862,7 @@ async def _process_group_ai_text_command(
 
     if reply is None:
         await _clear_progress_message(progress_message)
-        await message.answer(failure_text)
+        await message.answer(failure_text, reply_markup=GROUP_REMOVE_KEYBOARD)
         await _track_telegram_action(
             tracking_service=tracking_service,
             message=message,
@@ -1827,13 +1877,13 @@ async def _process_group_ai_text_command(
         return
 
     await _clear_progress_message(progress_message)
-    reply_text = _compact_group_ai_reply(reply, limit=3200) or failure_text
+    reply_text = _compact_group_ai_reply(reply, limit=900) or failure_text
     try:
-        await message.answer(html.escape(reply_text))
+        await message.answer(html.escape(reply_text), reply_markup=GROUP_REMOVE_KEYBOARD)
     except Exception:
         logger.exception("Failed to send group %s reply.", command)
         with suppress(Exception):
-            await message.answer(failure_text)
+            await message.answer(failure_text, reply_markup=GROUP_REMOVE_KEYBOARD)
         await _track_telegram_action(
             tracking_service=tracking_service,
             message=message,
@@ -1857,6 +1907,226 @@ async def _process_group_ai_text_command(
         success=True,
         message_increment=1,
         feature_used=command_label,
+    )
+
+
+async def _process_group_code_command(
+    message: Message,
+    user_text: str,
+    chat_service: ChatService,
+    tracking_service: SupabaseTrackingService | None,
+    *,
+    code_api_key: str | None,
+    code_model: str,
+) -> None:
+    cleaned_user_text = " ".join(str(user_text or "").split())
+    if not cleaned_user_text:
+        reply_text = "Use /code with what you want built, for example /code Python todo app."
+        await message.answer(reply_text, reply_markup=GROUP_REMOVE_KEYBOARD)
+        await _track_telegram_action(
+            tracking_service=tracking_service,
+            message=message,
+            message_type="code",
+            user_message=user_text,
+            bot_reply=reply_text,
+            model_used=None,
+            success=False,
+            message_increment=1,
+            feature_used="group_code:missing_prompt",
+        )
+        return
+
+    mode_options = _code_mode_options(code_api_key, code_model)
+    model_used = _chat_model_used(chat_service, mode_options)
+    prompt = (
+        "You are JO AI answering a Telegram group /code command. "
+        "Generate the result as one complete source file whenever possible. "
+        "Include one fenced code block with the full file. Keep explanations minimal.\n\n"
+        f"Request: {cleaned_user_text}"
+    )
+    progress_message = await _send_progress_message(message, "Generating code file...")
+    reply: str | None = None
+    try:
+        async with ChatActionSender.typing(bot=message.bot, chat_id=message.chat.id):
+            reply = await chat_service.generate_reply(
+                prompt,
+                history=[],
+                mode="code",
+                model_override=str(mode_options.get("model_override") or "").strip() or None,
+                api_key_override=str(mode_options.get("api_key_override") or "").strip() or None,
+                thinking=bool(mode_options.get("thinking")),
+            )
+    except Exception:
+        await _clear_progress_message(progress_message)
+        logger.exception("Group code command failed.")
+        reply = None
+
+    if reply is None:
+        failure_text = "Couldn't generate code. Try again."
+        await message.answer(failure_text, reply_markup=GROUP_REMOVE_KEYBOARD)
+        await _track_telegram_action(
+            tracking_service=tracking_service,
+            message=message,
+            message_type="code",
+            user_message=cleaned_user_text,
+            bot_reply=failure_text,
+            model_used=model_used,
+            success=False,
+            message_increment=1,
+            feature_used="group_code:failed",
+        )
+        return
+
+    await _clear_progress_message(progress_message)
+    normalized_reply = reply.strip() or "No code generated."
+    parsed = _parse_code_reply(normalized_reply, MODE_RESULT_TITLE["code"])
+    code_body = parsed.code.strip() or normalized_reply
+    code_lang = parsed.lang or _guess_code_language(code_body, fallback="text")
+    file_name = _code_filename_for_language(code_lang)
+    code_file = BufferedInputFile(code_body.encode("utf-8"), filename=file_name)
+    try:
+        await message.answer_document(
+            document=code_file,
+            caption=f"Code file: {file_name}",
+            reply_markup=GROUP_REMOVE_KEYBOARD,
+        )
+    except Exception:
+        logger.exception("Failed to send group code file.")
+        fallback_text = _compact_group_ai_reply(normalized_reply, limit=900)
+        await message.answer(html.escape(fallback_text), reply_markup=GROUP_REMOVE_KEYBOARD)
+        await _track_telegram_action(
+            tracking_service=tracking_service,
+            message=message,
+            message_type="code",
+            user_message=cleaned_user_text,
+            bot_reply=fallback_text,
+            model_used=model_used,
+            success=False,
+            message_increment=1,
+            feature_used="group_code:file_send_failed",
+        )
+        return
+
+    await _track_telegram_action(
+        tracking_service=tracking_service,
+        message=message,
+        message_type="code",
+        user_message=cleaned_user_text,
+        bot_reply=f"Code file sent: {file_name}",
+        model_used=model_used,
+        success=True,
+        message_increment=1,
+        feature_used="group_code",
+    )
+
+
+async def _process_group_vision_command(
+    message: Message,
+    user_text: str,
+    chat_service: ChatService,
+    tracking_service: SupabaseTrackingService | None,
+    *,
+    kimi_api_key: str | None,
+    kimi_model: str,
+) -> None:
+    file_id, file_size = _extract_replied_image_file(message)
+    if not file_id:
+        reply_text = "Reply to an image with /vision your question."
+        await message.answer(reply_text, reply_markup=GROUP_REMOVE_KEYBOARD)
+        return
+    if _group_media_over_limit(file_size):
+        await message.answer("Image limit is 10MB.", reply_markup=GROUP_REMOVE_KEYBOARD)
+        return
+
+    instruction = " ".join(str(user_text or "").split()) or "Describe this image briefly and clearly."
+    progress_message = await _send_progress_message(message, "Checking image...")
+    try:
+        description = await _run_kimi_with_progress(
+            message,
+            _describe_kimi_file_id(message, chat_service, file_id, kimi_api_key, kimi_model, instruction=instruction),
+        )
+    except Exception:
+        await _clear_progress_message(progress_message)
+        logger.exception("Group vision command failed.")
+        reply_text = "Couldn't read that image. Try again."
+        await message.answer(reply_text, reply_markup=GROUP_REMOVE_KEYBOARD)
+        await _track_telegram_action(
+            tracking_service=tracking_service,
+            message=message,
+            message_type="vision",
+            user_message=instruction,
+            bot_reply=reply_text,
+            model_used=kimi_model,
+            success=False,
+            message_increment=1,
+            feature_used="group_vision:failed",
+        )
+        return
+
+    await _clear_progress_message(progress_message)
+    reply_text = _compact_group_ai_reply(description, limit=900) or "I couldn't clearly understand this image."
+    await message.answer(html.escape(reply_text), reply_markup=GROUP_REMOVE_KEYBOARD)
+    await _track_telegram_action(
+        tracking_service=tracking_service,
+        message=message,
+        message_type="vision",
+        user_message=instruction,
+        bot_reply=description,
+        model_used=kimi_model,
+        success=True,
+        message_increment=1,
+        feature_used="group_vision",
+    )
+
+
+async def _process_group_image_edit_command(
+    message: Message,
+    user_text: str,
+    session_manager: SessionManager,
+    image_generation_service: ImageGenerationService,
+    pollinations_media_service: PollinationsMediaService,
+    tracking_service: SupabaseTrackingService | None,
+) -> None:
+    file_id, file_size = _extract_replied_image_file(message)
+    if not file_id:
+        reply_text = "To edit an image, send the image first, then reply to it with /editimage your edit prompt."
+        await message.answer(reply_text, reply_markup=GROUP_REMOVE_KEYBOARD)
+        return
+    if _group_media_over_limit(file_size):
+        await message.answer("Image limit is 10MB.", reply_markup=GROUP_REMOVE_KEYBOARD)
+        return
+
+    prompt = " ".join(str(user_text or "").split())
+    if not prompt:
+        reply_text = "Add the edit prompt after /editimage."
+        await message.answer(reply_text, reply_markup=GROUP_REMOVE_KEYBOARD)
+        return
+
+    try:
+        reference_image_url = await _upload_reference_image_from_telegram(
+            message=message,
+            file_id=file_id,
+            pollinations_media_service=pollinations_media_service,
+        )
+    except Exception:
+        logger.exception("Failed to upload group edit reference image.")
+        await message.answer("Couldn't read that image. Try again.", reply_markup=GROUP_REMOVE_KEYBOARD)
+        return
+
+    await _process_image_message(
+        message,
+        prompt,
+        session_manager,
+        image_generation_service,
+        pollinations_media_service,
+        "1:1",
+        DEFAULT_POLLINATIONS_IMAGE_MODEL,
+        tracking_service,
+        reply_markup=None,
+        feature_used_prefix="group_image_edit",
+        reference_image_url=reference_image_url,
+        show_progress=True,
+        compact_result=True,
     )
 
 
@@ -1896,7 +2166,7 @@ async def group_search_command(
     except Exception:
         logger.exception("Group %s command crashed.", command)
         with suppress(Exception):
-            await message.answer(GROUP_AI_FAILURE_TEXT)
+            await message.answer(GROUP_AI_FAILURE_TEXT, reply_markup=GROUP_REMOVE_KEYBOARD)
 
 
 @router.message(Command("audio"))
@@ -1919,7 +2189,10 @@ async def group_audio_command(
     )
     prompt = _command_payload((message.text or "").strip(), "audio") or ""
     if not prompt:
-        await message.answer("Use /audio with text in the same message, for example /audio say hello.")
+        await message.answer(
+            "Use /audio with text in the same message, for example /audio say hello.",
+            reply_markup=GROUP_REMOVE_KEYBOARD,
+        )
         return
     await _process_group_audio_command(
         message,
@@ -1937,6 +2210,7 @@ async def group_audio_command(
 @router.message(Command("research"))
 @router.message(Command("prompt"))
 @router.message(Command("image"))
+@router.message(Command("editimage"))
 @router.message(Command("video"))
 @router.message(Command("deepseek"))
 @router.message(Command("analysis"))
@@ -1972,9 +2246,14 @@ async def open_jo_ai_menu(
     message: Message,
     session_manager: SessionManager,
     miniapp_url: str | None,
+    chat_service: ChatService,
     image_generation_service: ImageGenerationService,
     pollinations_media_service: PollinationsMediaService,
     tts_service: TextToSpeechService,
+    code_api_key: str | None,
+    code_model: str,
+    kimi_api_key: str | None,
+    kimi_model: str,
     tracking_service: SupabaseTrackingService | None = None,
 ) -> None:
     if not message.from_user:
@@ -1994,7 +2273,10 @@ async def open_jo_ai_menu(
             prompt = _command_payload(raw_text, "image") or ""
             if not prompt:
                 await _activate_group_mode(message, message.from_user.id, JoAIMode.IMAGE, session_manager)
-                await message.answer("Send the image prompt now. Default ratio is 1:1.")
+                await message.answer(
+                    "Send the image prompt now. Default ratio is 1:1.",
+                    reply_markup=GROUP_REMOVE_KEYBOARD,
+                )
                 return
             await _process_image_message(
                 message,
@@ -2012,14 +2294,56 @@ async def open_jo_ai_menu(
             )
             return
 
+        if command == "editimage":
+            prompt = _command_payload(raw_text, "editimage") or ""
+            await _process_group_image_edit_command(
+                message,
+                prompt,
+                session_manager,
+                image_generation_service,
+                pollinations_media_service,
+                tracking_service,
+            )
+            return
+
+        if command == "vision":
+            prompt = _command_payload(raw_text, "vision") or ""
+            await _process_group_vision_command(
+                message,
+                prompt,
+                chat_service,
+                tracking_service,
+                kimi_api_key=kimi_api_key,
+                kimi_model=kimi_model,
+            )
+            return
+
+        if command == "code":
+            prompt = _command_payload(raw_text, "code") or ""
+            await _process_group_code_command(
+                message,
+                prompt,
+                chat_service,
+                tracking_service,
+                code_api_key=code_api_key,
+                code_model=code_model,
+            )
+            return
+
         if command == "video":
-            await message.answer("Video generation is not available in groups. Use /image or /audio.")
+            await message.answer(
+                "Video generation is not available in groups. Use /image, /vision, /code, or /audio.",
+                reply_markup=GROUP_REMOVE_KEYBOARD,
+            )
             return
 
         if command in {"audio", "gptaudio"}:
             prompt = _command_payload(raw_text, command) or ""
             if not prompt:
-                await message.answer("Use /audio with text in the same message, for example /audio say hello.")
+                await message.answer(
+                    "Use /audio with text in the same message, for example /audio say hello.",
+                    reply_markup=GROUP_REMOVE_KEYBOARD,
+                )
                 return
             await _process_group_audio_command(
                 message,
@@ -2031,7 +2355,41 @@ async def open_jo_ai_menu(
             )
             return
 
-        await message.answer("In groups, use /ask, /search, /image, or /audio.")
+        await message.answer(
+            "In groups, use /ask, /search, /code, /image, /editimage, /vision, or /audio.",
+            reply_markup=GROUP_REMOVE_KEYBOARD,
+        )
+        return
+
+    removed_mode_texts = {
+        "/gemini",
+        "/research",
+        "/prompt",
+        "/video",
+        "/deepseek",
+        "/analysis",
+        "/gptaudio",
+        MENU_AI_GEMINI.lower(),
+        MENU_AI_RESEARCH.lower(),
+        MENU_AI_PROMPT.lower(),
+        MENU_AI_VIDEO.lower(),
+        MENU_AI_DEEPSEEK.lower(),
+        MENU_AI_GPT_AUDIO.lower(),
+        "research",
+        "prompt generator",
+        "video generation",
+        "deepseek",
+        "gpt audio",
+    }
+    if text in removed_mode_texts:
+        await _send_removed_mode_notice(message)
+        return
+
+    if command == "editimage":
+        await message.answer(
+            "Image editing works in chat by replying to an image with your edit request.",
+            reply_markup=jo_ai_menu_keyboard(),
+        )
         return
 
     if text in {"/chat", MENU_AI_CHAT.lower()}:
@@ -2131,17 +2489,10 @@ async def enable_gemini_mode(query: CallbackQuery, session_manager: SessionManag
     if not query.from_user:
         await query.answer()
         return
-    if GEMINI_TEMP_DISABLED:
-        await query.answer("Gemini is temporarily disabled.", show_alert=True)
-        if isinstance(query.message, Message):
-            await query.message.answer(
-                "Gemini mode is temporarily disabled while image generation is being stabilized.",
-                reply_markup=jo_ai_menu_keyboard(),
-            )
-        return
-    await query.answer()
+    _ = (session_manager, miniapp_url)
+    await query.answer("Mode removed.", show_alert=True)
     if isinstance(query.message, Message):
-        await _activate_mode(query.message, query.from_user.id, JoAIMode.GEMINI, session_manager, miniapp_url)
+        await _send_removed_mode_notice(query.message)
 
 
 @router.callback_query(F.data.startswith("joaigem:mode:"))
@@ -2149,26 +2500,10 @@ async def select_gemini_mode(query: CallbackQuery, session_manager: SessionManag
     if not query.from_user:
         await query.answer()
         return
-    if GEMINI_TEMP_DISABLED:
-        await query.answer("Gemini is temporarily disabled.", show_alert=True)
-        return
-
-    mode_token = str(query.data or "").split(":")[-1].strip().lower()
-    if mode_token not in {"chat", "image", "voice"}:
-        await query.answer()
-        return
-
-    transition = await session_manager.switch_feature(query.from_user.id, Feature.JO_AI)
-    await _switch_to_jo_ai_mode(query.from_user.id, JoAIMode.GEMINI, session_manager)
-    await query.answer(f"Gemini {mode_token} selected")
-
+    _ = (session_manager, miniapp_url)
+    await query.answer("Mode removed.", show_alert=True)
     if isinstance(query.message, Message):
-        if transition.notice:
-            await query.message.answer(transition.notice, reply_markup=main_menu_keyboard(miniapp_url))
-        await query.message.answer(
-            _gemini_mode_hint(mode_token),
-            reply_markup=gemini_mode_keyboard(),
-        )
+        await _send_removed_mode_notice(query.message)
 
 
 @router.callback_query(F.data == "joai:code")
@@ -2186,9 +2521,10 @@ async def enable_research_mode(query: CallbackQuery, session_manager: SessionMan
     if not query.from_user:
         await query.answer()
         return
-    await query.answer()
+    _ = (session_manager, miniapp_url)
+    await query.answer("Mode removed.", show_alert=True)
     if isinstance(query.message, Message):
-        await _activate_mode(query.message, query.from_user.id, JoAIMode.RESEARCH, session_manager, miniapp_url)
+        await _send_removed_mode_notice(query.message)
 
 
 @router.callback_query(F.data == "joai:deep_analysis")
@@ -2196,9 +2532,10 @@ async def enable_deep_analysis_mode(query: CallbackQuery, session_manager: Sessi
     if not query.from_user:
         await query.answer()
         return
-    await query.answer()
+    _ = (session_manager, miniapp_url)
+    await query.answer("Mode removed.", show_alert=True)
     if isinstance(query.message, Message):
-        await _activate_mode(query.message, query.from_user.id, JoAIMode.DEEP_ANALYSIS, session_manager, miniapp_url)
+        await _send_removed_mode_notice(query.message)
 
 
 @router.callback_query(F.data == "joai:prompt")
@@ -2206,9 +2543,10 @@ async def enable_prompt_mode(query: CallbackQuery, session_manager: SessionManag
     if not query.from_user:
         await query.answer()
         return
-    await query.answer()
+    _ = (session_manager, miniapp_url)
+    await query.answer("Mode removed.", show_alert=True)
     if isinstance(query.message, Message):
-        await _activate_mode(query.message, query.from_user.id, JoAIMode.PROMPT, session_manager, miniapp_url)
+        await _send_removed_mode_notice(query.message)
 
 
 @router.callback_query(F.data == "joai:image")
@@ -2232,19 +2570,10 @@ async def enable_video_mode(
     if not query.from_user:
         await query.answer()
         return
-    unavailable_text = _video_feature_unavailable_text(
-        pollinations_media_service,
-        image_generation_service,
-        model_option=DEFAULT_VIDEO_MODEL_OPTION,
-    )
-    if unavailable_text:
-        await query.answer("Video generation is unavailable.", show_alert=True)
-        if isinstance(query.message, Message):
-            await query.message.answer(unavailable_text, reply_markup=jo_ai_menu_keyboard())
-        return
-    await query.answer()
+    _ = (session_manager, miniapp_url, pollinations_media_service, image_generation_service)
+    await query.answer("Mode removed.", show_alert=True)
     if isinstance(query.message, Message):
-        await _activate_mode(query.message, query.from_user.id, JoAIMode.VIDEO, session_manager, miniapp_url)
+        await _send_removed_mode_notice(query.message)
 
 
 @router.callback_query(F.data == "joai:kimi")
@@ -2272,9 +2601,10 @@ async def enable_gpt_audio_mode(query: CallbackQuery, session_manager: SessionMa
     if not query.from_user:
         await query.answer()
         return
-    await query.answer()
+    _ = (session_manager, miniapp_url)
+    await query.answer("Mode removed.", show_alert=True)
     if isinstance(query.message, Message):
-        await _activate_mode(query.message, query.from_user.id, JoAIMode.GPT_AUDIO, session_manager, miniapp_url)
+        await _send_removed_mode_notice(query.message)
 
 
 @router.callback_query(F.data == "joaitts:lang_menu")
@@ -2843,6 +3173,8 @@ async def handle_jo_ai_text(
     tts_service: TextToSpeechService,
     deepseek_api_key: str | None,
     deepseek_model: str,
+    code_api_key: str | None,
+    code_model: str,
     tracking_service: SupabaseTrackingService | None = None,
 ) -> None:
     if not message.from_user:
@@ -2926,6 +3258,18 @@ async def handle_jo_ai_text(
 
     mode_options = _default_mode_options()
     user_text = text
+    removed_session_modes = {
+        JoAIMode.GEMINI,
+        JoAIMode.RESEARCH,
+        JoAIMode.PROMPT,
+        JoAIMode.VIDEO,
+        JoAIMode.DEEP_ANALYSIS,
+        JoAIMode.GPT_AUDIO,
+    }
+    if mode in removed_session_modes:
+        await session_manager.switch_feature(message.from_user.id, Feature.AI_TOOLS_MENU)
+        await _send_removed_mode_notice(message)
+        return
 
     if mode == JoAIMode.CHAT:
         reply_image_file_id = _extract_reply_image_file_id(message)
@@ -3079,6 +3423,7 @@ async def handle_jo_ai_text(
         return
 
     if mode == JoAIMode.CODE:
+        mode_options = _code_mode_options(code_api_key, code_model)
         debug_request = _is_code_debug_request(text)
         if debug_request and not code_file_content:
             async with session_manager.lock(message.from_user.id) as session:
@@ -3247,6 +3592,8 @@ async def handle_code_document_upload(
     message: Message,
     session_manager: SessionManager,
     chat_service: ChatService,
+    code_api_key: str | None,
+    code_model: str,
     tracking_service: SupabaseTrackingService | None = None,
 ) -> None:
     if not message.from_user or not message.document:
@@ -3395,7 +3742,7 @@ async def handle_code_document_upload(
     await _clear_progress_message(progress_message)
     caption_text = (message.caption or "").strip()
     if caption_text:
-        mode_options = _default_mode_options()
+        mode_options = _code_mode_options(code_api_key, code_model)
         if _is_code_debug_request(caption_text):
             user_text = _build_code_debug_request(caption_text, file_name, decoded)
         else:
@@ -3792,7 +4139,8 @@ async def _run_kimi_with_progress(message: Message, work_coro) -> str:
     except asyncio.TimeoutError:
         await message.answer(
             "? Still working on it...\n"
-            "I'm retrying once to extract the image details."
+            "I'm retrying once to extract the image details.",
+            reply_markup=GROUP_REMOVE_KEYBOARD if _is_group_chat(message) else None,
         )
         try:
             return await asyncio.wait_for(asyncio.shield(task), timeout=25)
@@ -4304,7 +4652,7 @@ async def _process_tts_message(
             )
     except AIServiceError as exc:
         await _clear_progress_message(progress_message)
-        reply_text = _friendly_error_text("Text-to-Speech is temporarily unavailable", exc)
+        reply_text = _friendly_error_text("Text-to-Audio is temporarily unavailable", exc)
         await message.answer(reply_text, reply_markup=_tts_text_reply_keyboard())
         await _track_telegram_action(
             tracking_service=tracking_service,
@@ -4320,7 +4668,7 @@ async def _process_tts_message(
     except Exception:
         await _clear_progress_message(progress_message)
         logger.exception("Unexpected TTS generation error.")
-        reply_text = _friendly_error_text("Unexpected Text-to-Speech error")
+        reply_text = _friendly_error_text("Unexpected Text-to-Audio error")
         await message.answer(reply_text, reply_markup=_tts_text_reply_keyboard())
         await _track_telegram_action(
             tracking_service=tracking_service,
@@ -4691,7 +5039,9 @@ async def _process_image_message(
     show_progress: bool = True,
     compact_result: bool = False,
 ) -> None:
-    keyboard = None if compact_result else (reply_markup or _image_prompt_reply_keyboard())
+    keyboard = GROUP_REMOVE_KEYBOARD if compact_result and _is_group_chat(message) else None
+    if not compact_result:
+        keyboard = reply_markup or _image_prompt_reply_keyboard()
     feature_prefix = (feature_used_prefix or "image_generation").strip() or "image_generation"
     reference_url = str(reference_image_url or "").strip() or None
     model_option = _resolve_image_model_option(current_image_model)
@@ -4967,7 +5317,9 @@ async def _process_image_message(
 
     await _clear_progress_message(progress_message)
     result_keyboard = (
-        None
+        GROUP_REMOVE_KEYBOARD
+        if compact_result and _is_group_chat(message)
+        else None
         if compact_result
         else await _image_result_keyboard_for_user(
             user_id=message.from_user.id if message.from_user else None,
@@ -5255,7 +5607,7 @@ async def _send_group_audio_result(
 
     try:
         audio_file = BufferedInputFile(audio_bytes, filename=f"jo_ai_audio.{extension}")
-        sent = await message.answer_audio(audio=audio_file, caption=caption)
+        sent = await message.answer_audio(audio=audio_file, caption=caption, reply_markup=GROUP_REMOVE_KEYBOARD)
         storage_path = f"telegram_file:{sent.audio.file_id}" if sent.audio else None
         return sent, storage_path
     except Exception:
@@ -5263,7 +5615,7 @@ async def _send_group_audio_result(
 
     try:
         document_file = BufferedInputFile(audio_bytes, filename=f"jo_ai_audio.{extension}")
-        sent = await message.answer_document(document=document_file, caption=caption)
+        sent = await message.answer_document(document=document_file, caption=caption, reply_markup=GROUP_REMOVE_KEYBOARD)
         storage_path = f"telegram_file:{sent.document.file_id}" if sent.document else None
         return sent, storage_path
     except Exception:
@@ -5284,7 +5636,7 @@ async def _process_group_audio_command(
     failure_text = _compact_generation_failure_text("audio")
     guardrail_reply = guardrail_response_for_user_query(user_text)
     if guardrail_reply:
-        await message.answer(failure_text)
+        await message.answer(failure_text, reply_markup=GROUP_REMOVE_KEYBOARD)
         await _track_telegram_action(
             tracking_service=tracking_service,
             message=message,
@@ -5338,7 +5690,7 @@ async def _process_group_audio_command(
 
     if generated is None:
         await _clear_progress_message(progress_message)
-        await message.answer(failure_text)
+        await message.answer(failure_text, reply_markup=GROUP_REMOVE_KEYBOARD)
         await _track_telegram_action(
             tracking_service=tracking_service,
             message=message,
@@ -5365,7 +5717,7 @@ async def _process_group_audio_command(
     sent, storage_path = await _send_group_audio_result(message, generated, caption=caption)
     if sent is None:
         reply_text = "Audio was generated, but Telegram could not send the file. Try a shorter text."
-        await message.answer(reply_text)
+        await message.answer(reply_text, reply_markup=GROUP_REMOVE_KEYBOARD)
         await _track_telegram_action(
             tracking_service=tracking_service,
             message=message,
@@ -5674,7 +6026,7 @@ async def jo_ai_unexpected_input(
         "In Code Generator mode, you can upload a code file for debug/fix.\n"
         "In Video Generation mode, set duration/ratio then send a prompt.\n"
         "In Vision mode, send an image.\n"
-        "In Text-to-Speech mode, choose language, voice, and style first.\n"
+        "In Text-to-Audio mode, choose language, voice, and style first.\n"
         "In GPT Audio mode, send any question or prompt.\n"
         "You can switch mode anytime."
     )

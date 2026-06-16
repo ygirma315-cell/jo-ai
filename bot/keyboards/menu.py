@@ -1,19 +1,13 @@
 ﻿from __future__ import annotations
 
-from aiogram.types import KeyboardButton, ReplyKeyboardMarkup, WebAppInfo
+from aiogram.types import InlineKeyboardButton, InlineKeyboardMarkup, KeyboardButton, ReplyKeyboardMarkup, WebAppInfo
 
 from bot.config import DEFAULT_MINIAPP_URL
 from bot.constants import (
     MENU_AI_CODE,
     MENU_AI_CHAT,
-    MENU_AI_DEEPSEEK,
-    MENU_AI_GEMINI,
     MENU_AI_IMAGE,
-    MENU_AI_VIDEO,
     MENU_AI_KIMI,
-    MENU_AI_PROMPT,
-    MENU_AI_RESEARCH,
-    MENU_AI_GPT_AUDIO,
     MENU_AI_TTS,
     MENU_AI_TOOLS,
     MENU_CANCEL,
@@ -41,14 +35,22 @@ def main_menu_keyboard(miniapp_url: str | None = None) -> ReplyKeyboardMarkup:
     )
 
 
+def join_channel_keyboard(channel_url: str | None) -> InlineKeyboardMarkup | None:
+    resolved_url = str(channel_url or "").strip()
+    if not resolved_url:
+        return None
+    return InlineKeyboardMarkup(
+        inline_keyboard=[
+            [InlineKeyboardButton(text="Join Main Channel", url=resolved_url)],
+        ]
+    )
+
+
 def ai_tools_keyboard() -> ReplyKeyboardMarkup:
     rows = [
         [KeyboardButton(text=MENU_AI_CHAT), KeyboardButton(text=MENU_AI_CODE)],
-        [KeyboardButton(text=MENU_AI_RESEARCH), KeyboardButton(text=MENU_AI_PROMPT)],
-        [KeyboardButton(text=MENU_AI_IMAGE), KeyboardButton(text=MENU_AI_DEEPSEEK)],
-        [KeyboardButton(text=MENU_AI_VIDEO), KeyboardButton(text=MENU_AI_KIMI)],
-        [KeyboardButton(text=MENU_AI_GEMINI), KeyboardButton(text=MENU_AI_TTS)],
-        [KeyboardButton(text=MENU_AI_GPT_AUDIO)],
+        [KeyboardButton(text=MENU_AI_IMAGE), KeyboardButton(text=MENU_AI_KIMI)],
+        [KeyboardButton(text=MENU_AI_TTS)],
         [KeyboardButton(text=MENU_CANCEL)],
     ]
     return ReplyKeyboardMarkup(

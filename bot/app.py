@@ -168,14 +168,19 @@ async def _configure_bot_commands(runtime: BotRuntime) -> bool:
         BotCommand(command="start", description="Show JO AI group commands"),
         BotCommand(command="ask", description="Ask JO AI a question"),
         BotCommand(command="search", description="Ask JO AI a question"),
+        BotCommand(command="code", description="Generate code as a file"),
         BotCommand(command="image", description="Generate an image from a prompt"),
+        BotCommand(command="editimage", description="Edit a replied image"),
+        BotCommand(command="vision", description="Analyze a replied image"),
         BotCommand(command="audio", description="Generate audio from text"),
     ]
     private_commands = [
         BotCommand(command="joai", description="Open JO AI tools"),
+        BotCommand(command="chat", description="Open JO AI chat"),
+        BotCommand(command="code", description="Open code generator"),
         BotCommand(command="image", description="Generate an image"),
-        BotCommand(command="video", description="Generate a video"),
-        BotCommand(command="audio", description="Generate audio"),
+        BotCommand(command="vision", description="Analyze an image"),
+        BotCommand(command="tts", description="Generate speech from text"),
     ]
     try:
         await runtime.bot.delete_my_commands(scope=BotCommandScopeAllGroupChats())
@@ -335,9 +340,13 @@ async def create_bot_runtime() -> BotRuntime:
     )
     dispatcher["deepseek_api_key"] = settings.deepseek_api_key
     dispatcher["deepseek_model"] = settings.deepseek_model
+    dispatcher["code_api_key"] = settings.code_api_key
+    dispatcher["code_model"] = settings.code_model
+    dispatcher["image_edit_api_key"] = settings.image_edit_api_key
     dispatcher["kimi_api_key"] = settings.kimi_api_key
     dispatcher["kimi_model"] = settings.kimi_model
     dispatcher["miniapp_url"] = settings.miniapp_url
+    dispatcher["main_channel_url"] = settings.main_channel_url
     dispatcher["runtime_info"] = build_runtime_info(
         web_version=WEB_VERSION,
     )

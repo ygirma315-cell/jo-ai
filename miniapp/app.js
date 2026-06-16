@@ -17,7 +17,7 @@
   const MAX_UPLOAD_BYTES = 8 * 1024 * 1024;
   const MAX_CODE_UPLOAD_BYTES = 1_500_000;
   const SAFE_INTERNAL_DETAILS_REFUSAL =
-    "I can't share internal backend or API details. For JO API access, contact the developer @grpbuyer3.";
+    "JO AI Chat Bot was made by JO AI Chat / @GRPBUYER3.";
   const GEMINI_TEMP_DISABLED = true;
 
   const loadingMessages = [
@@ -78,7 +78,7 @@
       version: "v1.3.2",
       title: "Security hardening and safer public branding",
       items: [
-        "Public version info now stays branded while internal backend, model, and API details remain hidden",
+        "Public version info now stays branded with JO AI Chat Bot ownership",
         "Vision requests now use generic JO AI routing instead of older provider-specific wording",
         "Support links and public copy now point users to @grpbuyer3 for JO API access",
       ],
@@ -227,8 +227,8 @@
       emptyCopy: "Describe a scene and your generated video will appear here.",
     },
     tts: {
-      title: "Text-to-Speech",
-      description: "Convert text into speech with language, voice, and richer style controls.",
+      title: "Text-to-Audio",
+      description: "Convert text into audio with language, voice, and richer style controls.",
       lead: "Pick your speech settings, submit text, and play or save the generated audio.",
       example: "Welcome to JO AI. Your personalized audio summary is ready.",
       label: "Enter text for speech",
@@ -313,6 +313,8 @@
     referenceLock: null,
   };
 
+  const ENABLED_TOOL_IDS = new Set(["chat", "code", "image", "kimi", "tts"]);
+
   const sensitiveTargetsPattern =
     /\b(system(?:\s|-)?prompt|hidden(?:\s|-)?prompt|hidden(?:\s|-)?instructions?|developer(?:\s|-)?message|config(?:uration)?|\.env|env(?:ironment)?(?:\s|-)?vars?|environment(?:\s|-)?variables?|api(?:\s|-)?keys?|tokens?|bearer|authorization|headers?|secrets?|credentials?|backend|provider|stack|architecture|endpoints?|runtime|model(?:\s|-)?name|model(?:\s|-)?version|exact(?:\s|-)?model|hidden(?:\s|-)?settings?)\b/i;
   const extractionVerbsPattern =
@@ -336,7 +338,22 @@
   }
 
   function currentTool() {
-    return toolConfig[getToolId()] || null;
+    const toolId = getToolId();
+    if (!ENABLED_TOOL_IDS.has(toolId)) {
+      return null;
+    }
+    return toolConfig[toolId] || null;
+  }
+
+  function redirectDisabledToolPage() {
+    if (getPage() !== "tool") {
+      return false;
+    }
+    if (ENABLED_TOOL_IDS.has(getToolId())) {
+      return false;
+    }
+    window.location.replace("index.html");
+    return true;
   }
 
   function hasTelegramWebAppContext(candidate) {
@@ -3911,6 +3928,9 @@
 
   async function boot() {
     normalizeHostedHomeUrl();
+    if (redirectDisabledToolPage()) {
+      return;
+    }
     clearStaleClientState();
     polishStaticUi();
     ensureGlobalUi();

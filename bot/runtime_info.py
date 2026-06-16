@@ -57,7 +57,7 @@ def format_runtime_info_html(runtime_info: dict[str, object], active_profile: st
         [
             "",
             html.escape(SAFE_PUBLIC_VERSION_NOTE),
-            f"For JO API access, contact the developer {html.escape(DEVELOPER_HANDLE)}.",
+            f"Contact: <code>{html.escape(DEVELOPER_HANDLE)}</code>",
         ]
     )
 

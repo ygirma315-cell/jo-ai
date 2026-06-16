@@ -13,10 +13,12 @@ GROUP_COMMANDS_TEXT = (
     "<code>/start</code> - show this list\n"
     "<code>/ask what is AI?</code> - ask JO AI a question\n"
     "<code>/search what is AI?</code> - ask JO AI a question\n"
+    "<code>/code build a bot in Python</code> - get code as a file\n"
     "<code>/image cat</code> - generate an image\n"
+    "<code>/editimage make it brighter</code> - reply to an image and edit it\n"
+    "<code>/vision explain this</code> - reply to an image and analyze it\n"
     "<code>/audio say hello</code> - generate audio\n\n"
-    "Tip: in groups, use the prompt in the same command message, like "
-    "<code>/image sunset over Addis Ababa</code>."
+    "Use commands only in groups, like <code>/image sunset over Addis Ababa</code>."
 )
 
 

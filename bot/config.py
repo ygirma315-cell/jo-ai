@@ -10,8 +10,10 @@ from dotenv import load_dotenv
 from bot.services.ai_service import DEFAULT_IMAGE_MODEL
 
 DEFAULT_CHAT_MODEL = "meta/llama-3.1-8b-instruct"
+DEFAULT_CODE_MODEL = "qwen/qwen2.5-coder-32b-instruct"
 DEFAULT_DEEPSEEK_MODEL = "deepseek-ai/deepseek-v3.2"
 DEFAULT_KIMI_MODEL = "moonshotai/kimi-k2.5"
+DEFAULT_VISION_MODEL = "meta/llama-3.2-11b-vision-instruct"
 DEFAULT_GEMINI_MODEL = "gemini-2.0-flash"
 DEFAULT_TTS_FUNCTION_ID = "bc45d9e9-7c78-4d56-9737-e27011962ba8"
 DEFAULT_AI_BASE_URL = "https://integrate.api.nvidia.com/v1"
@@ -24,6 +26,7 @@ DEFAULT_POLLINATIONS_AUDIO_VOICE_GPT_AUDIO = "fable"
 DEFAULT_JO_VIDEO_ALLOWED_ASPECT_RATIOS = ("16:9", "9:16")
 DEFAULT_JO_VIDEO_IMAGE_MODELS = ("imagen-4", "flux-2-dev", "dirtberry-pro")
 DEFAULT_MINIAPP_URL = "https://ygirma315-cell.github.io/jo-ai/"
+DEFAULT_MAIN_CHANNEL_URL = "https://t.me/JO_AI_CHAT_BOT"
 DEFAULT_ENGAGEMENT_MESSAGE_TEMPLATE = "What do you want to do with your chat bot today?"
 DEFAULT_HEARTBEAT_TELEGRAM_ID = 7799059248
 _PLACEHOLDER_VALUE_SNIPPETS = (
@@ -48,7 +51,9 @@ class Settings:
     ai_api_key: str | None
     ai_base_url: str
     nvidia_api_key: str | None
+    code_api_key: str | None
     image_api_key: str | None
+    image_edit_api_key: str | None
     nvidia_chat_model: str
     code_model: str
     image_model: str
@@ -89,6 +94,7 @@ class Settings:
     supabase_history_table: str
     miniapp_url: str | None
     miniapp_api_base: str | None
+    main_channel_url: str | None
     public_base_url: str | None
     telegram_webhook_url: str | None
     telegram_webhook_secret: str | None
@@ -130,6 +136,17 @@ def _load_required_bot_token() -> tuple[str, str]:
 
 def _read_env(name: str) -> str:
     return os.getenv(name, "").strip()
+
+
+def _strip_bearer_prefix(value: str | None) -> str:
+    raw = str(value or "").strip()
+    if raw.lower().startswith("bearer "):
+        return raw[7:].strip()
+    return raw
+
+
+def _read_secret_env(name: str) -> str:
+    return _strip_bearer_prefix(_read_env(name))
 
 
 def _read_alias_env(*names: str) -> tuple[str | None, str | None]:
@@ -197,6 +214,24 @@ def _normalize_directory_url(value: str | None) -> str | None:
 
     normalized = parsed._replace(path=path, params="", query="", fragment="")
     return normalized.geturl() if path else normalized.geturl().rstrip("/")
+
+
+def _normalize_telegram_url(value: str | None) -> str | None:
+    raw = str(value or "").strip()
+    if not raw:
+        return None
+    if raw.startswith("@"):
+        username = "".join(ch for ch in raw[1:] if ch.isalnum() or ch == "_")
+        return f"https://t.me/{username}" if username else None
+    if raw.lower().startswith("t.me/"):
+        raw = f"https://{raw}"
+    normalized = _normalize_public_url(raw)
+    if not normalized:
+        return None
+    parsed = urlparse(normalized)
+    if parsed.netloc.lower() not in {"t.me", "telegram.me"}:
+        return normalized
+    return normalized
 
 
 def _resolve_miniapp_url(raw_value: str | None) -> tuple[str | None, str | None]:
@@ -324,7 +359,7 @@ def _parse_aspect_ratio_csv(raw_value: str | None) -> tuple[str, ...]:
 
 def load_settings() -> Settings:
     root_dir = Path(__file__).resolve().parent.parent
-    load_dotenv(dotenv_path=root_dir / ".env")
+    load_dotenv(dotenv_path=root_dir / ".env", encoding="utf-8-sig")
 
     bot_token, bot_token_env_var = _load_required_bot_token()
 
@@ -335,18 +370,31 @@ def load_settings() -> Settings:
 
     log_level = _read_env("LOG_LEVEL").upper() or "INFO"
 
-    ai_api_key = _read_env("AI_API_KEY") or _read_env("NVIDIA_API_KEY") or _read_env("JOAI_API_KEY") or _read_env("OPENAI_API_KEY")
+    ai_api_key = (
+        _read_secret_env("AI_API_KEY")
+        or _read_secret_env("NVIDIA_API_KEY")
+        or _read_secret_env("JOAI_API_KEY")
+        or _read_secret_env("OPENAI_API_KEY")
+    )
     ai_api_key = ai_api_key or None
     ai_base_url = (_read_env("AI_BASE_URL") or DEFAULT_AI_BASE_URL).rstrip("/")
 
-    nvidia_api_key = _read_env("NVIDIA_API_KEY") or _read_env("JOAI_API_KEY") or (ai_api_key or "")
+    nvidia_api_key = _read_secret_env("NVIDIA_API_KEY") or _read_secret_env("JOAI_API_KEY") or (ai_api_key or "")
     nvidia_api_key = nvidia_api_key or None
-    image_api_key = _read_env("IMAGE_API_KEY") or nvidia_api_key or ai_api_key
+    code_api_key = (
+        _read_secret_env("CODE_API_KEY")
+        or _read_secret_env("NVIDIA_CODE_API_KEY")
+        or nvidia_api_key
+        or ai_api_key
+    )
+    code_api_key = code_api_key or None
+    image_api_key = _read_secret_env("IMAGE_API_KEY") or nvidia_api_key or ai_api_key
     image_api_key = image_api_key or None
+    image_edit_api_key = _read_secret_env("IMAGE_EDIT_API_KEY") or _read_secret_env("NVIDIA_IMAGE_EDIT_API_KEY") or None
     nvidia_chat_model = _read_env("CHAT_MODEL") or _read_env("NVIDIA_CHAT_MODEL") or DEFAULT_CHAT_MODEL
-    code_model = _read_env("CODE_MODEL") or nvidia_chat_model
+    code_model = _read_env("CODE_MODEL") or _read_env("NVIDIA_CODE_MODEL") or DEFAULT_CODE_MODEL
     image_model = _read_env("IMAGE_MODEL") or DEFAULT_IMAGE_MODEL
-    pollinations_api_key = _read_env("POLLINATIONS_API_KEY") or None
+    pollinations_api_key = _read_secret_env("POLLINATIONS_API_KEY") or None
     pollinations_base_url = (_read_env("POLLINATIONS_BASE_URL") or DEFAULT_POLLINATIONS_BASE_URL).rstrip("/")
     pollinations_image_model_chat_gbt = (
         _read_env("POLLINATIONS_IMAGE_MODEL_CHAT_GBT") or DEFAULT_POLLINATIONS_IMAGE_MODEL_CHAT_GBT
@@ -404,21 +452,27 @@ def load_settings() -> Settings:
     if jo_video_default_output_format not in {"mp4", "gif", "webm"}:
         jo_video_default_output_format = "mp4"
 
-    deepseek_api_key = _read_env("DEEPSEEK_API_KEY") or None
+    deepseek_api_key = _read_secret_env("DEEPSEEK_API_KEY") or None
     deepseek_model = _read_env("DEEPSEEK_MODEL") or DEFAULT_DEEPSEEK_MODEL
-    kimi_api_key = _read_env("KIMI_API_KEY") or (ai_api_key or "")
+    vision_api_key = _read_secret_env("VISION_API_KEY") or _read_secret_env("NVIDIA_VISION_API_KEY")
+    kimi_api_key = vision_api_key or _read_secret_env("KIMI_API_KEY") or (ai_api_key or "")
     kimi_api_key = kimi_api_key or None
-    kimi_model = _read_env("KIMI_MODEL") or DEFAULT_KIMI_MODEL
+    kimi_model = (
+        _read_env("VISION_MODEL")
+        or _read_env("NVIDIA_VISION_MODEL")
+        or _read_env("KIMI_MODEL")
+        or (DEFAULT_VISION_MODEL if vision_api_key else DEFAULT_KIMI_MODEL)
+    )
     gemini_api_key = (
-        _read_env("GEMINI_API_KEY")
-        or _read_env("GOOGLE_AI_STUDIO_API_KEY")
-        or _read_env("GOOGLE_API_KEY")
+        _read_secret_env("GEMINI_API_KEY")
+        or _read_secret_env("GOOGLE_AI_STUDIO_API_KEY")
+        or _read_secret_env("GOOGLE_API_KEY")
         or ""
     )
     gemini_api_key = gemini_api_key or None
     gemini_model = _read_env("GEMINI_MODEL") or DEFAULT_GEMINI_MODEL
     gemini_fallback_models = _parse_csv_models(_read_env("GEMINI_FALLBACK_MODELS"))
-    tts_api_key = _read_env("TTS_API_KEY") or _read_env("NVIDIA_TTS_API_KEY") or nvidia_api_key or ai_api_key
+    tts_api_key = _read_secret_env("NVIDIA_TTS_API_KEY") or _read_secret_env("TTS_API_KEY") or nvidia_api_key or ai_api_key
     tts_api_key = tts_api_key or None
     tts_function_id = _read_env("TTS_FUNCTION_ID") or DEFAULT_TTS_FUNCTION_ID
     supabase_url_raw, _supabase_url_source = _read_alias_env("SUPABASE_URL", "SUPABASE_PROJECT_URL")
@@ -446,6 +500,10 @@ def load_settings() -> Settings:
     )
     miniapp_url, miniapp_url_warning = _resolve_miniapp_url(_read_env("MINIAPP_URL"))
     miniapp_api_base = _normalize_public_url(_read_env("MINIAPP_API_BASE")) or public_base_url
+    main_channel_url = (
+        _normalize_telegram_url(_read_env("MAIN_CHANNEL_URL") or _read_env("VIDEO_JOIN_CHANNEL_URL"))
+        or DEFAULT_MAIN_CHANNEL_URL
+    )
     telegram_webhook_url = _normalize_public_url(_read_env("TELEGRAM_WEBHOOK_URL")) or _join_public_url(
         public_base_url, "/telegram/webhook"
     )
@@ -518,7 +576,7 @@ def load_settings() -> Settings:
 
     if not ai_api_key:
         validation_errors.append(
-            "Missing required AI service credentials. Chat, code, research, prompt, and image endpoints need a server-side key."
+            "Missing required AI service credentials. Chat, code, image, vision, and audio endpoints need a server-side key."
         )
     if not public_base_url and not telegram_webhook_url:
         validation_warnings.append(
@@ -540,17 +598,15 @@ def load_settings() -> Settings:
         validation_warnings.append(miniapp_url_warning)
     if not miniapp_url:
         validation_errors.append("Mini app URL is missing.")
-    if not deepseek_api_key:
-        validation_warnings.append("DeepSeek credentials are missing. DeepSeek mode will use default credentials.")
     if not kimi_api_key:
         validation_warnings.append("Vision mode credentials are missing. Vision requests will fail until configured.")
-    if not gemini_api_key:
-        validation_warnings.append("Gemini credentials are missing. Gemini mode will be unavailable until GEMINI_API_KEY is configured.")
+    if not code_api_key:
+        validation_warnings.append("Code generation credentials are missing. Code mode will use default chat credentials if available.")
     if not tts_api_key:
-        validation_warnings.append("Text-to-Speech credentials are missing. TTS will use fallback synthesis.")
+        validation_warnings.append("Text-to-Audio credentials are missing. TTS will use fallback synthesis.")
     if not pollinations_api_key:
         validation_warnings.append(
-            "Pollinations credentials are missing. Chat GBT, Grok Imagine, and Grok Text to Video modes will be unavailable."
+            "Pollinations credentials are missing. Image generation and image editing may be unavailable."
         )
     if jo_video_level1_provider_enabled and not pollinations_api_key:
         validation_warnings.append(
@@ -620,7 +676,9 @@ def load_settings() -> Settings:
         ai_api_key=ai_api_key,
         ai_base_url=ai_base_url,
         nvidia_api_key=nvidia_api_key,
+        code_api_key=code_api_key,
         image_api_key=image_api_key,
+        image_edit_api_key=image_edit_api_key,
         nvidia_chat_model=nvidia_chat_model,
         code_model=code_model,
         image_model=image_model,
@@ -661,6 +719,7 @@ def load_settings() -> Settings:
         supabase_history_table=supabase_history_table,
         miniapp_url=miniapp_url,
         miniapp_api_base=miniapp_api_base,
+        main_channel_url=main_channel_url,
         public_base_url=public_base_url,
         telegram_webhook_url=telegram_webhook_url,
         telegram_webhook_secret=telegram_webhook_secret,

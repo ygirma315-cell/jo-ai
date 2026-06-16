@@ -134,6 +134,10 @@ pip install -r requirements.txt
 - `BOT_TOKEN`
 - `NVIDIA_API_KEY`
 - `IMAGE_API_KEY` (recommended for Image Generator; falls back to `NVIDIA_API_KEY` if unset)
+- `CODE_API_KEY`
+- `NVIDIA_VISION_API_KEY`
+- `NVIDIA_TTS_API_KEY`
+- `IMAGE_EDIT_API_KEY`
 
 3. Run the backend/API:
 
@@ -190,8 +194,12 @@ Required:
 Optional:
 
 - `IMAGE_API_KEY`
-- `DEEPSEEK_API_KEY`
-- `KIMI_API_KEY`
+- `CODE_API_KEY`
+- `CODE_MODEL` (default: `qwen/qwen2.5-coder-32b-instruct`)
+- `NVIDIA_VISION_API_KEY`
+- `VISION_MODEL` (default: `meta/llama-3.2-11b-vision-instruct`)
+- `NVIDIA_TTS_API_KEY`
+- `IMAGE_EDIT_API_KEY`
 - `SUPABASE_URL`
 - `SUPABASE_SERVICE_ROLE_KEY` (recommended for backend tracking writes)
 - `SUPABASE_ANON_KEY` (fallback only; can be blocked by RLS)
@@ -202,6 +210,7 @@ Optional:
 - `PUBLIC_BASE_URL`
 - `MINIAPP_URL`
 - `MINIAPP_API_BASE`
+- `MAIN_CHANNEL_URL` (optional `/start` welcome button; defaults to `https://t.me/JO_AI_CHAT_BOT`)
 - `ALLOWED_ORIGINS`
 - `TELEGRAM_WEBHOOK_URL`
 - `TELEGRAM_WEBHOOK_SECRET`
@@ -250,6 +259,10 @@ Required Render environment:
 
 - `BOT_TOKEN`: the token from BotFather for this Telegram bot. You do not need Telegram `api_id` or `api_hash` for this bot runtime.
 - `NVIDIA_API_KEY`: required for the main AI features.
+- `CODE_API_KEY`: recommended for Code Generator and group `/code`.
+- `NVIDIA_VISION_API_KEY`: recommended for Vision and group `/vision`.
+- `NVIDIA_TTS_API_KEY`: recommended for Text-to-Audio and group `/audio`.
+- `IMAGE_EDIT_API_KEY`: optional image-edit credential slot. Group `/editimage` also needs `POLLINATIONS_API_KEY` for the current edit backend.
 - `PUBLIC_BASE_URL`: optional if Render provides `RENDER_EXTERNAL_URL`; set it to your public Render URL if webhook setup does not register automatically.
 
 After changing Render environment variables, redeploy/restart the service so startup can re-register the Telegram webhook and command list.
@@ -257,8 +270,9 @@ After changing Render environment variables, redeploy/restart the service so sta
 Group behavior:
 
 - When the bot is added to a group, it sends the group command list.
-- In groups, use `/ask your question`, `/search your question`, `/image your prompt`, or `/audio your text`.
+- In groups, use `/ask`, `/search`, `/code`, `/image`, `/editimage`, `/vision`, or `/audio`.
 - The most reliable group format is putting the prompt in the same command message, for example `/image sunset over Addis Ababa`.
+- For `/editimage` and `/vision`, reply to an image with the command and prompt.
 - If you want follow-up messages after `/image` or `/audio` without repeating the command, disable BotFather privacy mode for the bot; otherwise Telegram may only deliver commands, replies, and mentions.
 
 ### GitHub Pages

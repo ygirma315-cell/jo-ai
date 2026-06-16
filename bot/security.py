@@ -4,19 +4,15 @@ import re
 
 from version import latest_release, public_releases
 
-DEVELOPER_HANDLE = "@grpbuyer3"
-BRANDING_LINE = "Created by JO AI"
-SAFE_IDENTITY_RESPONSE = "I'm JO AI Chat, created by JO AI Chat / @GRPBUYER3."
-SAFE_PUBLIC_SUPPORT_LINE = f"{BRANDING_LINE}. Contact {DEVELOPER_HANDLE} to get the JO API."
-SAFE_INTERNAL_DETAILS_REFUSAL = (
-    "I can't share internal backend or API details. "
-    f"For JO API access, contact the developer {DEVELOPER_HANDLE}."
-)
+DEVELOPER_HANDLE = "@GRPBUYER3"
+BRANDING_LINE = f"Made by JO AI Chat Bot / {DEVELOPER_HANDLE}"
+SAFE_IDENTITY_RESPONSE = f"JO AI Chat Bot was made by JO AI Chat / {DEVELOPER_HANDLE}."
+SAFE_PUBLIC_SUPPORT_LINE = BRANDING_LINE
+SAFE_INTERNAL_DETAILS_REFUSAL = SAFE_IDENTITY_RESPONSE
 SAFE_SERVICE_UNAVAILABLE_MESSAGE = (
-    f"{BRANDING_LINE}. JO AI is temporarily unavailable. "
-    f"Contact {DEVELOPER_HANDLE} if you need JO API access."
+    f"{BRANDING_LINE}. JO AI is temporarily unavailable. Please try again soon."
 )
-SAFE_PUBLIC_VERSION_NOTE = "Internal backend, provider, and model details are not shared."
+SAFE_PUBLIC_VERSION_NOTE = SAFE_IDENTITY_RESPONSE
 
 _SENSITIVE_TARGETS = re.compile(
     r"""
