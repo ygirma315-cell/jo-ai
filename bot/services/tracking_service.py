@@ -7,8 +7,16 @@ from datetime import datetime, timedelta, timezone
 import logging
 from typing import Any, Literal
 
-from psycopg import sql
-from supabase import Client, create_client
+try:  # pragma: no cover - optional dependency in lightweight deploys
+    from psycopg import sql
+except Exception:  # pragma: no cover - optional dependency in lightweight deploys
+    sql = None  # type: ignore[assignment]
+
+try:  # pragma: no cover - optional dependency in lightweight deploys
+    from supabase import Client, create_client
+except Exception:  # pragma: no cover - optional dependency in lightweight deploys
+    Client = Any  # type: ignore[misc, assignment]
+    create_client = None  # type: ignore[assignment]
 
 from bot.config import Settings, load_settings
 from bot.services.postgres_client import PostgresConfig, build_postgres_config, open_postgres_connection
@@ -159,11 +167,13 @@ class SupabaseTrackingService:
         self._backend: TrackingBackend = "disabled"
         self._disabled_reason: str | None = None
 
-        if self._supabase_config is not None:
+        if self._supabase_config is not None and create_client is not None:
             try:
                 self._supabase_client = create_client(self._supabase_config.url, self._supabase_config.api_key)
             except Exception:
                 logger.exception("SUPABASE CONFIG INVALID | failed to initialize Supabase HTTP client.")
+        elif self._supabase_config is not None:
+            logger.warning("supabase package is not installed. Supabase HTTP tracking is disabled.")
 
         if self._postgres_config is not None:
             self._backend = "postgres"
@@ -497,6 +507,8 @@ class SupabaseTrackingService:
     ) -> tuple[int, int]:
         if self._postgres_config is None:
             raise RuntimeError("Postgres tracking backend is unavailable.")
+        if sql is None:
+            raise RuntimeError("psycopg is not installed. Postgres tracking backend is unavailable.")
 
         connection = open_postgres_connection(self._postgres_config)
         if connection is None:

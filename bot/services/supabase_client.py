@@ -4,9 +4,13 @@ from dataclasses import dataclass
 from functools import lru_cache
 import logging
 import re
-from typing import Literal
+from typing import Any, Literal
 
-from supabase import Client, create_client
+try:  # pragma: no cover - optional dependency in lightweight deploys
+    from supabase import Client, create_client
+except Exception:  # pragma: no cover - optional dependency in lightweight deploys
+    Client = Any  # type: ignore[misc, assignment]
+    create_client = None  # type: ignore[assignment]
 
 from bot.config import Settings, load_settings
 
@@ -89,6 +93,9 @@ def get_supabase_config() -> SupabaseConfig | None:
 def get_supabase_client() -> Client | None:
     config = get_supabase_config()
     if config is None:
+        return None
+    if create_client is None:
+        logger.warning("supabase package is not installed. Supabase HTTP client is disabled.")
         return None
 
     try:

@@ -6,7 +6,11 @@ import logging
 from typing import Any
 from urllib.parse import quote
 
-from supabase import Client, create_client
+try:  # pragma: no cover - optional dependency in lightweight deploys
+    from supabase import Client, create_client
+except Exception:  # pragma: no cover - optional dependency in lightweight deploys
+    Client = Any  # type: ignore[misc, assignment]
+    create_client = None  # type: ignore[assignment]
 
 from bot.config import Settings, load_settings
 from bot.services.supabase_client import SupabaseConfig, build_supabase_config
@@ -94,6 +98,9 @@ class SupabaseAdminService:
 
         if self._config is None:
             self._disabled_reason = "Supabase config is missing or invalid."
+            return
+        if create_client is None:
+            self._disabled_reason = "Supabase package is not installed in lightweight mode."
             return
 
         try:

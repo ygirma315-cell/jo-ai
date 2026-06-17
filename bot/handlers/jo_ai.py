@@ -8,7 +8,7 @@ import io
 import logging
 import re
 from contextlib import suppress
-from typing import Literal
+from typing import Any, Literal
 
 from aiogram import F, Router
 from aiogram.exceptions import TelegramBadRequest, TelegramForbiddenError
@@ -84,15 +84,23 @@ from bot.services.ai_service import (
     build_enhanced_image_prompt,
     build_enhanced_video_prompt,
 )
-from bot.services.jo_video_model import JOAIVideoModelEngine, JOAIVideoOptions
 from bot.services.session_manager import SessionManager
 from bot.services.tracking_service import SupabaseTrackingService, TrackingIdentity, TrackingMedia
 from bot.telegram_formatting import TelegramMessageFormatter
 
-try:
-    from PIL import Image
-except Exception:  # pragma: no cover - optional dependency at runtime
-    Image = None  # type: ignore[assignment]
+Image: Any | None = None
+
+
+def _load_pillow_image() -> Any | None:
+    global Image
+    if Image is not None:
+        return Image
+    try:
+        from PIL import Image as pillow_image
+    except Exception:  # pragma: no cover - optional dependency at runtime
+        return None
+    Image = pillow_image
+    return Image
 
 router = Router(name="jo_ai")
 logger = logging.getLogger(__name__)
@@ -5371,7 +5379,7 @@ async def _generate_jo_video_animation(
     pollinations_media_service: PollinationsMediaService,
     reference_image_url: str | None = None,
 ) -> tuple[bytes, str]:
-    if Image is None:
+    if _load_pillow_image() is None:
         raise AIServiceError("JO video renderer is unavailable right now.")
     if not str(pollinations_media_service.api_key or "").strip():
         raise AIServiceError("Video generation is unavailable right now.")
@@ -6287,6 +6295,8 @@ async def _process_video_message(
     try:
         async with ChatActionSender.typing(bot=message.bot, chat_id=message.chat.id):
             if selected_model_option == VIDEO_MODEL_OPTION_JO_AI_VIDEO:
+                from bot.services.jo_video_model import JOAIVideoModelEngine, JOAIVideoOptions
+
                 safe_ratio: Literal["16:9", "9:16"] = "9:16" if aspect_ratio == "9:16" else "16:9"
                 engine = JOAIVideoModelEngine(
                     pollinations_service=pollinations_media_service,

@@ -1,0 +1,2 @@
+-r requirements-db.txt
+pillow>=10.4,<12.0

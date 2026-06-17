@@ -7,8 +7,6 @@ from urllib.parse import urlparse
 
 from dotenv import load_dotenv
 
-from bot.services.ai_service import DEFAULT_IMAGE_MODEL
-
 DEFAULT_CHAT_MODEL = "meta/llama-3.1-8b-instruct"
 DEFAULT_CODE_MODEL = "qwen/qwen2.5-coder-32b-instruct"
 DEFAULT_DEEPSEEK_MODEL = "deepseek-ai/deepseek-v3.2"
@@ -18,6 +16,7 @@ DEFAULT_STT_MODEL = "openai/whisper-large-v3"
 DEFAULT_GEMINI_MODEL = "gemini-2.0-flash"
 DEFAULT_TTS_FUNCTION_ID = "bc45d9e9-7c78-4d56-9737-e27011962ba8"
 DEFAULT_AI_BASE_URL = "https://integrate.api.nvidia.com/v1"
+DEFAULT_IMAGE_MODEL = "black-forest-labs/flux.1-dev"
 DEFAULT_POLLINATIONS_BASE_URL = "https://gen.pollinations.ai"
 DEFAULT_POLLINATIONS_IMAGE_MODEL_CHAT_GBT = "gpt-image-1-mini"
 DEFAULT_POLLINATIONS_IMAGE_MODEL_GROK_IMAGINE = "grok-imagine"
@@ -529,7 +528,7 @@ def load_settings() -> Settings:
         )
     admin_dashboard_telegram_bot_token = _read_env("ADMIN_DASHBOARD_TELEGRAM_BOT_TOKEN") or None
     admin_signin_token = _read_env("ADMIN_SIGNIN_TOKEN") or _read_env("ADMIN_DASHBOARD_TOKEN") or None
-    engagement_enabled = _parse_bool_env(_read_env("ENGAGEMENT_ENABLED"), default=True)
+    engagement_enabled = _parse_bool_env(_read_env("ENGAGEMENT_ENABLED"), default=False)
     engagement_message_template = (
         _read_env("ENGAGEMENT_MESSAGE_TEMPLATE") or DEFAULT_ENGAGEMENT_MESSAGE_TEMPLATE
     )[:400]
@@ -553,7 +552,7 @@ def load_settings() -> Settings:
         minimum=1,
         maximum=500,
     )
-    keepalive_self_ping_enabled = _parse_bool_env(_read_env("KEEPALIVE_SELF_PING_ENABLED"), default=True)
+    keepalive_self_ping_enabled = _parse_bool_env(_read_env("KEEPALIVE_SELF_PING_ENABLED"), default=False)
     keepalive_ping_interval_minutes = _parse_bounded_int(
         _read_env("KEEPALIVE_PING_INTERVAL_MINUTES"),
         default=5,
