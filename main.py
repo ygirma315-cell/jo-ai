@@ -2409,6 +2409,8 @@ app.state.heartbeat_task = None
 app.state.engagement_task = None
 app.state.bot_username = ""
 app.state.started_at = time.time()
+app.state.startup_warnings = []
+app.state.last_startup_error = ""
 
 if ADMIN_FRONTEND_DIR.exists():
     app.mount("/admin/static", StaticFiles(directory=str(ADMIN_FRONTEND_DIR)), name="admin-static")
@@ -2674,6 +2676,8 @@ async def _engagement_loop(runtime: BotRuntime, tracking_service: SupabaseTracki
 async def _startup() -> None:
     settings = get_settings()
     setup_logging(settings.log_level)
+    app.state.startup_warnings = list(settings.validation_warnings)
+    app.state.last_startup_error = ""
     for warning in settings.validation_warnings:
         logger.warning("CONFIG WARNING | %s", warning)
     settings.require_valid()
@@ -2738,6 +2742,16 @@ async def _startup() -> None:
             "SUPABASE CONFIG INVALID | reason=%s",
             tracking_service.disabled_reason or "no active tracking backend",
         )
+
+    if not settings.bot_token:
+        app.state.bot_runtime = None
+        app.state.telegram_startup_task = None
+        app.state.keepalive_task = asyncio.create_task(_keepalive_self_ping_loop(), name="keepalive-self-ping")
+        app.state.heartbeat_task = None
+        app.state.engagement_task = None
+        app.state.last_startup_error = "Telegram runtime disabled because BOT_TOKEN is missing."
+        logger.warning(app.state.last_startup_error)
+        return
 
     runtime = await create_bot_runtime()
     app.state.bot_runtime = runtime
@@ -3680,8 +3694,16 @@ def admin_bot_status(request: Request) -> JSONResponse:
             "telegram_ready": bool(getattr(runtime, "telegram_ready", False)) if runtime else False,
             "webhook_configured": bool(getattr(runtime, "webhook_configured", False)) if runtime else False,
             "menu_button_configured": bool(getattr(runtime, "menu_button_configured", False)) if runtime else False,
-            "last_startup_error": str(getattr(runtime, "last_startup_error", "") or ""),
-            "startup_warnings": list(getattr(runtime, "startup_warnings", []) or []) if runtime else [],
+            "last_startup_error": (
+                str(getattr(runtime, "last_startup_error", "") or "")
+                if runtime
+                else str(getattr(app.state, "last_startup_error", "") or "")
+            ),
+            "startup_warnings": (
+                list(getattr(runtime, "startup_warnings", []) or [])
+                if runtime
+                else list(getattr(app.state, "startup_warnings", []) or [])
+            ),
             "startup_task_running": bool(isinstance(startup_task, asyncio.Task) and not startup_task.done()),
             "keepalive_task_running": bool(isinstance(keepalive_task, asyncio.Task) and not keepalive_task.done()),
             "heartbeat_task_running": bool(isinstance(heartbeat_task, asyncio.Task) and not heartbeat_task.done()),

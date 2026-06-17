@@ -286,6 +286,10 @@ def start_telegram_startup_tasks(runtime: BotRuntime) -> asyncio.Task[None]:
 async def create_bot_runtime() -> BotRuntime:
     settings = load_settings()
     settings.require_valid()
+    if not settings.bot_token:
+        raise RuntimeError(
+            "Telegram bot runtime cannot start because BOT_TOKEN (or TELEGRAM_BOT_TOKEN) is missing."
+        )
     run_markdown_sanity_checks()
     logger.info("BOT CREDENTIALS LOADED")
     logger.info("BOT INIT | version=%s", VERSION)

@@ -126,15 +126,12 @@ class Settings:
             raise RuntimeError("Invalid environment configuration:\n- " + "\n- ".join(self.validation_errors))
 
 
-def _load_required_bot_token() -> tuple[str, str]:
+def _load_bot_token() -> tuple[str, str]:
     for env_name in ("BOT_TOKEN", "TELEGRAM_BOT_TOKEN"):
         value = os.getenv(env_name, "").strip()
         if value:
             return value, env_name
-    raise RuntimeError(
-        "Missing required Telegram token. Set BOT_TOKEN (or TELEGRAM_BOT_TOKEN) "
-        "in .env locally or in the Render service environment."
-    )
+    return "", ""
 
 
 def _read_env(name: str) -> str:
@@ -364,7 +361,7 @@ def load_settings() -> Settings:
     root_dir = Path(__file__).resolve().parent.parent
     load_dotenv(dotenv_path=root_dir / ".env", encoding="utf-8-sig")
 
-    bot_token, bot_token_env_var = _load_required_bot_token()
+    bot_token, bot_token_env_var = _load_bot_token()
 
     known_users_raw = os.getenv("KNOWN_USERS_PATH", "bot/data/known_users.json").strip()
     known_users_path = Path(known_users_raw)
@@ -589,6 +586,10 @@ def load_settings() -> Settings:
     if not ai_api_key:
         validation_errors.append(
             "Missing required AI service credentials. Chat, code, image, vision, and audio endpoints need a server-side key."
+        )
+    if not bot_token:
+        validation_warnings.append(
+            "BOT_TOKEN is missing. The web service will start, but Telegram webhook/runtime features are disabled until BOT_TOKEN is set."
         )
     if not public_base_url and not telegram_webhook_url:
         validation_warnings.append(
