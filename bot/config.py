@@ -502,11 +502,20 @@ def load_settings() -> Settings:
     supabase_users_table = _read_env("SUPABASE_USERS_TABLE") or "users"
     supabase_history_table = _read_env("SUPABASE_HISTORY_TABLE") or "history"
 
+    validation_errors: list[str] = []
+    validation_warnings: list[str] = []
+
+    render_external_url = _normalize_public_url(_read_env("RENDER_EXTERNAL_URL"))
+    public_base_url_override = _normalize_public_url(_read_env("PUBLIC_BASE_URL"))
     public_base_url = (
-        _normalize_public_url(_read_env("PUBLIC_BASE_URL"))
-        or _normalize_public_url(_read_env("RENDER_EXTERNAL_URL"))
+        render_external_url
+        or public_base_url_override
         or _normalize_public_url(_read_env("MINIAPP_API_BASE"))
     )
+    if render_external_url and public_base_url_override and render_external_url != public_base_url_override:
+        validation_warnings.append(
+            f"PUBLIC_BASE_URL differs from Render's primary URL. Using RENDER_EXTERNAL_URL for runtime routing: {render_external_url}."
+        )
     miniapp_url, miniapp_url_warning = _resolve_miniapp_url(_read_env("MINIAPP_URL"))
     miniapp_api_base = _normalize_public_url(_read_env("MINIAPP_API_BASE")) or public_base_url
     main_channel_url = (
@@ -579,9 +588,6 @@ def load_settings() -> Settings:
         keepalive_heartbeat_message = "I'm making your bot active automatically."
     allowed_origins = _parse_allowed_origins(_read_env("ALLOWED_ORIGINS"), public_base_url, miniapp_url)
     request_timeout_seconds = _parse_timeout_seconds(_read_env("REQUEST_TIMEOUT_SECONDS"))
-
-    validation_errors: list[str] = []
-    validation_warnings: list[str] = []
 
     if not ai_api_key:
         validation_errors.append(

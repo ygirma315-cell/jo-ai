@@ -269,6 +269,7 @@ Required Render environment:
 - `NVIDIA_STT_API_KEY`: optional clearer key for Hear Audio and group `/hear`; if unset, it falls back to the TTS/NVIDIA key.
 - `IMAGE_EDIT_API_KEY`: optional image-edit credential slot. Group `/editimage` also needs `POLLINATIONS_API_KEY` for the current edit backend.
 - `PUBLIC_BASE_URL`: optional if Render provides `RENDER_EXTERNAL_URL`; set it to your public Render URL if webhook setup does not register automatically.
+- `KEEPALIVE_SLEEP_*`: keepalive skips pings from 12 AM through 6 AM Africa/Nairobi by default, then resumes pings during the day.
 
 After changing Render environment variables, redeploy/restart the service so startup can re-register the Telegram webhook and command list.
 

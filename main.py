@@ -18,6 +18,7 @@ from functools import lru_cache
 from pathlib import Path
 from typing import Any, Literal
 from urllib.parse import parse_qs, parse_qsl, urlparse
+from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
 import aiohttp
 import uvicorn
@@ -207,6 +208,9 @@ ADMIN_SESSION_COOKIE_NAME = "jo_admin_session"
 ADMIN_SESSION_COOKIE_SAMESITE = "lax"
 ADMIN_SESSION_COOKIE_SECURE = True
 KEEPALIVE_MIN_LOOP_SECONDS = 30
+KEEPALIVE_SLEEP_TIMEZONE_DEFAULT = "Africa/Nairobi"
+KEEPALIVE_SLEEP_START_HOUR_DEFAULT = 0
+KEEPALIVE_SLEEP_END_HOUR_DEFAULT = 6
 _ADMIN_SESSION_TOKENS: dict[str, dict[str, Any]] = {}
 ACCESS_RESTRICTED_MESSAGE = "Your access to JO AI is currently restricted. Contact support for help."
 _JO_VIDEO_JOB_STORE: dict[str, dict[str, Any]] = {}
@@ -611,6 +615,55 @@ class AdminUserWarnRequest(BaseModel):
 
 def _read_env(name: str) -> str:
     return os.getenv(name, "").strip()
+
+
+def _int_env_in_range(name: str, *, default: int, minimum: int, maximum: int) -> int:
+    try:
+        parsed = int(_read_env(name) or default)
+    except (TypeError, ValueError):
+        return default
+    return max(minimum, min(maximum, parsed))
+
+
+def _keepalive_sleep_timezone() -> ZoneInfo:
+    timezone_name = _read_env("KEEPALIVE_SLEEP_TIMEZONE") or KEEPALIVE_SLEEP_TIMEZONE_DEFAULT
+    try:
+        return ZoneInfo(timezone_name)
+    except ZoneInfoNotFoundError:
+        logger.warning(
+            "Invalid KEEPALIVE_SLEEP_TIMEZONE=%s; using %s.",
+            timezone_name,
+            KEEPALIVE_SLEEP_TIMEZONE_DEFAULT,
+        )
+        return ZoneInfo(KEEPALIVE_SLEEP_TIMEZONE_DEFAULT)
+
+
+def _is_keepalive_sleep_window(now: datetime | None = None) -> bool:
+    if (_read_env("KEEPALIVE_SLEEP_WINDOW_ENABLED") or "true").lower() not in {"1", "true", "yes", "on"}:
+        return False
+
+    current = now or datetime.now(_keepalive_sleep_timezone())
+    if current.tzinfo is None:
+        current = current.replace(tzinfo=_keepalive_sleep_timezone())
+
+    start_hour = _int_env_in_range(
+        "KEEPALIVE_SLEEP_START_HOUR",
+        default=KEEPALIVE_SLEEP_START_HOUR_DEFAULT,
+        minimum=0,
+        maximum=23,
+    )
+    end_hour = _int_env_in_range(
+        "KEEPALIVE_SLEEP_END_HOUR",
+        default=KEEPALIVE_SLEEP_END_HOUR_DEFAULT,
+        minimum=0,
+        maximum=23,
+    )
+    current_hour = current.astimezone(_keepalive_sleep_timezone()).hour
+    if start_hour == end_hour:
+        return False
+    if start_hour < end_hour:
+        return start_hour <= current_hour < end_hour
+    return current_hour >= start_hour or current_hour < end_hour
 
 
 def _origin_from_url(value: str | None) -> str | None:
@@ -2557,6 +2610,25 @@ async def _keepalive_self_ping_loop() -> None:
     logger.info("Keepalive self-ping loop started | target=%s interval_seconds=%s", target_url, interval_seconds)
     async with aiohttp.ClientSession(timeout=timeout) as session:
         while True:
+            if _is_keepalive_sleep_window():
+                logger.info(
+                    "KEEPALIVE SELF-PING SKIPPED | reason=sleep_window timezone=%s start_hour=%s end_hour=%s",
+                    _read_env("KEEPALIVE_SLEEP_TIMEZONE") or KEEPALIVE_SLEEP_TIMEZONE_DEFAULT,
+                    _int_env_in_range(
+                        "KEEPALIVE_SLEEP_START_HOUR",
+                        default=KEEPALIVE_SLEEP_START_HOUR_DEFAULT,
+                        minimum=0,
+                        maximum=23,
+                    ),
+                    _int_env_in_range(
+                        "KEEPALIVE_SLEEP_END_HOUR",
+                        default=KEEPALIVE_SLEEP_END_HOUR_DEFAULT,
+                        minimum=0,
+                        maximum=23,
+                    ),
+                )
+                await asyncio.sleep(interval_seconds)
+                continue
             try:
                 started = time.perf_counter()
                 async with session.get(target_url) as response:

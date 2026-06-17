@@ -101,6 +101,14 @@ services:
         value: "true"
       - key: KEEPALIVE_PING_INTERVAL_MINUTES
         value: "5"
+      - key: KEEPALIVE_SLEEP_WINDOW_ENABLED
+        value: "true"
+      - key: KEEPALIVE_SLEEP_TIMEZONE
+        value: Africa/Nairobi
+      - key: KEEPALIVE_SLEEP_START_HOUR
+        value: "0"
+      - key: KEEPALIVE_SLEEP_END_HOUR
+        value: "6"
       - key: KEEPALIVE_HEARTBEAT_ENABLED
         value: "false"
       - key: KEEPALIVE_HEARTBEAT_INTERVAL_MINUTES
