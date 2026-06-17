@@ -248,6 +248,14 @@ Important:
 
 ## Deployments
 
+### Generic ZIP / JustRunMyApp
+
+Uploading a GitHub ZIP is fine, but use a fresh ZIP from the latest pushed `main` branch.
+The ZIP does not include `.env`, so add the required environment variables in the deploy
+website dashboard before starting the app. The included `Procfile` starts the web service
+with `uvicorn main:app --host 0.0.0.0 --port ${PORT:-8000}` and exposes health checks at
+`/health`.
+
 ### Render
 
 Render deploys the shared backend and Telegram bot runtime from `render.yaml`.

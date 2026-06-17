@@ -1825,7 +1825,19 @@ def _uptime_seconds() -> float:
 
 
 def _runtime_info_payload() -> dict[str, Any]:
-    return build_runtime_info(version=VERSION, web_version=WEB_VERSION)
+    runtime = _get_bot_runtime()
+    startup_task = getattr(app.state, "telegram_startup_task", None)
+    payload = build_runtime_info(version=VERSION, web_version=WEB_VERSION)
+    payload["ok"] = True
+    payload["service"] = "JO AI"
+    payload["status"] = "degraded" if getattr(app.state, "telegram_startup_error", "") else "ok"
+    payload["uptime_seconds"] = round(_uptime_seconds(), 2)
+    payload["telegram_runtime_ready"] = runtime is not None
+    payload["telegram_ready"] = bool(getattr(runtime, "telegram_ready", False)) if runtime else False
+    payload["telegram_startup_task_running"] = bool(
+        isinstance(startup_task, asyncio.Task) and not startup_task.done()
+    )
+    return payload
 
 
 async def _resolve_bot_username() -> str | None:
@@ -2409,6 +2421,9 @@ app.state.heartbeat_task = None
 app.state.engagement_task = None
 app.state.bot_username = ""
 app.state.started_at = time.time()
+app.state.telegram_startup_error = ""
+app.state.settings_validation_errors = ()
+app.state.settings_validation_warnings = ()
 
 if ADMIN_FRONTEND_DIR.exists():
     app.mount("/admin/static", StaticFiles(directory=str(ADMIN_FRONTEND_DIR)), name="admin-static")
@@ -2674,9 +2689,13 @@ async def _engagement_loop(runtime: BotRuntime, tracking_service: SupabaseTracki
 async def _startup() -> None:
     settings = get_settings()
     setup_logging(settings.log_level)
+    app.state.settings_validation_errors = tuple(settings.validation_errors)
+    app.state.settings_validation_warnings = tuple(settings.validation_warnings)
+    app.state.telegram_startup_error = ""
+    for error in settings.validation_errors:
+        logger.error("CONFIG ERROR | %s", error)
     for warning in settings.validation_warnings:
         logger.warning("CONFIG WARNING | %s", warning)
-    settings.require_valid()
 
     role = _read_env("PROCESS_ROLE") or "web"
     app.state.started_at = time.time()
@@ -2739,10 +2758,23 @@ async def _startup() -> None:
             tracking_service.disabled_reason or "no active tracking backend",
         )
 
-    runtime = await create_bot_runtime()
+    app.state.keepalive_task = asyncio.create_task(_keepalive_self_ping_loop(), name="keepalive-self-ping")
+    try:
+        runtime = await create_bot_runtime()
+    except Exception as exc:
+        app.state.bot_runtime = None
+        app.state.telegram_startup_task = None
+        app.state.heartbeat_task = None
+        app.state.engagement_task = None
+        app.state.telegram_startup_error = str(exc) or "Telegram runtime startup failed."
+        logger.exception(
+            "TELEGRAM RUNTIME DISABLED | web service will stay online; fix deployment env and restart. error=%s",
+            exc,
+        )
+        return
+
     app.state.bot_runtime = runtime
     app.state.telegram_startup_task = start_telegram_startup_tasks(runtime)
-    app.state.keepalive_task = asyncio.create_task(_keepalive_self_ping_loop(), name="keepalive-self-ping")
     app.state.heartbeat_task = asyncio.create_task(
         _heartbeat_loop(runtime, tracking_service),
         name="keepalive-heartbeat",
@@ -3680,8 +3712,12 @@ def admin_bot_status(request: Request) -> JSONResponse:
             "telegram_ready": bool(getattr(runtime, "telegram_ready", False)) if runtime else False,
             "webhook_configured": bool(getattr(runtime, "webhook_configured", False)) if runtime else False,
             "menu_button_configured": bool(getattr(runtime, "menu_button_configured", False)) if runtime else False,
-            "last_startup_error": str(getattr(runtime, "last_startup_error", "") or ""),
+            "last_startup_error": str(
+                getattr(runtime, "last_startup_error", "") or getattr(app.state, "telegram_startup_error", "") or ""
+            ),
             "startup_warnings": list(getattr(runtime, "startup_warnings", []) or []) if runtime else [],
+            "config_errors": list(getattr(app.state, "settings_validation_errors", ()) or ()),
+            "config_warnings": list(getattr(app.state, "settings_validation_warnings", ()) or ()),
             "startup_task_running": bool(isinstance(startup_task, asyncio.Task) and not startup_task.done()),
             "keepalive_task_running": bool(isinstance(keepalive_task, asyncio.Task) and not keepalive_task.done()),
             "heartbeat_task_running": bool(isinstance(heartbeat_task, asyncio.Task) and not heartbeat_task.done()),

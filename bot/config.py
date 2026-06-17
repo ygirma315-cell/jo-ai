@@ -131,10 +131,7 @@ def _load_required_bot_token() -> tuple[str, str]:
         value = os.getenv(env_name, "").strip()
         if value:
             return value, env_name
-    raise RuntimeError(
-        "Missing required Telegram token. Set BOT_TOKEN (or TELEGRAM_BOT_TOKEN) "
-        "in .env locally or in the Render service environment."
-    )
+    return "", "BOT_TOKEN"
 
 
 def _read_env(name: str) -> str:
@@ -586,6 +583,11 @@ def load_settings() -> Settings:
     validation_errors: list[str] = []
     validation_warnings: list[str] = []
 
+    if not bot_token:
+        validation_errors.append(
+            "Missing required Telegram token. Set BOT_TOKEN (or TELEGRAM_BOT_TOKEN) "
+            "in .env locally or in the deployment service environment."
+        )
     if not ai_api_key:
         validation_errors.append(
             "Missing required AI service credentials. Chat, code, image, vision, and audio endpoints need a server-side key."
