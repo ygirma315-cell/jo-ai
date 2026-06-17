@@ -248,19 +248,6 @@ Important:
 
 ## Deployments
 
-### Generic ZIP / JustRunMyApp
-
-Uploading a GitHub ZIP is fine, but use a fresh ZIP from the latest pushed `main` branch.
-The ZIP does not include `.env`, so add the required environment variables in the deploy
-website dashboard before starting the app. The included `Procfile` starts the web service
-with `uvicorn main:app --host 0.0.0.0 --port ${PORT:-8000}` and exposes health checks at
-`/health`.
-
-For low-memory hosts, the default `requirements.txt` installs only the bot/web essentials.
-Use `requirements-db.txt` only when the host has enough memory and you need Supabase
-admin/tracking. Use `requirements-full.txt` only when you also need the optional local
-video/Pillow fallback.
-
 ### Render
 
 Render deploys the shared backend and Telegram bot runtime from `render.yaml`.
@@ -284,12 +271,6 @@ Required Render environment:
 - `PUBLIC_BASE_URL`: optional if Render provides `RENDER_EXTERNAL_URL`; set it to your public Render URL if webhook setup does not register automatically.
 
 After changing Render environment variables, redeploy/restart the service so startup can re-register the Telegram webhook and command list.
-
-Dependency profiles:
-
-- `requirements.txt`: lightweight bot/web runtime for low-memory hosts.
-- `requirements-db.txt`: adds Supabase/Postgres admin and tracking support.
-- `requirements-full.txt`: adds DB support plus optional Pillow video fallback.
 
 Group behavior:
 

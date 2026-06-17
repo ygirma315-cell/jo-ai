@@ -1,12 +1,8 @@
 .env
 .venv/
-node_modules/
 __pycache__/
 *.py[cod]
 logs/
 .pytest_cache/
 .mypy_cache/
 .ruff_cache/
-test-results/
-_tmp_*.js
-_tmp_*.html

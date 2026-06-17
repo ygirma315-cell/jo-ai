@@ -285,11 +285,7 @@ def start_telegram_startup_tasks(runtime: BotRuntime) -> asyncio.Task[None]:
 
 async def create_bot_runtime() -> BotRuntime:
     settings = load_settings()
-    if not settings.bot_token:
-        raise RuntimeError(
-            "Missing required Telegram token. Set BOT_TOKEN (or TELEGRAM_BOT_TOKEN) "
-            "in the deployment service environment."
-        )
+    settings.require_valid()
     run_markdown_sanity_checks()
     logger.info("BOT CREDENTIALS LOADED")
     logger.info("BOT INIT | version=%s", VERSION)
@@ -297,8 +293,6 @@ async def create_bot_runtime() -> BotRuntime:
     logger.info("PROCESS=%s ENTRYPOINT=main.py VERSION=%s", process_role, VERSION)
     if settings.public_base_url or settings.miniapp_url or settings.telegram_webhook_url:
         logger.info("Public routing is configured.")
-    for error in settings.validation_errors:
-        logger.warning("Startup validation error: %s", error)
     for warning in settings.validation_warnings:
         logger.warning("Startup validation warning: %s", warning)
 

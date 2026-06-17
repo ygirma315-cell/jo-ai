@@ -21,6 +21,8 @@ from urllib.parse import parse_qs, parse_qsl, urlparse
 
 import aiohttp
 import uvicorn
+from aiogram.exceptions import TelegramBadRequest, TelegramForbiddenError, TelegramNetworkError
+from aiogram.types import Update
 from dotenv import load_dotenv
 from fastapi import FastAPI, HTTPException, Request, Response
 from fastapi.exceptions import RequestValidationError
@@ -28,7 +30,15 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse, HTMLResponse, JSONResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, ConfigDict, Field, ValidationError, model_validator
+from supabase import create_client
 
+from bot.app import (
+    BotRuntime,
+    close_bot_runtime,
+    create_bot_runtime,
+    process_telegram_update,
+    start_telegram_startup_tasks,
+)
 from bot.config import load_settings
 from bot.logging_config import setup_logging
 from bot.runtime_info import build_runtime_info
@@ -43,6 +53,7 @@ from bot.services.ai_service import (
     build_enhanced_image_prompt,
     build_enhanced_video_prompt,
 )
+from bot.services.jo_video_model import JOAIVideoModelEngine, JOAIVideoOptions, JOAIVideoProgress
 from bot.safety import (
     grok_safety_reason_code,
     grok_safety_warning_text,
@@ -1081,9 +1092,7 @@ def _pollinations_service() -> PollinationsMediaService:
 
 
 @lru_cache(maxsize=1)
-def _jo_video_engine() -> Any:
-    from bot.services.jo_video_model import JOAIVideoModelEngine
-
+def _jo_video_engine() -> JOAIVideoModelEngine:
     return JOAIVideoModelEngine(
         pollinations_service=_pollinations_service(),
         image_service=_image_service(),
@@ -1682,8 +1691,6 @@ async def _generate_jo_ai_video(
         config=config,
     )
     safe_ratio: Literal["16:9", "9:16"] = "9:16" if resolved_ratio == "9:16" else "16:9"
-    from bot.services.jo_video_model import JOAIVideoOptions
-
     options = JOAIVideoOptions(
         prompt=payload.effective_prompt,
         negative_prompt=payload.effective_negative_prompt,
@@ -1706,7 +1713,7 @@ async def _generate_jo_ai_video(
         fallback_enabled=bool(config.get("fallback_enabled", settings.jo_video_fallback_enabled)),
     )
 
-    async def _progress(event: Any) -> None:
+    async def _progress(event: JOAIVideoProgress) -> None:
         if not job_id:
             return
         _update_jo_video_job_progress(job_id, event)
@@ -1805,9 +1812,9 @@ async def _generate_pollinations_audio(*, prompt: str) -> dict[str, str]:
     raise BackendError(safe_message, status_code=_status_code_for_ai_error(safe_message)) from last_error
 
 
-def _get_bot_runtime() -> Any | None:
+def _get_bot_runtime() -> BotRuntime | None:
     runtime = getattr(app.state, "bot_runtime", None)
-    return runtime
+    return runtime if isinstance(runtime, BotRuntime) else None
 
 
 def _uptime_seconds() -> float:
@@ -1818,19 +1825,7 @@ def _uptime_seconds() -> float:
 
 
 def _runtime_info_payload() -> dict[str, Any]:
-    runtime = _get_bot_runtime()
-    startup_task = getattr(app.state, "telegram_startup_task", None)
-    payload = build_runtime_info(version=VERSION, web_version=WEB_VERSION)
-    payload["ok"] = True
-    payload["service"] = "JO AI"
-    payload["status"] = "degraded" if getattr(app.state, "telegram_startup_error", "") else "ok"
-    payload["uptime_seconds"] = round(_uptime_seconds(), 2)
-    payload["telegram_runtime_ready"] = runtime is not None
-    payload["telegram_ready"] = bool(getattr(runtime, "telegram_ready", False)) if runtime else False
-    payload["telegram_startup_task_running"] = bool(
-        isinstance(startup_task, asyncio.Task) and not startup_task.done()
-    )
-    return payload
+    return build_runtime_info(version=VERSION, web_version=WEB_VERSION)
 
 
 async def _resolve_bot_username() -> str | None:
@@ -1942,7 +1937,7 @@ def _jo_video_job_summary(job: dict[str, Any]) -> dict[str, Any]:
     }
 
 
-def _update_jo_video_job_progress(job_id: str, progress: Any) -> None:
+def _update_jo_video_job_progress(job_id: str, progress: JOAIVideoProgress) -> None:
     job = _jo_video_job(job_id)
     if not job:
         return
@@ -2414,9 +2409,6 @@ app.state.heartbeat_task = None
 app.state.engagement_task = None
 app.state.bot_username = ""
 app.state.started_at = time.time()
-app.state.telegram_startup_error = ""
-app.state.settings_validation_errors = ()
-app.state.settings_validation_warnings = ()
 
 if ADMIN_FRONTEND_DIR.exists():
     app.mount("/admin/static", StaticFiles(directory=str(ADMIN_FRONTEND_DIR)), name="admin-static")
@@ -2492,17 +2484,15 @@ async def _response_headers_middleware(request: Request, call_next):
     return response
 
 
-async def _process_webhook_update(runtime: Any, update: Any) -> None:
+async def _process_webhook_update(runtime: BotRuntime, update: Update) -> None:
     try:
-        from bot.app import process_telegram_update
-
         await process_telegram_update(runtime, update)
     except Exception:
         logger.exception("Failed to process Telegram webhook update.")
 
 
 def _is_blocked_delivery_error(exc: Exception) -> bool:
-    if exc.__class__.__name__ == "TelegramForbiddenError":
+    if isinstance(exc, TelegramForbiddenError):
         return True
     lowered = str(exc).lower()
     blocked_markers = (
@@ -2517,7 +2507,7 @@ def _is_blocked_delivery_error(exc: Exception) -> bool:
 
 async def _send_bot_message_with_tracking(
     *,
-    runtime: Any,
+    runtime: BotRuntime,
     tracking_service: SupabaseTrackingService,
     telegram_id: int,
     text: str,
@@ -2527,18 +2517,20 @@ async def _send_bot_message_with_tracking(
         await runtime.bot.send_message(chat_id=telegram_id, text=text)
         await tracking_service.mark_delivery_success(telegram_id)
         return True
-    except Exception as exc:
+    except (TelegramForbiddenError, TelegramBadRequest) as exc:
         blocked = _is_blocked_delivery_error(exc)
-        if blocked or exc.__class__.__name__ in {"TelegramBadRequest", "TelegramForbiddenError"}:
-            await tracking_service.mark_delivery_failure(telegram_id, str(exc), blocked=blocked)
+        await tracking_service.mark_delivery_failure(telegram_id, str(exc), blocked=blocked)
         logger.warning(
             "%s delivery failed | telegram_id=%s blocked=%s error=%s",
             purpose,
             telegram_id,
             blocked,
             exc,
-            exc_info=not blocked,
         )
+    except TelegramNetworkError as exc:
+        logger.warning("%s delivery network error | telegram_id=%s error=%s", purpose, telegram_id, exc)
+    except Exception as exc:
+        logger.warning("%s delivery failed | telegram_id=%s error=%s", purpose, telegram_id, exc, exc_info=True)
     return False
 
 
@@ -2587,7 +2579,7 @@ async def _keepalive_self_ping_loop() -> None:
             await asyncio.sleep(interval_seconds)
 
 
-async def _heartbeat_loop(runtime: Any, tracking_service: SupabaseTrackingService) -> None:
+async def _heartbeat_loop(runtime: BotRuntime, tracking_service: SupabaseTrackingService) -> None:
     settings = get_settings()
     if not settings.keepalive_heartbeat_enabled:
         logger.info("Heartbeat loop disabled.")
@@ -2619,7 +2611,7 @@ async def _heartbeat_loop(runtime: Any, tracking_service: SupabaseTrackingServic
         await asyncio.sleep(interval_seconds)
 
 
-async def _engagement_loop(runtime: Any, tracking_service: SupabaseTrackingService) -> None:
+async def _engagement_loop(runtime: BotRuntime, tracking_service: SupabaseTrackingService) -> None:
     poll_interval_seconds = 180
     logger.info("Engagement loop started | poll_interval_seconds=%s", poll_interval_seconds)
     while True:
@@ -2682,13 +2674,9 @@ async def _engagement_loop(runtime: Any, tracking_service: SupabaseTrackingServi
 async def _startup() -> None:
     settings = get_settings()
     setup_logging(settings.log_level)
-    app.state.settings_validation_errors = tuple(settings.validation_errors)
-    app.state.settings_validation_warnings = tuple(settings.validation_warnings)
-    app.state.telegram_startup_error = ""
-    for error in settings.validation_errors:
-        logger.error("CONFIG ERROR | %s", error)
     for warning in settings.validation_warnings:
         logger.warning("CONFIG WARNING | %s", warning)
+    settings.require_valid()
 
     role = _read_env("PROCESS_ROLE") or "web"
     app.state.started_at = time.time()
@@ -2751,37 +2739,10 @@ async def _startup() -> None:
             tracking_service.disabled_reason or "no active tracking backend",
         )
 
-    app.state.keepalive_task = asyncio.create_task(_keepalive_self_ping_loop(), name="keepalive-self-ping")
-    if not settings.bot_token:
-        app.state.bot_runtime = None
-        app.state.telegram_startup_task = None
-        app.state.heartbeat_task = None
-        app.state.engagement_task = None
-        app.state.telegram_startup_error = (
-            "Missing required Telegram token. Set BOT_TOKEN (or TELEGRAM_BOT_TOKEN) "
-            "in the deployment service environment."
-        )
-        logger.error("TELEGRAM RUNTIME DISABLED | %s", app.state.telegram_startup_error)
-        return
-
-    try:
-        from bot.app import create_bot_runtime, start_telegram_startup_tasks
-
-        runtime = await create_bot_runtime()
-    except Exception as exc:
-        app.state.bot_runtime = None
-        app.state.telegram_startup_task = None
-        app.state.heartbeat_task = None
-        app.state.engagement_task = None
-        app.state.telegram_startup_error = str(exc) or "Telegram runtime startup failed."
-        logger.exception(
-            "TELEGRAM RUNTIME DISABLED | web service will stay online; fix deployment env and restart. error=%s",
-            exc,
-        )
-        return
-
+    runtime = await create_bot_runtime()
     app.state.bot_runtime = runtime
     app.state.telegram_startup_task = start_telegram_startup_tasks(runtime)
+    app.state.keepalive_task = asyncio.create_task(_keepalive_self_ping_loop(), name="keepalive-self-ping")
     app.state.heartbeat_task = asyncio.create_task(
         _heartbeat_loop(runtime, tracking_service),
         name="keepalive-heartbeat",
@@ -2812,8 +2773,6 @@ async def _shutdown() -> None:
     runtime = _get_bot_runtime()
     if runtime is None:
         return
-    from bot.app import close_bot_runtime
-
     await close_bot_runtime(runtime)
     app.state.bot_runtime = None
 
@@ -3389,17 +3348,18 @@ async def admin_warn_user(
             delivered = True
             if tracking_service.enabled:
                 await tracking_service.mark_delivery_success(target_user_id)
-        except Exception as exc:
+        except (TelegramForbiddenError, TelegramBadRequest) as exc:
             delivery_error = str(exc)
-            if tracking_service.enabled and (
-                _is_blocked_delivery_error(exc)
-                or exc.__class__.__name__ in {"TelegramBadRequest", "TelegramForbiddenError"}
-            ):
+            if tracking_service.enabled:
                 await tracking_service.mark_delivery_failure(
                     target_user_id,
                     delivery_error,
                     blocked=_is_blocked_delivery_error(exc),
                 )
+        except TelegramNetworkError as exc:
+            delivery_error = str(exc)
+        except Exception as exc:
+            delivery_error = str(exc)
 
         await asyncio.to_thread(
             service.log_admin_warning,
@@ -3452,17 +3412,18 @@ async def admin_message_user(request: Request, telegram_id: int, payload: AdminU
             delivered = True
             if tracking_service.enabled:
                 await tracking_service.mark_delivery_success(target_user_id)
-        except Exception as exc:
+        except (TelegramForbiddenError, TelegramBadRequest) as exc:
             delivery_error = str(exc)
-            if tracking_service.enabled and (
-                _is_blocked_delivery_error(exc)
-                or exc.__class__.__name__ in {"TelegramBadRequest", "TelegramForbiddenError"}
-            ):
+            if tracking_service.enabled:
                 await tracking_service.mark_delivery_failure(
                     target_user_id,
                     delivery_error,
                     blocked=_is_blocked_delivery_error(exc),
                 )
+        except TelegramNetworkError as exc:
+            delivery_error = str(exc)
+        except Exception as exc:
+            delivery_error = str(exc)
 
         await asyncio.to_thread(
             service.log_admin_direct_message,
@@ -3719,12 +3680,8 @@ def admin_bot_status(request: Request) -> JSONResponse:
             "telegram_ready": bool(getattr(runtime, "telegram_ready", False)) if runtime else False,
             "webhook_configured": bool(getattr(runtime, "webhook_configured", False)) if runtime else False,
             "menu_button_configured": bool(getattr(runtime, "menu_button_configured", False)) if runtime else False,
-            "last_startup_error": str(
-                getattr(runtime, "last_startup_error", "") or getattr(app.state, "telegram_startup_error", "") or ""
-            ),
+            "last_startup_error": str(getattr(runtime, "last_startup_error", "") or ""),
             "startup_warnings": list(getattr(runtime, "startup_warnings", []) or []) if runtime else [],
-            "config_errors": list(getattr(app.state, "settings_validation_errors", ()) or ()),
-            "config_warnings": list(getattr(app.state, "settings_validation_warnings", ()) or ()),
             "startup_task_running": bool(isinstance(startup_task, asyncio.Task) and not startup_task.done()),
             "keepalive_task_running": bool(isinstance(keepalive_task, asyncio.Task) and not keepalive_task.done()),
             "heartbeat_task_running": bool(isinstance(heartbeat_task, asyncio.Task) and not heartbeat_task.done()),
@@ -3931,11 +3888,6 @@ async def debug_supabase_test() -> JSONResponse:
         return JSONResponse(status_code=200, content=result)
 
     try:
-        try:
-            from supabase import create_client
-        except Exception as import_exc:
-            raise RuntimeError("supabase package is not installed in lightweight mode.") from import_exc
-
         logger.warning(
             "SUPABASE DEBUG TEST CLIENT INIT START | url_present=%s key_type=%s allow_anon_fallback=%s",
             bool(supabase_http_config.url),
@@ -4054,14 +4006,9 @@ async def telegram_webhook(request: Request) -> JSONResponse:
         return JSONResponse(status_code=400, content={"error": "Invalid JSON body."})
 
     try:
-        from aiogram.types import Update
-
         update = Update.model_validate(payload, context={"bot": runtime.bot})
     except ValidationError:
         return JSONResponse(status_code=400, content={"error": "Invalid Telegram update payload."})
-    except Exception as exc:
-        logger.exception("Failed to import or validate Telegram update: %s", exc)
-        return JSONResponse(status_code=503, content={"error": "Telegram runtime is not ready."})
 
     asyncio.create_task(_process_webhook_update(runtime, update))
     return JSONResponse(status_code=200, content={"ok": True})
@@ -5162,8 +5109,6 @@ async def video_endpoint(request: Request, payload: VideoRequest) -> JSONRespons
                 aspect_ratio=aspect_ratio,
                 duration_seconds=duration_seconds,
             ) or user_prompt
-            from bot.services.jo_video_model import JOAIVideoProgress
-
             _update_jo_video_job_progress(
                 job_id,
                 JOAIVideoProgress(
@@ -5341,8 +5286,6 @@ async def _run_video_job_async(job_id: str, payload: VideoRequest, settings) -> 
                 job_id=job_id,
             )
         else:
-            from bot.services.jo_video_model import JOAIVideoProgress
-
             _update_jo_video_job_progress(
                 job_id,
                 JOAIVideoProgress(

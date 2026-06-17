@@ -4,17 +4,10 @@ from dataclasses import dataclass
 from functools import lru_cache
 import logging
 import re
-from typing import Any
-from urllib.parse import urlparse
 
-try:  # pragma: no cover - optional dependency in lightweight deploys
-    import psycopg
-    from psycopg import Connection
-    from psycopg.conninfo import conninfo_to_dict
-except Exception:  # pragma: no cover - optional dependency in lightweight deploys
-    psycopg = None  # type: ignore[assignment]
-    Connection = Any  # type: ignore[misc, assignment]
-    conninfo_to_dict = None  # type: ignore[assignment]
+import psycopg
+from psycopg import Connection
+from psycopg.conninfo import conninfo_to_dict
 
 from bot.config import Settings, load_settings
 
@@ -74,9 +67,6 @@ def _contains_placeholder_dsn(dsn: str) -> bool:
 def _is_valid_dsn(dsn: str) -> bool:
     if not dsn:
         return False
-    if conninfo_to_dict is None:
-        parsed = urlparse(dsn)
-        return parsed.scheme in {"postgresql", "postgres"} and bool(parsed.hostname)
     try:
         conninfo_to_dict(dsn)
         return True
@@ -98,9 +88,6 @@ def build_postgres_config(settings: Settings | None = None) -> PostgresConfig | 
     if not _is_valid_dsn(dsn):
         logger.error("SUPABASE_DB_URL is not a valid PostgreSQL DSN. Tracking writes are disabled.")
         return None
-    if psycopg is None:
-        logger.warning("psycopg is not installed. Direct Postgres tracking is disabled in lightweight mode.")
-        return None
     return PostgresConfig(
         dsn=dsn,
         users_table=_safe_table_name(active.supabase_users_table, "users"),
@@ -116,9 +103,6 @@ def get_postgres_config() -> PostgresConfig | None:
 def open_postgres_connection(config: PostgresConfig | None = None) -> Connection | None:
     resolved_config = config or get_postgres_config()
     if resolved_config is None:
-        return None
-    if psycopg is None:
-        logger.warning("psycopg is not installed. Cannot open a direct Postgres connection.")
         return None
     try:
         return psycopg.connect(resolved_config.dsn, autocommit=False, connect_timeout=5)

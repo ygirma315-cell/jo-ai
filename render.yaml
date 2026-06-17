@@ -86,7 +86,7 @@ services:
       - key: ADMIN_DASHBOARD_TELEGRAM_BOT_TOKEN
         sync: false
       - key: ENGAGEMENT_ENABLED
-        value: "false"
+        value: "true"
       - key: ENGAGEMENT_MESSAGE_TEMPLATE
         value: What do you want to do with your chat bot today?
       - key: ENGAGEMENT_INACTIVITY_MINUTES
@@ -98,7 +98,7 @@ services:
       - key: ENFORCE_RESTRICTED_USERS
         value: "false"
       - key: KEEPALIVE_SELF_PING_ENABLED
-        value: "false"
+        value: "true"
       - key: KEEPALIVE_PING_INTERVAL_MINUTES
         value: "5"
       - key: KEEPALIVE_HEARTBEAT_ENABLED
