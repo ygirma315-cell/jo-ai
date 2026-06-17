@@ -522,9 +522,17 @@ def load_settings() -> Settings:
         _normalize_telegram_url(_read_env("MAIN_CHANNEL_URL") or _read_env("VIDEO_JOIN_CHANNEL_URL"))
         or DEFAULT_MAIN_CHANNEL_URL
     )
-    telegram_webhook_url = _normalize_public_url(_read_env("TELEGRAM_WEBHOOK_URL")) or _join_public_url(
-        public_base_url, "/telegram/webhook"
-    )
+    telegram_webhook_override = _normalize_public_url(_read_env("TELEGRAM_WEBHOOK_URL"))
+    if (
+        render_external_url
+        and telegram_webhook_override
+        and _origin_from_url(telegram_webhook_override) != _origin_from_url(render_external_url)
+    ):
+        validation_warnings.append(
+            f"TELEGRAM_WEBHOOK_URL differs from Render's primary URL. Using RENDER_EXTERNAL_URL for Telegram webhook: {render_external_url}."
+        )
+        telegram_webhook_override = None
+    telegram_webhook_url = telegram_webhook_override or _join_public_url(public_base_url, "/telegram/webhook")
     telegram_webhook_secret = _read_env("TELEGRAM_WEBHOOK_SECRET") or None
     admin_dashboard_owner_telegram_id = _parse_positive_int(_read_env("ADMIN_DASHBOARD_OWNER_TELEGRAM_ID"))
     admin_dashboard_allowlist_telegram_ids = _parse_csv_positive_ints(

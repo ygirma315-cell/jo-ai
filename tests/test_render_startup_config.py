@@ -48,6 +48,23 @@ class TestRenderStartupConfig(unittest.TestCase):
             settings.validation_warnings,
         )
 
+    def test_render_external_url_wins_over_stale_webhook_override(self) -> None:
+        env = {
+            "BOT_TOKEN": "123456:test-token",
+            "NVIDIA_API_KEY": "test-api-key",
+            "RENDER_EXTERNAL_URL": "https://jo-ai-fowf.onrender.com",
+            "TELEGRAM_WEBHOOK_URL": "https://jo-ai.onrender.com/telegram/webhook",
+        }
+
+        with patch.dict(os.environ, env, clear=True), patch("bot.config.load_dotenv", lambda *_args, **_kwargs: None):
+            settings = load_settings()
+
+        self.assertEqual(settings.telegram_webhook_url, "https://jo-ai-fowf.onrender.com/telegram/webhook")
+        self.assertTrue(
+            any("TELEGRAM_WEBHOOK_URL differs" in warning for warning in settings.validation_warnings),
+            settings.validation_warnings,
+        )
+
     def test_keepalive_sleep_window_covers_midnight_to_six_am(self) -> None:
         env = {
             "KEEPALIVE_SLEEP_WINDOW_ENABLED": "true",
