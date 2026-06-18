@@ -16,14 +16,6 @@ services:
         value: meta/llama-3.1-8b-instruct
       - key: IMAGE_MODEL
         value: black-forest-labs/flux.1-dev
-      - key: POLLINATIONS_BASE_URL
-        value: https://gen.pollinations.ai
-      - key: POLLINATIONS_IMAGE_MODEL_CHAT_GBT
-        value: gpt-image-1-mini
-      - key: POLLINATIONS_IMAGE_MODEL_GROK_IMAGINE
-        value: grok-imagine
-      - key: POLLINATIONS_VIDEO_MODEL_GROK_TEXT_TO_VIDEO
-        value: grok-video
       - key: CODE_MODEL
         value: qwen/qwen2.5-coder-32b-instruct
       - key: VISION_MODEL
@@ -67,8 +59,6 @@ services:
         sync: false
       - key: NVIDIA_STT_API_KEY
         sync: false
-      - key: POLLINATIONS_API_KEY
-        sync: false
       - key: TTS_API_KEY
         sync: false
       - key: PUBLIC_BASE_URL
@@ -108,7 +98,7 @@ services:
       - key: KEEPALIVE_SLEEP_START_HOUR
         value: "0"
       - key: KEEPALIVE_SLEEP_END_HOUR
-        value: "6"
+        value: "7"
       - key: KEEPALIVE_HEARTBEAT_ENABLED
         value: "false"
       - key: KEEPALIVE_HEARTBEAT_INTERVAL_MINUTES

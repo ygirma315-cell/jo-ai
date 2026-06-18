@@ -1,0 +1,11 @@
+model = "glm-5.2-free"
+model_provider = "zenmux"
+
+approval_policy = "on-request"
+sandbox_mode = "workspace-write"
+
+[model_providers.zenmux]
+name = "ZenMux"
+base_url = "https://zenmux.ai/api/v1"
+env_key = "ZENMUX_API_KEY"
+wire_api = "responses"

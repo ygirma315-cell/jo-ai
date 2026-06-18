@@ -75,7 +75,6 @@ def image_model_keyboard(
     selected = (selected_model or "").strip().lower()
     options = model_options or [
         ("JO AI Image Generate", "joai_image_generate"),
-        ("GPT Image Generator", "gptimage"),
     ]
     builder = InlineKeyboardBuilder()
     for label, token in options:

@@ -49,7 +49,6 @@ from bot.services.ai_service import (
     ChatService,
     GeminiChatService,
     ImageGenerationService,
-    PollinationsMediaService,
     TextToSpeechService,
     build_enhanced_image_prompt,
     build_enhanced_video_prompt,
@@ -104,28 +103,17 @@ GPT_AUDIO_ENDPOINT_TIMEOUT_SECONDS = 120
 GEMINI_TEMP_DISABLED = True
 
 IMAGE_MODEL_LABEL_JO = "JO AI Image Generate"
-IMAGE_MODEL_LABEL_CHAT_GBT = "Chat GBT"
-IMAGE_MODEL_LABEL_GROK_IMAGINE = "Grok Imagine"
-VIDEO_MODEL_LABEL_GROK_TEXT_TO_VIDEO = "Grok Text to Video"
 VIDEO_MODEL_LABEL_JO_AI_VIDEO = "JO AI Video Model"
 GPT_AUDIO_MODEL_LABEL = "GPT Audio"
 
 IMAGE_MODEL_OPTION_JO = "jo_ai_image_generate"
 IMAGE_MODEL_OPTION_CHAT_GBT = "chat_gbt"
 IMAGE_MODEL_OPTION_GROK_IMAGINE = "grok_imagine"
-DEFAULT_POLLINATIONS_IMAGE_MODEL_OPTION = "gptimage"
-POLLINATIONS_FREE_IMAGE_MODELS: tuple[tuple[str, str], ...] = (
-    ("gptimage", "GPT Image Generator"),
-)
-POLLINATIONS_FREE_IMAGE_MODEL_IDS = frozenset(model_id for model_id, _label in POLLINATIONS_FREE_IMAGE_MODELS)
 VIDEO_MODEL_OPTION_GROK_TEXT_TO_VIDEO = "grok_text_to_video"
 VIDEO_MODEL_OPTION_JO_AI_VIDEO = "jo_ai_video"
 
 IMAGE_MODEL_OPTION_LABELS: dict[str, str] = {
     IMAGE_MODEL_OPTION_JO: IMAGE_MODEL_LABEL_JO,
-    IMAGE_MODEL_OPTION_CHAT_GBT: IMAGE_MODEL_LABEL_CHAT_GBT,
-    IMAGE_MODEL_OPTION_GROK_IMAGINE: IMAGE_MODEL_LABEL_GROK_IMAGINE,
-    **{model_id: label for model_id, label in POLLINATIONS_FREE_IMAGE_MODELS},
 }
 IMAGE_MODEL_OPTION_ALIASES: dict[str, str] = {
     IMAGE_MODEL_OPTION_JO: IMAGE_MODEL_OPTION_JO,
@@ -134,52 +122,51 @@ IMAGE_MODEL_OPTION_ALIASES: dict[str, str] = {
     "jo ai image generate": IMAGE_MODEL_OPTION_JO,
     "image_generator": IMAGE_MODEL_OPTION_JO,
     "image generator": IMAGE_MODEL_OPTION_JO,
-    IMAGE_MODEL_OPTION_CHAT_GBT: DEFAULT_POLLINATIONS_IMAGE_MODEL_OPTION,
-    "chat gbt": DEFAULT_POLLINATIONS_IMAGE_MODEL_OPTION,
-    "chatgbt": DEFAULT_POLLINATIONS_IMAGE_MODEL_OPTION,
-    "gpt_image_1_mini": DEFAULT_POLLINATIONS_IMAGE_MODEL_OPTION,
-    "gpt image 1 mini": DEFAULT_POLLINATIONS_IMAGE_MODEL_OPTION,
-    "gpt-image-1-mini": DEFAULT_POLLINATIONS_IMAGE_MODEL_OPTION,
-    "gptimage": "gptimage",
-    "gpt_image": "gptimage",
-    "gpt-image": "gptimage",
-    IMAGE_MODEL_OPTION_GROK_IMAGINE: "grok-imagine",
-    "grok_imagine": "grok-imagine",
-    "grok imagine": "grok-imagine",
-    "grok-imagine": "grok-imagine",
-    "flux": "flux",
-    "zimage": "zimage",
-    "z_image": "zimage",
-    "z_image_turbo": "zimage",
-    "z-image": "zimage",
-    "z-image-turbo": "zimage",
-    "klein": "klein",
-    "flux_klein": "klein",
-    "flux-klein": "klein",
-    "imagen_4": "imagen-4",
-    "imagen-4": "imagen-4",
-    "imagen": "imagen-4",
-    "flux_2_dev": "flux-2-dev",
-    "flux_2": "flux-2-dev",
-    "flux2_dev": "flux-2-dev",
-    "flux-2-dev": "flux-2-dev",
-    "flux-2": "flux-2-dev",
-    "flux2-dev": "flux-2-dev",
-    "dirtberry": "dirtberry",
-    "dirtberry_pro": "dirtberry-pro",
-    "special_berry": "dirtberry-pro",
-    "dirtberry-pro": "dirtberry-pro",
-    "special-berry": "dirtberry-pro",
+    IMAGE_MODEL_OPTION_CHAT_GBT: IMAGE_MODEL_OPTION_JO,
+    "chat gbt": IMAGE_MODEL_OPTION_JO,
+    "chatgbt": IMAGE_MODEL_OPTION_JO,
+    "gpt_image_1_mini": IMAGE_MODEL_OPTION_JO,
+    "gpt image 1 mini": IMAGE_MODEL_OPTION_JO,
+    "gpt-image-1-mini": IMAGE_MODEL_OPTION_JO,
+    "gptimage": IMAGE_MODEL_OPTION_JO,
+    "gpt_image": IMAGE_MODEL_OPTION_JO,
+    "gpt-image": IMAGE_MODEL_OPTION_JO,
+    IMAGE_MODEL_OPTION_GROK_IMAGINE: IMAGE_MODEL_OPTION_JO,
+    "grok_imagine": IMAGE_MODEL_OPTION_JO,
+    "grok imagine": IMAGE_MODEL_OPTION_JO,
+    "grok-imagine": IMAGE_MODEL_OPTION_JO,
+    "flux": IMAGE_MODEL_OPTION_JO,
+    "zimage": IMAGE_MODEL_OPTION_JO,
+    "z_image": IMAGE_MODEL_OPTION_JO,
+    "z_image_turbo": IMAGE_MODEL_OPTION_JO,
+    "z-image": IMAGE_MODEL_OPTION_JO,
+    "z-image-turbo": IMAGE_MODEL_OPTION_JO,
+    "klein": IMAGE_MODEL_OPTION_JO,
+    "flux_klein": IMAGE_MODEL_OPTION_JO,
+    "flux-klein": IMAGE_MODEL_OPTION_JO,
+    "imagen_4": IMAGE_MODEL_OPTION_JO,
+    "imagen-4": IMAGE_MODEL_OPTION_JO,
+    "imagen": IMAGE_MODEL_OPTION_JO,
+    "flux_2_dev": IMAGE_MODEL_OPTION_JO,
+    "flux_2": IMAGE_MODEL_OPTION_JO,
+    "flux2_dev": IMAGE_MODEL_OPTION_JO,
+    "flux-2-dev": IMAGE_MODEL_OPTION_JO,
+    "flux-2": IMAGE_MODEL_OPTION_JO,
+    "flux2-dev": IMAGE_MODEL_OPTION_JO,
+    "dirtberry": IMAGE_MODEL_OPTION_JO,
+    "dirtberry_pro": IMAGE_MODEL_OPTION_JO,
+    "special_berry": IMAGE_MODEL_OPTION_JO,
+    "dirtberry-pro": IMAGE_MODEL_OPTION_JO,
+    "special-berry": IMAGE_MODEL_OPTION_JO,
 }
 VIDEO_MODEL_OPTION_LABELS: dict[str, str] = {
-    VIDEO_MODEL_OPTION_GROK_TEXT_TO_VIDEO: VIDEO_MODEL_LABEL_GROK_TEXT_TO_VIDEO,
     VIDEO_MODEL_OPTION_JO_AI_VIDEO: VIDEO_MODEL_LABEL_JO_AI_VIDEO,
 }
 VIDEO_MODEL_OPTION_ALIASES: dict[str, str] = {
-    VIDEO_MODEL_OPTION_GROK_TEXT_TO_VIDEO: VIDEO_MODEL_OPTION_GROK_TEXT_TO_VIDEO,
-    "grok text to video": VIDEO_MODEL_OPTION_GROK_TEXT_TO_VIDEO,
-    "grok-video": VIDEO_MODEL_OPTION_GROK_TEXT_TO_VIDEO,
-    "grok video": VIDEO_MODEL_OPTION_GROK_TEXT_TO_VIDEO,
+    VIDEO_MODEL_OPTION_GROK_TEXT_TO_VIDEO: VIDEO_MODEL_OPTION_JO_AI_VIDEO,
+    "grok text to video": VIDEO_MODEL_OPTION_JO_AI_VIDEO,
+    "grok-video": VIDEO_MODEL_OPTION_JO_AI_VIDEO,
+    "grok video": VIDEO_MODEL_OPTION_JO_AI_VIDEO,
     VIDEO_MODEL_OPTION_JO_AI_VIDEO: VIDEO_MODEL_OPTION_JO_AI_VIDEO,
     "jo_ai_video": VIDEO_MODEL_OPTION_JO_AI_VIDEO,
     "jo ai video": VIDEO_MODEL_OPTION_JO_AI_VIDEO,
@@ -210,7 +197,7 @@ ADMIN_SESSION_COOKIE_SECURE = True
 KEEPALIVE_MIN_LOOP_SECONDS = 30
 KEEPALIVE_SLEEP_TIMEZONE_DEFAULT = "Africa/Nairobi"
 KEEPALIVE_SLEEP_START_HOUR_DEFAULT = 0
-KEEPALIVE_SLEEP_END_HOUR_DEFAULT = 6
+KEEPALIVE_SLEEP_END_HOUR_DEFAULT = 7
 _ADMIN_SESSION_TOKENS: dict[str, dict[str, Any]] = {}
 ACCESS_RESTRICTED_MESSAGE = "Your access to JO AI is currently restricted. Contact support for help."
 _JO_VIDEO_JOB_STORE: dict[str, dict[str, Any]] = {}
@@ -745,18 +732,6 @@ def _status_code_for_ai_error(message: str) -> int:
     return 503
 
 
-def _is_pollinations_payment_error(message: str | None) -> bool:
-    lower = str(message or "").strip().lower()
-    if not lower:
-        return False
-    return (
-        "insufficient balance" in lower
-        or "balance is too low" in lower
-        or "payment_required" in lower
-        or "payment required" in lower
-    )
-
-
 def _safe_guardrail_response(message: str) -> JSONResponse:
     safe_message = str(message or "").strip() or SAFE_INTERNAL_DETAILS_REFUSAL
     return JSONResponse(status_code=200, content={"output": safe_message})
@@ -1131,23 +1106,9 @@ def _image_service() -> ImageGenerationService:
 
 
 @lru_cache(maxsize=1)
-def _pollinations_service() -> PollinationsMediaService:
-    settings = get_settings()
-    return PollinationsMediaService(
-        api_key=settings.pollinations_api_key,
-        base_url=settings.pollinations_base_url,
-        image_model_chat_gbt=settings.pollinations_image_model_chat_gbt,
-        image_model_grok_imagine=settings.pollinations_image_model_grok_imagine,
-        video_model_grok_text_to_video=settings.pollinations_video_model_grok_text_to_video,
-        audio_model_gpt_audio=settings.pollinations_audio_model_gpt_audio,
-        audio_voice_gpt_audio=settings.pollinations_audio_voice_gpt_audio,
-    )
-
-
-@lru_cache(maxsize=1)
 def _jo_video_engine() -> JOAIVideoModelEngine:
     return JOAIVideoModelEngine(
-        pollinations_service=_pollinations_service(),
+        removed_media_provider=None,
         image_service=_image_service(),
     )
 
@@ -1159,30 +1120,22 @@ def _image_model_label(option: str) -> str:
 
 def _video_model_label(option: str) -> str:
     resolved_option = _resolve_video_model_option(option)
-    return VIDEO_MODEL_OPTION_LABELS.get(resolved_option, VIDEO_MODEL_LABEL_GROK_TEXT_TO_VIDEO)
+    return VIDEO_MODEL_OPTION_LABELS.get(resolved_option, VIDEO_MODEL_LABEL_JO_AI_VIDEO)
 
 
 def _image_model_id_for_option(settings, option: str) -> str:
-    resolved_option = _resolve_image_model_option(option)
-    if resolved_option == IMAGE_MODEL_OPTION_CHAT_GBT:
-        return settings.pollinations_image_model_chat_gbt
-    if resolved_option == IMAGE_MODEL_OPTION_GROK_IMAGINE:
-        return settings.pollinations_image_model_grok_imagine
-    if resolved_option in POLLINATIONS_FREE_IMAGE_MODEL_IDS:
-        return resolved_option
+    _ = option
     return settings.image_model
 
 
 def _is_grok_image_model_option(option: str | None) -> bool:
-    resolved_option = _resolve_image_model_option(option)
-    return _normalize_model_option(resolved_option) == "grok_imagine"
+    _ = option
+    return False
 
 
 def _video_model_id_for_option(settings, option: str) -> str:
-    resolved_option = _resolve_video_model_option(option)
-    if resolved_option == VIDEO_MODEL_OPTION_GROK_TEXT_TO_VIDEO:
-        return settings.pollinations_video_model_grok_text_to_video
-    return settings.jo_video_level1_model or settings.pollinations_video_model_grok_text_to_video
+    _ = option
+    return settings.jo_video_level1_model or settings.image_model
 
 
 def _is_jo_video_model_option(option: str | None) -> bool:
@@ -1548,103 +1501,6 @@ async def _generate_image(prompt: str, size: str, ratio: Literal["1:1", "16:9", 
     ) from last_error
 
 
-async def _generate_pollinations_image(
-    *,
-    prompt: str,
-    size: str,
-    model: str,
-    image: str | list[str] | None = None,
-    quality: Literal["standard", "hd", "low", "medium", "high"] | str | None = None,
-) -> dict[str, str]:
-    max_attempts = 2
-    last_error: AIServiceError | None = None
-    for attempt in range(1, max_attempts + 1):
-        try:
-            generated = await _pollinations_service().generate_image(
-                prompt=prompt,
-                model=model,
-                size=size,
-                enhance=False,
-                image=image,
-                quality=quality,
-            )
-            if generated.image_bytes:
-                return {"image_base64": base64.b64encode(generated.image_bytes).decode("utf-8")}
-            if generated.image_url:
-                return {"image_url": generated.image_url}
-            raise AIServiceError("Image payload is missing.")
-        except AIServiceError as exc:
-            last_error = exc
-            logger.warning(
-                "Pollinations image generation failed | attempt=%s/%s error=%s",
-                attempt,
-                max_attempts,
-                str(exc)[:220] or SAFE_SERVICE_UNAVAILABLE_MESSAGE,
-            )
-            if attempt < max_attempts:
-                await asyncio.sleep(0.7 * attempt)
-                continue
-
-    safe_message = str(last_error or "").strip() or SAFE_SERVICE_UNAVAILABLE_MESSAGE
-    lowered = safe_message.lower()
-    if "timed out" in lowered or "timeout" in lowered:
-        raise BackendError("Image generation timed out. Please retry.", status_code=504) from last_error
-    raise BackendError(safe_message, status_code=_status_code_for_ai_error(safe_message)) from last_error
-
-
-async def _generate_pollinations_video(
-    *,
-    prompt: str,
-    model: str,
-    duration_seconds: int,
-    aspect_ratio: Literal["16:9", "9:16"],
-) -> dict[str, str]:
-    max_attempts = 2
-    last_error: AIServiceError | None = None
-    for attempt in range(1, max_attempts + 1):
-        try:
-            generated = await _pollinations_service().generate_video(
-                prompt=prompt,
-                model=model,
-                duration_seconds=duration_seconds,
-                aspect_ratio=aspect_ratio,
-                enhance=False,
-            )
-            if generated.video_bytes:
-                persisted_url, _storage_path = _persist_video_bytes_to_local_asset(
-                    generated.video_bytes,
-                    prefix="generated_video",
-                    mime_type=generated.mime_type,
-                )
-                return {
-                    "video_url": persisted_url,
-                    "video_mime_type": generated.mime_type or "video/mp4",
-                }
-            if generated.video_url:
-                return {
-                    "video_url": generated.video_url,
-                    "video_mime_type": generated.mime_type or "video/mp4",
-                }
-            raise AIServiceError("Video payload is missing.")
-        except AIServiceError as exc:
-            last_error = exc
-            logger.warning(
-                "Pollinations video generation failed | attempt=%s/%s error=%s",
-                attempt,
-                max_attempts,
-                str(exc)[:220] or SAFE_SERVICE_UNAVAILABLE_MESSAGE,
-            )
-            if attempt < max_attempts:
-                await asyncio.sleep(1.0 * attempt)
-                continue
-
-    safe_message = str(last_error or "").strip() or SAFE_SERVICE_UNAVAILABLE_MESSAGE
-    lowered = safe_message.lower()
-    if "timed out" in lowered or "timeout" in lowered:
-        raise BackendError("Video generation timed out. Please retry.", status_code=504) from last_error
-    raise BackendError(safe_message, status_code=_status_code_for_ai_error(safe_message)) from last_error
-
-
 async def _resolve_video_reference_inputs(payload: VideoRequest) -> tuple[str | None, bytes | None]:
     reference_url = str(payload.reference_image_url or "").strip() or None
     reference_bytes: bytes | None = None
@@ -1654,18 +1510,6 @@ async def _resolve_video_reference_inputs(payload: VideoRequest) -> tuple[str | 
         reference_bytes = _decode_base64_image(raw_b64)
     if reference_url:
         return reference_url, reference_bytes
-
-    if reference_bytes and str(_pollinations_service().api_key or "").strip():
-        try:
-            uploaded = await _pollinations_service().upload_media_bytes(
-                media_bytes=reference_bytes,
-                mime_type="image/png",
-                file_name="video_reference.png",
-            )
-            if uploaded:
-                reference_url = uploaded
-        except Exception:
-            reference_url = None
 
     return reference_url, reference_bytes
 
@@ -1679,18 +1523,6 @@ async def _resolve_image_reference_inputs(payload: ImageRequest) -> tuple[str | 
         reference_bytes = _decode_base64_image(raw_b64)
     if reference_url:
         return reference_url, reference_bytes
-
-    if reference_bytes and str(_pollinations_service().api_key or "").strip():
-        try:
-            uploaded = await _pollinations_service().upload_media_bytes(
-                media_bytes=reference_bytes,
-                mime_type="image/png",
-                file_name="image_reference.png",
-            )
-            if uploaded:
-                reference_url = uploaded
-        except Exception:
-            reference_url = None
 
     return reference_url, reference_bytes
 
@@ -1827,42 +1659,6 @@ async def _generate_tts(
     except AIServiceError as exc:
         logger.warning("Text-to-speech generation failed.", exc_info=True)
         raise _safe_service_error() from exc
-
-
-async def _generate_pollinations_audio(*, prompt: str) -> dict[str, str]:
-    max_attempts = 2
-    last_error: AIServiceError | None = None
-    service = _pollinations_service()
-    for attempt in range(1, max_attempts + 1):
-        try:
-            generated = await service.generate_audio(
-                prompt=prompt,
-                model=service.audio_model_gpt_audio,
-                voice=service.audio_voice_gpt_audio,
-                enhance=True,
-            )
-            return {
-                "audio_base64": base64.b64encode(generated.audio_bytes).decode("utf-8"),
-                "audio_mime_type": generated.mime_type,
-                "audio_file_name": f"jo_ai_gpt_audio.{generated.file_extension}",
-            }
-        except AIServiceError as exc:
-            last_error = exc
-            logger.warning(
-                "Pollinations audio generation failed | attempt=%s/%s error=%s",
-                attempt,
-                max_attempts,
-                str(exc)[:220] or SAFE_SERVICE_UNAVAILABLE_MESSAGE,
-            )
-            if attempt < max_attempts:
-                await asyncio.sleep(0.8 * attempt)
-                continue
-
-    safe_message = str(last_error or "").strip() or SAFE_SERVICE_UNAVAILABLE_MESSAGE
-    lowered = safe_message.lower()
-    if "timed out" in lowered or "timeout" in lowered:
-        raise BackendError("Audio generation timed out. Please retry.", status_code=504) from last_error
-    raise BackendError(safe_message, status_code=_status_code_for_ai_error(safe_message)) from last_error
 
 
 def _get_bot_runtime() -> BotRuntime | None:
@@ -2922,10 +2718,8 @@ def models_registry() -> dict[str, Any]:
         "ok": True,
         "image_models": [
             {"id": IMAGE_MODEL_OPTION_JO, "label": IMAGE_MODEL_LABEL_JO},
-            {"id": "gptimage", "label": "GPT Image Generator"},
         ],
         "video_models": [
-            {"id": VIDEO_MODEL_OPTION_GROK_TEXT_TO_VIDEO, "label": VIDEO_MODEL_LABEL_GROK_TEXT_TO_VIDEO, "enabled": True},
             {
                 "id": VIDEO_MODEL_OPTION_JO_AI_VIDEO,
                 "label": VIDEO_MODEL_LABEL_JO_AI_VIDEO,
@@ -2933,7 +2727,7 @@ def models_registry() -> dict[str, Any]:
             },
         ],
         "defaults": {
-            "video_model": VIDEO_MODEL_OPTION_GROK_TEXT_TO_VIDEO,
+            "video_model": VIDEO_MODEL_OPTION_JO_AI_VIDEO,
             "aspect_ratio": default_video_ratio,
             "duration_seconds": 5,
             "scene_count": 1,
@@ -4690,11 +4484,9 @@ async def image_endpoint(request: Request, payload: ImageRequest) -> JSONRespons
     effective_image_model_option = image_model_option
     effective_image_model_label = image_model_label
     effective_image_model_id = image_model_id
-    provider_source = "jo_ai" if effective_image_model_option == IMAGE_MODEL_OPTION_JO else "pollinations"
+    provider_source = "jo_ai"
     reference_image_url, reference_image_bytes = await _resolve_image_reference_inputs(payload)
     reference_locked = bool(reference_image_url or reference_image_bytes)
-    if reference_locked:
-        provider_source = "pollinations"
     effective_feature_used = f"{feature_used}:{effective_image_model_option}"
     if reference_locked:
         effective_feature_used = f"{effective_feature_used}:edit"
@@ -4734,28 +4526,6 @@ async def image_endpoint(request: Request, payload: ImageRequest) -> JSONRespons
         )
         return refusal
 
-    if reference_locked and not str(_pollinations_service().api_key or "").strip():
-        reply_text = "Image editing is unavailable right now because the image-edit provider is not configured."
-        await _track_api_action(
-            identity=identity,
-            message_type="image",
-            user_message=user_prompt,
-            bot_reply=reply_text,
-            model_used=image_model_label,
-            success=False,
-            image_increment=1,
-            frontend_source=frontend_source,
-            feature_used=f"{feature_used}:{image_model_option}:edit_missing_provider",
-            conversation_id=conversation_id,
-            text_content=user_prompt,
-            mark_started=bool(identity),
-            referral_code=referral_code,
-        )
-        payload_response: dict[str, Any] = {"error": reply_text}
-        if request_id:
-            payload_response["request_id"] = request_id
-        return JSONResponse(status_code=503, content=payload_response)
-
     if _is_grok_image_model_option(image_model_option):
         moderation_result = moderate_grok_generation_prompt(user_prompt)
         if moderation_result.blocked:
@@ -4793,6 +4563,16 @@ async def image_endpoint(request: Request, payload: ImageRequest) -> JSONRespons
     try:
         base_prompt = user_prompt
         if reference_locked:
+            reference_description = ""
+            raw_reference_b64 = str(payload.reference_image_base64 or "").strip()
+            if raw_reference_b64:
+                try:
+                    reference_description = await _describe_image_with_vision(
+                        "Describe this image briefly for a follow-up image edit. Focus on subject, scene, style, and composition.",
+                        raw_reference_b64,
+                    )
+                except BackendError:
+                    reference_description = ""
             preserve_face = bool(payload.preserve_face if payload.preserve_face is not None else True)
             preserve_background = bool(payload.preserve_background if payload.preserve_background is not None else True)
             preserve_composition = bool(payload.preserve_composition if payload.preserve_composition is not None else True)
@@ -4810,8 +4590,10 @@ async def image_endpoint(request: Request, payload: ImageRequest) -> JSONRespons
             ]
             base_prompt = (
                 f"{user_prompt}\n\n"
-                f"Reference-locked edit request. {'; '.join(token for token in preservation_tokens if token)}."
+                f"Reference-guided edit request. {'; '.join(token for token in preservation_tokens if token)}."
             )
+            if reference_description:
+                base_prompt = f"{base_prompt}\nReference image description: {reference_description}"
             if edit_instruction:
                 base_prompt = f"{base_prompt}\nRequested edit: {edit_instruction}"
 
@@ -4831,70 +4613,24 @@ async def image_endpoint(request: Request, payload: ImageRequest) -> JSONRespons
             len(enhanced_prompt),
         )
         fallback_reason: str | None = None
-        if reference_locked:
-            pollinations_model = _image_model_id_for_option(settings, effective_image_model_option)
-            if effective_image_model_option == IMAGE_MODEL_OPTION_JO:
-                pollinations_model = settings.pollinations_image_model_chat_gbt
-            effective_image_model_option = _resolve_image_model_option(pollinations_model)
-            effective_image_model_label = _image_model_label(effective_image_model_option)
-            effective_image_model_id = pollinations_model
-            provider_source = "pollinations"
-            effective_feature_used = f"{feature_used}:{effective_image_model_option}:edit"
-            result_payload = await asyncio.wait_for(
-                _generate_pollinations_image(
-                    prompt=enhanced_prompt,
-                    model=pollinations_model,
-                    size=payload.effective_size,
-                    image=reference_image_url,
-                    quality=payload.quality or "high",
-                ),
-                timeout=IMAGE_ENDPOINT_TIMEOUT_SECONDS,
-            )
-        elif effective_image_model_option == IMAGE_MODEL_OPTION_JO:
-            result_payload = await asyncio.wait_for(
-                _generate_image(
-                    prompt=enhanced_prompt,
-                    size=payload.effective_size,
-                    ratio=payload.effective_ratio,
-                ),
-                timeout=IMAGE_ENDPOINT_TIMEOUT_SECONDS,
-            )
-        else:
-            try:
-                result_payload = await asyncio.wait_for(
-                    _generate_pollinations_image(
-                        prompt=enhanced_prompt,
-                        size=payload.effective_size,
-                        model=effective_image_model_id,
-                    ),
-                    timeout=IMAGE_ENDPOINT_TIMEOUT_SECONDS,
-                )
-            except BackendError as exc:
-                if not _is_pollinations_payment_error(exc.message):
-                    raise
-                logger.warning(
-                    "API IMAGE POLLINATIONS FALLBACK | request_id=%s user=%s from=%s reason=%s",
-                    request_id or "unknown",
-                    user_id,
-                    requested_image_model_label,
-                    exc.message,
-                )
-                fallback_reason = exc.message
-                effective_image_model_option = IMAGE_MODEL_OPTION_JO
-                effective_image_model_label = IMAGE_MODEL_LABEL_JO
-                effective_image_model_id = settings.image_model
-                provider_source = "jo_ai"
-                effective_feature_used = (
-                    f"{feature_used}:{requested_image_model_option}:fallback_to_{effective_image_model_option}"
-                )
-                result_payload = await asyncio.wait_for(
-                    _generate_image(
-                        prompt=enhanced_prompt,
-                        size=payload.effective_size,
-                        ratio=payload.effective_ratio,
-                    ),
-                        timeout=IMAGE_ENDPOINT_TIMEOUT_SECONDS,
-                    )
+        effective_image_model_option = IMAGE_MODEL_OPTION_JO
+        effective_image_model_label = IMAGE_MODEL_LABEL_JO
+        effective_image_model_id = settings.image_model
+        provider_source = "jo_ai"
+        if requested_image_model_option != IMAGE_MODEL_OPTION_JO:
+            fallback_reason = "Removed provider model mapped to JO AI Image Generate."
+            effective_feature_used = f"{feature_used}:{requested_image_model_option}:mapped_to_{effective_image_model_option}"
+        elif reference_locked:
+            fallback_reason = "Image edit uses JO AI reference-guided generation after provider removal."
+            effective_feature_used = f"{feature_used}:{effective_image_model_option}:reference_guided_edit"
+        result_payload = await asyncio.wait_for(
+            _generate_image(
+                prompt=enhanced_prompt,
+                size=payload.effective_size,
+                ratio=payload.effective_ratio,
+            ),
+            timeout=IMAGE_ENDPOINT_TIMEOUT_SECONDS,
+        )
         response_payload: dict[str, Any] = {
             "output": user_prompt,
             "ratio": payload.effective_ratio,
@@ -5066,13 +4802,13 @@ async def video_endpoint(request: Request, payload: VideoRequest) -> JSONRespons
     jo_video_config = _effective_jo_video_config(settings)
     user_prompt = payload.effective_prompt
     video_model_option = payload.effective_model_option
-    if video_model_option == VIDEO_MODEL_OPTION_JO_AI_VIDEO and not bool(jo_video_config.get("enabled", True)):
-        video_model_option = VIDEO_MODEL_OPTION_GROK_TEXT_TO_VIDEO
+    if not bool(jo_video_config.get("enabled", True)):
+        video_model_option = VIDEO_MODEL_OPTION_JO_AI_VIDEO
     video_model_label = _video_model_label(video_model_option)
     video_model_id = _video_model_id_for_option(settings, video_model_option)
     duration_seconds = payload.effective_duration_seconds
     aspect_ratio = payload.effective_aspect_ratio
-    provider_source = "jo_ai" if video_model_option == VIDEO_MODEL_OPTION_JO_AI_VIDEO else "pollinations"
+    provider_source = "jo_ai"
     settings_payload = _jo_video_settings_payload_from_request(payload, settings)
     if video_model_option == VIDEO_MODEL_OPTION_JO_AI_VIDEO:
         aspect_ratio = _resolve_jo_video_aspect_ratio(
@@ -5187,40 +4923,15 @@ async def video_endpoint(request: Request, payload: VideoRequest) -> JSONRespons
         return _grok_safety_block_response(request, "video")
 
     try:
-        if video_model_option == VIDEO_MODEL_OPTION_JO_AI_VIDEO:
-            result_payload = await asyncio.wait_for(
-                _generate_jo_ai_video(
-                    payload=payload,
-                    settings=settings,
-                    jo_config=jo_video_config,
-                    job_id=job_id,
-                ),
-                timeout=VIDEO_ENDPOINT_TIMEOUT_SECONDS,
-            )
-        else:
-            enhanced_prompt = build_enhanced_video_prompt(
-                user_prompt,
-                aspect_ratio=aspect_ratio,
-                duration_seconds=duration_seconds,
-            ) or user_prompt
-            _update_jo_video_job_progress(
-                job_id,
-                JOAIVideoProgress(
-                    stage="provider_video",
-                    progress=0.55,
-                    message="Generating video with provider model.",
-                    metadata={"model_id": video_model_id},
-                ),
-            )
-            result_payload = await asyncio.wait_for(
-                _generate_pollinations_video(
-                    prompt=enhanced_prompt,
-                    model=video_model_id,
-                    duration_seconds=duration_seconds,
-                    aspect_ratio=aspect_ratio,
-                ),
-                timeout=VIDEO_ENDPOINT_TIMEOUT_SECONDS,
-            )
+        result_payload = await asyncio.wait_for(
+            _generate_jo_ai_video(
+                payload=payload,
+                settings=settings,
+                jo_config=jo_video_config,
+                job_id=job_id,
+            ),
+            timeout=VIDEO_ENDPOINT_TIMEOUT_SECONDS,
+        )
         response_payload: dict[str, Any] = {
             "output": user_prompt,
             "model_label": video_model_label,
@@ -5372,37 +5083,12 @@ async def _run_video_job_async(job_id: str, payload: VideoRequest, settings) -> 
     jo_video_config = _effective_jo_video_config(settings)
     model_option = _resolve_video_model_option(payload.video_model or payload.model)
     try:
-        if model_option == VIDEO_MODEL_OPTION_JO_AI_VIDEO:
-            result_payload = await _generate_jo_ai_video(
-                payload=payload,
-                settings=settings,
-                jo_config=jo_video_config,
-                job_id=job_id,
-            )
-        else:
-            _update_jo_video_job_progress(
-                job_id,
-                JOAIVideoProgress(
-                    stage="provider_video",
-                    progress=0.45,
-                    message="Generating provider video.",
-                    metadata={"model_option": model_option},
-                ),
-            )
-            enhanced_prompt = (
-                build_enhanced_video_prompt(
-                    payload.effective_prompt,
-                    aspect_ratio=payload.effective_aspect_ratio,
-                    duration_seconds=payload.effective_duration_seconds,
-                )
-                or payload.effective_prompt
-            )
-            result_payload = await _generate_pollinations_video(
-                prompt=enhanced_prompt,
-                model=_video_model_id_for_option(settings, model_option),
-                duration_seconds=payload.effective_duration_seconds,
-                aspect_ratio=payload.effective_aspect_ratio,
-            )
+        result_payload = await _generate_jo_ai_video(
+            payload=payload,
+            settings=settings,
+            jo_config=jo_video_config,
+            job_id=job_id,
+        )
 
         media_url = str(result_payload.get("video_url") or "").strip() or None
         mime_type = str(result_payload.get("video_mime_type") or "").strip() or "video/mp4"
@@ -5730,9 +5416,8 @@ async def gpt_audio_endpoint(request: Request, payload: GPTAudioRequest) -> JSON
     referral_code = _extract_referral_code(request)
     user_prompt = payload.effective_prompt
     model_used = GPT_AUDIO_MODEL_LABEL
-    provider_source = "pollinations"
+    provider_source = "nvidia"
     effective_feature_used = feature_used
-    fallback_notice: str | None = None
     logger.info(
         "API GPT AUDIO START | request_id=%s user=%s prompt_len=%s",
         request_id or "unknown",
@@ -5769,40 +5454,19 @@ async def gpt_audio_endpoint(request: Request, payload: GPTAudioRequest) -> JSON
             "Keep it natural, concise, and helpful.\n\n"
             f"User request: {user_prompt}"
         )
-        try:
-            generated = await asyncio.wait_for(
-                _generate_pollinations_audio(prompt=enhanced_prompt),
-                timeout=GPT_AUDIO_ENDPOINT_TIMEOUT_SECONDS,
-            )
-        except BackendError as exc:
-            if not _is_pollinations_payment_error(exc.message):
-                raise
-            logger.warning(
-                "API GPT AUDIO FALLBACK | request_id=%s user=%s reason=%s",
-                request_id or "unknown",
-                user_id,
-                exc.message,
-            )
-            fallback_notice = exc.message
-            model_used = f"{GPT_AUDIO_MODEL_LABEL} (fallback)"
-            provider_source = "nvidia"
-            effective_feature_used = f"{feature_used}:fallback_tts"
-            generated = await asyncio.wait_for(
-                _generate_tts(
-                    text=user_prompt,
-                    language="en",
-                    voice="female",
-                    emotion="neutral",
-                ),
-                timeout=GPT_AUDIO_ENDPOINT_TIMEOUT_SECONDS,
-            )
+        generated = await asyncio.wait_for(
+            _generate_tts(
+                text=enhanced_prompt,
+                language="en",
+                voice="female",
+                emotion="neutral",
+            ),
+            timeout=GPT_AUDIO_ENDPOINT_TIMEOUT_SECONDS,
+        )
         response_payload: dict[str, Any] = {
             "output": "Audio generated successfully.",
             "model_label": model_used,
         }
-        if fallback_notice:
-            response_payload["fallback_applied"] = True
-            response_payload["fallback_reason"] = fallback_notice[:220]
         response_payload.update(generated)
         await _track_api_action(
             identity=identity,
@@ -6054,3 +5718,4 @@ if __name__ == "__main__":
     except ValueError:
         port = 8000
     uvicorn.run("main:app", host=host, port=port)
+

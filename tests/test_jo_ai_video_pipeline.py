@@ -29,7 +29,7 @@ def _png_bytes(color: tuple[int, int, int] = (32, 128, 220), size: tuple[int, in
     return output.getvalue()
 
 
-class _FakePollinationsService:
+class _FakeRemovedMediaProviderService:
     def __init__(self, *, image_bytes: bytes | None = None, fail_image: bool = False) -> None:
         self.api_key = "test-key"
         self.video_model_grok_text_to_video = "grok-video"
@@ -101,7 +101,7 @@ class TestJOVideoJobLifecycle(unittest.TestCase):
                 negative_prompt_used="",
                 seed_used=123,
                 scene_prompts=["scene 1"],
-                reference_images=[{"provider": "pollinations"}],
+                reference_images=[{"provider": "local_image_service"}],
                 progress_steps=[],
                 metadata={},
             ),
@@ -118,7 +118,7 @@ class TestJOVideoEngine(unittest.IsolatedAsyncioTestCase):
     @unittest.skipIf(getattr(jo_video_module, "Image", None) is None, "Pillow runtime is unavailable")
     async def test_fallback_engine_generates_gif(self) -> None:
         engine = JOAIVideoModelEngine(
-            pollinations_service=_FakePollinationsService(),
+            removed_media_provider=_FakeRemovedMediaProviderService(),
             image_service=_FakeImageService(),
         )
         result = await engine.generate(
@@ -141,7 +141,7 @@ class TestJOVideoEngine(unittest.IsolatedAsyncioTestCase):
     @unittest.skipIf(getattr(jo_video_module, "Image", None) is None, "Pillow runtime is unavailable")
     async def test_local_image_service_fallback_when_provider_fails(self) -> None:
         engine = JOAIVideoModelEngine(
-            pollinations_service=_FakePollinationsService(fail_image=True),
+            removed_media_provider=_FakeRemovedMediaProviderService(fail_image=True),
             image_service=_FakeImageService(),
         )
         result = await engine.generate(
@@ -160,12 +160,12 @@ class TestJOVideoEngine(unittest.IsolatedAsyncioTestCase):
 
     @unittest.skipIf(getattr(jo_video_module, "Image", None) is None, "Pillow runtime is unavailable")
     async def test_fallback_disabled_requires_level1_output(self) -> None:
-        class _NoLevel1(_FakePollinationsService):
+        class _NoLevel1(_FakeRemovedMediaProviderService):
             async def generate_video(self, **_kwargs):
                 raise RuntimeError("level1 unavailable")
 
         engine = JOAIVideoModelEngine(
-            pollinations_service=_NoLevel1(),
+            removed_media_provider=_NoLevel1(),
             image_service=_FakeImageService(),
         )
         with self.assertRaises(AIServiceError) as error_context:
@@ -185,3 +185,4 @@ class TestJOVideoEngine(unittest.IsolatedAsyncioTestCase):
 
 if __name__ == "__main__":
     unittest.main()
+

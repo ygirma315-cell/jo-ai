@@ -1,4 +1,4 @@
-from __future__ import annotations
+﻿from __future__ import annotations
 
 import asyncio
 import hashlib
@@ -16,9 +16,7 @@ import aiohttp
 from bot.services.ai_service import (
     AIServiceError,
     GeneratedImageResult,
-    GeneratedVideoResult,
     ImageGenerationService,
-    PollinationsMediaService,
     build_enhanced_image_prompt,
     build_enhanced_video_prompt,
 )
@@ -59,7 +57,7 @@ class JOAIVideoOptions:
     output_format: OutputFormat = "mp4"
     reference_image_url: str | None = None
     reference_image_bytes: bytes | None = None
-    provider_order: tuple[str, ...] = ("pollinations", "local")
+    provider_order: tuple[str, ...] = ("local",)
     provider_model_order: tuple[str, ...] = ("imagen-4", "flux-2-dev", "dirtberry-pro")
     provider_level1_enabled: bool = False
     provider_level1_model: str | None = None
@@ -122,10 +120,10 @@ class JOAIVideoModelEngine:
     def __init__(
         self,
         *,
-        pollinations_service: PollinationsMediaService,
+        removed_media_provider: Any | None = None,
         image_service: ImageGenerationService | None = None,
     ) -> None:
-        self._pollinations_service = pollinations_service
+        _ = removed_media_provider
         self._image_service = image_service
 
     async def generate(
@@ -166,33 +164,8 @@ class JOAIVideoModelEngine:
         await emit("scene_planner", 0.14, "Planning scenes with continuity locks.")
         scenes = self._plan_scenes(enhanced_prompt, options)
 
-        if options.provider_level1_enabled and not options.reference_image_url and not options.reference_image_bytes:
-            await emit("master_engine", 0.24, "Trying provider-backed level 1 rendering path.")
-            level1_result = await self._try_provider_level1(options, enhanced_prompt)
-            if level1_result is not None:
-                await emit("result_formatter", 0.99, "Provider video generated successfully.")
-                return JOAIVideoResult(
-                    video_bytes=level1_result.video_bytes,
-                    video_url=level1_result.video_url,
-                    mime_type=level1_result.mime_type or "video/mp4",
-                    output_format=self._format_from_mime(level1_result.mime_type or "video/mp4"),
-                    provider_used="provider_level1",
-                    prompt_used=enhanced_prompt,
-                    negative_prompt_used=negative_prompt,
-                    seed_used=options.normalized_seed(),
-                    scene_prompts=[scene.prompt for scene in scenes],
-                    reference_images=[],
-                    progress_steps=progress_log,
-                    metadata={"fallback_used": False, "level": 1},
-                )
-            await emit("master_engine", 0.29, "Provider level 1 was unavailable, switching to fallback engine.")
-        elif options.provider_level1_enabled:
-            await emit("master_engine", 0.24, "Skipping level 1 provider because a reference image is locked.")
-
         if not options.fallback_enabled:
-            raise AIServiceError(
-                "JO AI Video Model fallback engine is disabled and no level 1 provider output was available."
-            )
+            raise AIServiceError("JO AI Video Model local renderer is disabled.")
 
         await emit("image_adapter", 0.34, "Generating scene reference images.")
         selected_images = await self._generate_reference_images(
@@ -307,23 +280,6 @@ class JOAIVideoModelEngine:
             scenes.append(ScenePlan(index=index, prompt=scene_prompt, duration_seconds=per_scene))
         return scenes
 
-    async def _try_provider_level1(
-        self,
-        options: JOAIVideoOptions,
-        enhanced_prompt: str,
-    ) -> GeneratedVideoResult | None:
-        try:
-            return await self._pollinations_service.generate_video(
-                prompt=enhanced_prompt,
-                model=(options.provider_level1_model or "").strip() or None,
-                duration_seconds=options.safe_duration(),
-                aspect_ratio=options.aspect_ratio,
-                enhance=True,
-                audio=False,
-            )
-        except Exception:
-            return None
-
     async def _generate_reference_images(
         self,
         *,
@@ -336,9 +292,13 @@ class JOAIVideoModelEngine:
         image_size = f"{width}x{height}"
         selected: list[ReferenceImageCandidate] = []
         previous_best: ReferenceImageCandidate | None = None
-        provider_order = tuple(str(item or "").strip().lower() for item in options.provider_order if str(item or "").strip())
+        provider_order = tuple(
+            provider
+            for provider in (str(item or "").strip().lower() for item in options.provider_order)
+            if provider in {"local", "jo_ai", "image_service"}
+        )
         if not provider_order:
-            provider_order = ("pollinations", "local")
+            provider_order = ("local",)
 
         for scene in scenes:
             scene_progress = 0.36 + ((scene.index + 1) / max(1, len(scenes)) * 0.24)
@@ -366,42 +326,6 @@ class JOAIVideoModelEngine:
             for provider in provider_order:
                 if len(candidates) >= 3:
                     break
-
-                if provider in {"pollinations", "provider"}:
-                    for model_name in options.provider_model_order:
-                        model = str(model_name or "").strip()
-                        if not model:
-                            continue
-                        generated = await self._try_generate_pollinations_candidate(
-                            prompt=prompt_with_seed,
-                            model=model,
-                            size=image_size,
-                            quality=options.quality,
-                            reference_url=options.reference_image_url if scene.index == 0 else None,
-                        )
-                        if generated is None:
-                            continue
-                        score = self._score_candidate(
-                            generated.image_bytes,
-                            width=width,
-                            height=height,
-                            previous_image=(previous_best.image_bytes if previous_best is not None else None),
-                        )
-                        candidates.append(
-                            ReferenceImageCandidate(
-                                scene_index=scene.index,
-                                provider="pollinations",
-                                model=model,
-                                prompt=prompt_with_seed,
-                                image_bytes=generated.image_bytes,
-                                image_url=generated.image_url,
-                                score=score,
-                                metadata={"size": image_size},
-                            )
-                        )
-                        if len(candidates) >= 3:
-                            break
-                    continue
 
                 if provider in {"local", "jo_ai", "image_service"} and self._image_service is not None:
                     generated = await self._try_generate_local_candidate(
@@ -476,37 +400,6 @@ class JOAIVideoModelEngine:
             score=score + 0.1,
             metadata={"reference_lock": True},
         )
-
-    async def _try_generate_pollinations_candidate(
-        self,
-        *,
-        prompt: str,
-        model: str,
-        size: str,
-        quality: VideoQuality,
-        reference_url: str | None,
-    ) -> GeneratedImageResult | None:
-        if not str(self._pollinations_service.api_key or "").strip():
-            return None
-        try:
-            generated = await self._pollinations_service.generate_image(
-                prompt=prompt,
-                model=model,
-                size=size,
-                enhance=True,
-                image=reference_url,
-                quality=quality,
-            )
-            if generated.image_bytes:
-                return generated
-            if generated.image_url:
-                return GeneratedImageResult(
-                    image_bytes=await _download_binary(generated.image_url),
-                    image_url=generated.image_url,
-                )
-            return None
-        except Exception:
-            return None
 
     async def _try_generate_local_candidate(
         self,
@@ -785,3 +678,4 @@ async def _download_binary(url: str) -> bytes:
             if response.status >= 400:
                 return b""
             return await response.read()
+

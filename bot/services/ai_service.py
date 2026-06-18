@@ -1,4 +1,4 @@
-from __future__ import annotations
+﻿from __future__ import annotations
 
 import asyncio
 import base64
@@ -30,7 +30,6 @@ NVIDIA_BASE_URL = "https://integrate.api.nvidia.com/v1"
 NVIDIA_IMAGE_BASE_URL = "https://ai.api.nvidia.com/v1"
 NVIDIA_TTS_BASE_URL = "https://api.ngc.nvidia.com"
 GEMINI_BASE_URL = "https://generativelanguage.googleapis.com/v1beta"
-POLLINATIONS_BASE_URL = "https://gen.pollinations.ai"
 DEFAULT_CHAT_MODEL = "meta/llama-3.1-8b-instruct"
 FALLBACK_CHAT_MODEL = "meta/llama-3.1-8b-instruct"
 DEFAULT_IMAGE_MODEL = "black-forest-labs/flux.1-dev"
@@ -75,7 +74,7 @@ TTS_EMOTION_PROSODY: dict[str, tuple[str, str]] = {
     "calm": ("-10%", "-10Hz"),
     "serious": ("-5%", "-20Hz"),
 }
-POLLINATIONS_VIDEO_MAX_DURATION_SECONDS = 10
+VIDEO_MAX_DURATION_SECONDS = 10
 
 IMAGE_STYLE_KEYWORDS = (
     "anime",
@@ -294,7 +293,7 @@ def build_enhanced_video_prompt(
     tokens = re.findall(r"[a-zA-Z0-9']+", normalized)
     has_explicit_style = any(keyword in normalized for keyword in VIDEO_STYLE_KEYWORDS)
     simple_subject_prompt = len(tokens) <= 5 and not has_explicit_style
-    safe_duration = max(1, min(POLLINATIONS_VIDEO_MAX_DURATION_SECONDS, int(duration_seconds or 4)))
+    safe_duration = max(1, min(VIDEO_MAX_DURATION_SECONDS, int(duration_seconds or 4)))
 
     seed_source = f"{cleaned}|{aspect_ratio}|{safe_duration}|{time.time_ns()}"
     seed = int(hashlib.sha256(seed_source.encode("utf-8")).hexdigest()[:16], 16)
@@ -900,38 +899,55 @@ class SpeechToTextService:
 
         safe_file_name = str(file_name or "audio.ogg").strip() or "audio.ogg"
         mime_type = mimetypes.guess_type(safe_file_name)[0] or "application/octet-stream"
-        form = aiohttp.FormData()
-        form.add_field("model", (self.model or "openai/whisper-large-v3").strip())
-        form.add_field("response_format", "json")
-        if language:
-            form.add_field("language", str(language).strip())
-        form.add_field(
-            "file",
-            payload,
-            filename=safe_file_name,
-            content_type=mime_type,
-        )
-
         headers = {"Authorization": f"Bearer {self.api_key}"}
         timeout = aiohttp.ClientTimeout(total=70)
         endpoint = f"{self.base_url.rstrip('/')}/audio/transcriptions"
-        try:
-            async with aiohttp.ClientSession(timeout=timeout) as session:
-                async with session.post(endpoint, headers=headers, data=form) as response:
-                    body = await response.read()
-                    if response.status >= 400:
-                        detail = _extract_api_error_bytes(body)
-                        raise AIServiceError(detail or SAFE_SERVICE_UNAVAILABLE_MESSAGE)
-                    content_type = (response.headers.get("Content-Type") or "").lower()
-                    if "application/json" in content_type or body[:1] in {b"{", b"["}:
-                        parsed = _decode_json_bytes(body)
-                        text = _extract_transcription_text(parsed)
-                    else:
-                        text = body.decode("utf-8", errors="ignore").strip()
-        except asyncio.TimeoutError as exc:
-            raise AIServiceError("Audio transcription timed out.") from exc
-        except aiohttp.ClientError as exc:
-            raise AIServiceError(SAFE_SERVICE_UNAVAILABLE_MESSAGE) from exc
+        text = ""
+        last_error: Exception | None = None
+        for attempt in range(DEFAULT_RETRY_COUNT + 1):
+            form = aiohttp.FormData()
+            form.add_field("model", (self.model or "openai/whisper-large-v3").strip())
+            form.add_field("response_format", "json")
+            if language:
+                form.add_field("language", str(language).strip())
+            form.add_field(
+                "file",
+                payload,
+                filename=safe_file_name,
+                content_type=mime_type,
+            )
+            try:
+                async with aiohttp.ClientSession(timeout=timeout) as session:
+                    async with session.post(endpoint, headers=headers, data=form) as response:
+                        body = await response.read()
+                        if response.status >= 400:
+                            detail = _extract_api_error_bytes(body)
+                            if _is_retryable_status(response.status) and attempt < DEFAULT_RETRY_COUNT:
+                                await asyncio.sleep(DEFAULT_RETRY_BACKOFF_SECONDS * (attempt + 1))
+                                continue
+                            raise AIServiceError(detail or SAFE_SERVICE_UNAVAILABLE_MESSAGE)
+                        content_type = (response.headers.get("Content-Type") or "").lower()
+                        if "application/json" in content_type or body[:1] in {b"{", b"["}:
+                            parsed = _decode_json_bytes(body)
+                            text = _extract_transcription_text(parsed)
+                        else:
+                            text = body.decode("utf-8", errors="ignore").strip()
+                break
+            except asyncio.TimeoutError as exc:
+                last_error = exc
+                if attempt < DEFAULT_RETRY_COUNT:
+                    await asyncio.sleep(DEFAULT_RETRY_BACKOFF_SECONDS * (attempt + 1))
+                    continue
+                raise AIServiceError("Audio transcription timed out.") from exc
+            except aiohttp.ClientError as exc:
+                last_error = exc
+                if attempt < DEFAULT_RETRY_COUNT:
+                    await asyncio.sleep(DEFAULT_RETRY_BACKOFF_SECONDS * (attempt + 1))
+                    continue
+                raise AIServiceError(SAFE_SERVICE_UNAVAILABLE_MESSAGE) from exc
+
+        if last_error is not None and not text:
+            raise AIServiceError(SAFE_SERVICE_UNAVAILABLE_MESSAGE) from last_error
 
         normalized = " ".join(str(text or "").split())
         if not normalized:
@@ -980,14 +996,12 @@ class GeneratedVideoResult:
 
 
 @dataclass
-class PollinationsMediaService:
+class RemovedMediaProviderService:
     api_key: str | None = None
-    base_url: str = POLLINATIONS_BASE_URL
-    image_model_chat_gbt: str = "gpt-image-1-mini"
-    image_model_grok_imagine: str = "grok-imagine"
-    video_model_grok_text_to_video: str = "grok-video"
-    audio_model_gpt_audio: str = "openai-audio"
-    audio_voice_gpt_audio: str = "fable"
+    base_url: str = ""
+
+    def _removed(self) -> AIServiceError:
+        return AIServiceError("This media provider was removed. Use JO AI/NVIDIA services instead.")
 
     async def generate_image(
         self,
@@ -999,52 +1013,8 @@ class PollinationsMediaService:
         image: str | list[str] | None = None,
         quality: Literal["standard", "hd", "low", "medium", "high"] | str | None = None,
     ) -> GeneratedImageResult:
-        guardrail_response = guardrail_response_for_user_query(prompt)
-        if guardrail_response:
-            raise AIServiceError(guardrail_response)
-
-        effective_prompt = str(prompt or "").strip()
-        if not effective_prompt:
-            raise AIServiceError("Image prompt is required.")
-        effective_key = str(self.api_key or "").strip()
-        if not effective_key:
-            raise AIServiceError(SAFE_SERVICE_UNAVAILABLE_MESSAGE)
-
-        selected_model = str(model or "").strip() or self.image_model_chat_gbt
-        payload: dict[str, Any] = {
-            "prompt": effective_prompt,
-            "model": selected_model,
-            "size": size,
-            "response_format": "b64_json",
-            "enhance": bool(enhance),
-        }
-        normalized_quality = str(quality or "").strip().lower()
-        if normalized_quality in {"standard", "hd", "low", "medium", "high"}:
-            payload["quality"] = normalized_quality
-        if isinstance(image, str) and image.strip():
-            payload["image"] = image.strip()
-        elif isinstance(image, list):
-            image_list = [str(item).strip() for item in image if str(item).strip()]
-            if image_list:
-                payload["image"] = image_list
-        data = await _post_pollinations_json(
-            api_key=effective_key,
-            path="/v1/images/generations",
-            payload=payload,
-            timeout_seconds=80,
-            max_retries=DEFAULT_RETRY_COUNT + 1,
-            base_url=self.base_url,
-        )
-        image_b64, image_url = _extract_image_data(data)
-        if isinstance(image_b64, str) and image_b64.strip():
-            try:
-                image_bytes = base64.b64decode("".join(image_b64.split()), validate=True)
-            except ValueError as exc:
-                raise AIServiceError(SAFE_SERVICE_UNAVAILABLE_MESSAGE) from exc
-            return GeneratedImageResult(image_bytes=image_bytes, image_url=image_url)
-        if image_url:
-            return GeneratedImageResult(image_bytes=None, image_url=image_url)
-        raise AIServiceError("Image payload is missing.")
+        _ = (prompt, model, size, enhance, image, quality)
+        raise self._removed()
 
     async def upload_media_bytes(
         self,
@@ -1053,47 +1023,8 @@ class PollinationsMediaService:
         mime_type: str = "image/jpeg",
         file_name: str = "source.jpg",
     ) -> str:
-        payload_bytes = bytes(media_bytes or b"")
-        if not payload_bytes:
-            raise AIServiceError("Source media is empty.")
-        effective_key = str(self.api_key or "").strip()
-        if not effective_key:
-            raise AIServiceError(SAFE_SERVICE_UNAVAILABLE_MESSAGE)
-
-        media_base_url = "https://media.pollinations.ai"
-        upload_url = f"{media_base_url}/upload"
-        timeout = aiohttp.ClientTimeout(total=50)
-        headers = {
-            "Authorization": f"Bearer {effective_key}",
-            "Accept": "application/json",
-        }
-        form = aiohttp.FormData()
-        form.add_field(
-            "file",
-            payload_bytes,
-            filename=(file_name or "source.jpg"),
-            content_type=(mime_type or "application/octet-stream"),
-        )
-
-        async with aiohttp.ClientSession(timeout=timeout) as session:
-            try:
-                async with session.post(upload_url, headers=headers, data=form) as response:
-                    raw_body = await response.text()
-            except (aiohttp.ClientError, asyncio.TimeoutError) as exc:
-                raise AIServiceError(SAFE_SERVICE_UNAVAILABLE_MESSAGE) from exc
-
-        if response.status >= 400:
-            detail = _extract_api_error(raw_body)
-            raise AIServiceError(_friendly_pollinations_error(detail, response.status))
-
-        parsed = _safe_json(raw_body)
-        media_url = str(parsed.get("url") or "").strip()
-        if media_url:
-            return media_url
-        media_id = str(parsed.get("id") or "").strip()
-        if media_id:
-            return f"{media_base_url}/{media_id}"
-        raise AIServiceError("Could not resolve uploaded media URL.")
+        _ = (media_bytes, mime_type, file_name)
+        raise self._removed()
 
     async def generate_video(
         self,
@@ -1105,56 +1036,8 @@ class PollinationsMediaService:
         enhance: bool = True,
         audio: bool = False,
     ) -> GeneratedVideoResult:
-        guardrail_response = guardrail_response_for_user_query(prompt)
-        if guardrail_response:
-            raise AIServiceError(guardrail_response)
-
-        effective_prompt = str(prompt or "").strip()
-        if not effective_prompt:
-            raise AIServiceError("Video prompt is required.")
-        effective_key = str(self.api_key or "").strip()
-        if not effective_key:
-            raise AIServiceError(SAFE_SERVICE_UNAVAILABLE_MESSAGE)
-
-        selected_model = str(model or "").strip() or self.video_model_grok_text_to_video
-        safe_duration = max(1, min(POLLINATIONS_VIDEO_MAX_DURATION_SECONDS, int(duration_seconds or 4)))
-        safe_aspect_ratio = "9:16" if str(aspect_ratio or "").strip() == "9:16" else "16:9"
-
-        path = f"/video/{quote(effective_prompt, safe='')}"
-        query: dict[str, Any] = {
-            "model": selected_model,
-            "duration": safe_duration,
-            "aspectRatio": safe_aspect_ratio,
-            "enhance": str(bool(enhance)).lower(),
-            "audio": str(bool(audio)).lower(),
-        }
-
-        body_bytes, content_type = await _get_pollinations_binary(
-            api_key=effective_key,
-            path=path,
-            query=query,
-            timeout_seconds=160,
-            max_retries=DEFAULT_RETRY_COUNT + 1,
-            base_url=self.base_url,
-            accept_header="video/mp4,application/json,*/*",
-        )
-        normalized_type = (content_type or "").split(";", maxsplit=1)[0].strip().lower()
-        if normalized_type.startswith("video/"):
-            if not body_bytes:
-                raise AIServiceError(SAFE_SERVICE_UNAVAILABLE_MESSAGE)
-            return GeneratedVideoResult(
-                video_bytes=body_bytes,
-                video_url=None,
-                mime_type=normalized_type or "video/mp4",
-            )
-        if _looks_like_mp4_bytes(body_bytes):
-            return GeneratedVideoResult(video_bytes=body_bytes, video_url=None, mime_type="video/mp4")
-
-        payload = _decode_json_bytes(body_bytes)
-        video_url = _extract_video_url(payload)
-        if video_url:
-            return GeneratedVideoResult(video_bytes=None, video_url=video_url, mime_type="video/mp4")
-        raise AIServiceError("Video payload is missing.")
+        _ = (prompt, model, duration_seconds, aspect_ratio, enhance, audio)
+        raise self._removed()
 
     async def generate_audio(
         self,
@@ -1164,72 +1047,16 @@ class PollinationsMediaService:
         voice: str | None = None,
         enhance: bool = True,
     ) -> GeneratedAudioResult:
-        guardrail_response = guardrail_response_for_user_query(prompt)
-        if guardrail_response:
-            raise AIServiceError(guardrail_response)
-
-        effective_prompt = str(prompt or "").strip()
-        if not effective_prompt:
-            raise AIServiceError("Audio prompt is required.")
-        effective_key = str(self.api_key or "").strip()
-        if not effective_key:
-            raise AIServiceError(SAFE_SERVICE_UNAVAILABLE_MESSAGE)
-
-        selected_model = str(model or "").strip() or self.audio_model_gpt_audio
-        selected_voice = str(voice or "").strip() or self.audio_voice_gpt_audio
-        path = f"/audio/{quote(effective_prompt, safe='')}"
-        query: dict[str, Any] = {
-            "model": selected_model,
-            "voice": selected_voice,
-            "enhance": str(bool(enhance)).lower(),
-        }
-
-        body_bytes, content_type = await _get_pollinations_binary(
-            api_key=effective_key,
-            path=path,
-            query=query,
-            timeout_seconds=100,
-            max_retries=DEFAULT_RETRY_COUNT + 1,
-            base_url=self.base_url,
-            accept_header="audio/mpeg,audio/wav,audio/*,application/json,*/*",
-        )
-        normalized_type = _normalize_audio_mime_type(content_type, fallback="audio/mpeg")
-        if body_bytes and (_looks_like_audio(content_type, body_bytes) or normalized_type.startswith("audio/")):
-            return GeneratedAudioResult(
-                audio_bytes=body_bytes,
-                mime_type=normalized_type,
-                file_extension=_audio_extension_for_content_type(normalized_type, fallback="mp3"),
-            )
-
-        payload = _decode_json_bytes(body_bytes)
-        audio_b64 = _extract_audio_base64(payload)
-        if audio_b64:
-            try:
-                decoded = base64.b64decode("".join(audio_b64.split()), validate=True)
-            except ValueError as exc:
-                raise AIServiceError(SAFE_SERVICE_UNAVAILABLE_MESSAGE) from exc
-            return GeneratedAudioResult(
-                audio_bytes=decoded,
-                mime_type="audio/mpeg",
-                file_extension="mp3",
-            )
-        audio_url = _extract_audio_url(payload)
-        if audio_url:
-            audio_bytes, mime_type = await _download_audio_bytes(audio_url)
-            return GeneratedAudioResult(
-                audio_bytes=audio_bytes,
-                mime_type=mime_type,
-                file_extension=_audio_extension_for_content_type(mime_type, fallback="mp3"),
-            )
-        raise AIServiceError("Audio payload is missing.")
+        _ = (prompt, model, voice, enhance)
+        raise self._removed()
 
 
 @dataclass
 class VideoGenerationService:
     # Backward-compatible wrapper kept for existing imports.
     api_key: str | None = None
-    base_url: str = POLLINATIONS_BASE_URL
-    model: str = "grok-video"
+    base_url: str = ""
+    model: str = ""
 
     async def generate_video(
         self,
@@ -1240,19 +1067,8 @@ class VideoGenerationService:
         enhance: bool = True,
         audio: bool = False,
     ) -> GeneratedVideoResult:
-        service = PollinationsMediaService(
-            api_key=self.api_key,
-            base_url=self.base_url,
-            video_model_grok_text_to_video=self.model,
-        )
-        return await service.generate_video(
-            prompt=prompt,
-            model=self.model,
-            duration_seconds=duration_seconds,
-            aspect_ratio=aspect_ratio,
-            enhance=enhance,
-            audio=audio,
-        )
+        _ = (prompt, duration_seconds, aspect_ratio, enhance, audio, self.api_key, self.base_url, self.model)
+        raise AIServiceError("This video provider was removed. Use JO AI Video Model instead.")
 
 
 async def _post_nvidia_json(
@@ -1355,176 +1171,6 @@ async def _post_nvidia_json(
     raise AIServiceError(SAFE_SERVICE_UNAVAILABLE_MESSAGE)
 
 
-async def _post_pollinations_json(
-    *,
-    api_key: str,
-    path: str,
-    payload: dict[str, object],
-    timeout_seconds: int = 45,
-    max_retries: int = DEFAULT_RETRY_COUNT,
-    base_url: str = POLLINATIONS_BASE_URL,
-) -> dict[str, object]:
-    headers = {
-        "Authorization": f"Bearer {api_key}",
-        "Content-Type": "application/json",
-        "Accept": "application/json",
-    }
-    timeout = aiohttp.ClientTimeout(total=timeout_seconds)
-    safe_path = path if path.startswith("/") else f"/{path}"
-    request_url = f"{base_url.rstrip('/')}{safe_path}"
-    retries = max(0, int(max_retries))
-    last_error: Exception | None = None
-
-    for attempt in range(retries + 1):
-        started_at = time.perf_counter()
-        try:
-            async with aiohttp.ClientSession(timeout=timeout) as session:
-                async with session.post(request_url, headers=headers, json=payload) as response:
-                    body = await response.text()
-        except asyncio.TimeoutError as exc:
-            last_error = exc
-            elapsed_ms = int((time.perf_counter() - started_at) * 1000)
-            logger.warning(
-                "Pollinations upstream timeout path=%s attempt=%s/%s elapsed_ms=%s",
-                safe_path,
-                attempt + 1,
-                retries + 1,
-                elapsed_ms,
-            )
-            if attempt < retries:
-                await asyncio.sleep(DEFAULT_RETRY_BACKOFF_SECONDS * (attempt + 1))
-                continue
-            raise AIServiceError(SAFE_SERVICE_UNAVAILABLE_MESSAGE) from exc
-        except aiohttp.ClientError as exc:
-            last_error = exc
-            elapsed_ms = int((time.perf_counter() - started_at) * 1000)
-            logger.warning(
-                "Pollinations upstream network error path=%s attempt=%s/%s elapsed_ms=%s error=%s",
-                safe_path,
-                attempt + 1,
-                retries + 1,
-                elapsed_ms,
-                exc.__class__.__name__,
-            )
-            if attempt < retries:
-                await asyncio.sleep(DEFAULT_RETRY_BACKOFF_SECONDS * (attempt + 1))
-                continue
-            raise AIServiceError(SAFE_SERVICE_UNAVAILABLE_MESSAGE) from exc
-
-        elapsed_ms = int((time.perf_counter() - started_at) * 1000)
-        if response.status >= 400:
-            detail = _extract_api_error(body)
-            logger.warning(
-                "Pollinations upstream HTTP error path=%s status=%s attempt=%s/%s elapsed_ms=%s detail=%s",
-                safe_path,
-                response.status,
-                attempt + 1,
-                retries + 1,
-                elapsed_ms,
-                detail[:220],
-            )
-            if _is_retryable_status(response.status) and attempt < retries:
-                await asyncio.sleep(DEFAULT_RETRY_BACKOFF_SECONDS * (attempt + 1))
-                continue
-            raise AIServiceError(_friendly_pollinations_error(detail, response.status))
-
-        parsed = _safe_json(body)
-        if parsed:
-            return parsed
-        logger.warning(
-            "Pollinations upstream returned invalid JSON path=%s attempt=%s/%s elapsed_ms=%s",
-            safe_path,
-            attempt + 1,
-            retries + 1,
-            elapsed_ms,
-        )
-        raise AIServiceError(SAFE_SERVICE_UNAVAILABLE_MESSAGE)
-
-    if last_error is not None:
-        raise AIServiceError(SAFE_SERVICE_UNAVAILABLE_MESSAGE) from last_error
-    raise AIServiceError(SAFE_SERVICE_UNAVAILABLE_MESSAGE)
-
-
-async def _get_pollinations_binary(
-    *,
-    api_key: str,
-    path: str,
-    query: dict[str, object] | None = None,
-    timeout_seconds: int = 120,
-    max_retries: int = DEFAULT_RETRY_COUNT,
-    base_url: str = POLLINATIONS_BASE_URL,
-    accept_header: str = "*/*",
-) -> tuple[bytes, str]:
-    headers = {
-        "Authorization": f"Bearer {api_key}",
-        "Accept": accept_header,
-    }
-    timeout = aiohttp.ClientTimeout(total=timeout_seconds)
-    safe_path = path if path.startswith("/") else f"/{path}"
-    request_url = f"{base_url.rstrip('/')}{safe_path}"
-    retries = max(0, int(max_retries))
-    last_error: Exception | None = None
-
-    for attempt in range(retries + 1):
-        started_at = time.perf_counter()
-        try:
-            async with aiohttp.ClientSession(timeout=timeout) as session:
-                async with session.get(request_url, headers=headers, params=query) as response:
-                    body = await response.read()
-                    content_type = str(response.headers.get("Content-Type") or "")
-        except asyncio.TimeoutError as exc:
-            last_error = exc
-            elapsed_ms = int((time.perf_counter() - started_at) * 1000)
-            logger.warning(
-                "Pollinations binary timeout path=%s attempt=%s/%s elapsed_ms=%s",
-                safe_path,
-                attempt + 1,
-                retries + 1,
-                elapsed_ms,
-            )
-            if attempt < retries:
-                await asyncio.sleep(DEFAULT_RETRY_BACKOFF_SECONDS * (attempt + 1))
-                continue
-            raise AIServiceError(SAFE_SERVICE_UNAVAILABLE_MESSAGE) from exc
-        except aiohttp.ClientError as exc:
-            last_error = exc
-            elapsed_ms = int((time.perf_counter() - started_at) * 1000)
-            logger.warning(
-                "Pollinations binary network error path=%s attempt=%s/%s elapsed_ms=%s error=%s",
-                safe_path,
-                attempt + 1,
-                retries + 1,
-                elapsed_ms,
-                exc.__class__.__name__,
-            )
-            if attempt < retries:
-                await asyncio.sleep(DEFAULT_RETRY_BACKOFF_SECONDS * (attempt + 1))
-                continue
-            raise AIServiceError(SAFE_SERVICE_UNAVAILABLE_MESSAGE) from exc
-
-        elapsed_ms = int((time.perf_counter() - started_at) * 1000)
-        if response.status >= 400:
-            detail = _extract_api_error_bytes(body)
-            logger.warning(
-                "Pollinations binary HTTP error path=%s status=%s attempt=%s/%s elapsed_ms=%s detail=%s",
-                safe_path,
-                response.status,
-                attempt + 1,
-                retries + 1,
-                elapsed_ms,
-                detail[:220],
-            )
-            if _is_retryable_status(response.status) and attempt < retries:
-                await asyncio.sleep(DEFAULT_RETRY_BACKOFF_SECONDS * (attempt + 1))
-                continue
-            raise AIServiceError(_friendly_pollinations_error(detail, response.status))
-        return body, content_type
-
-    if last_error is not None:
-        raise AIServiceError(SAFE_SERVICE_UNAVAILABLE_MESSAGE) from last_error
-    raise AIServiceError(SAFE_SERVICE_UNAVAILABLE_MESSAGE)
-
-
 def _gemini_model_candidates(
     *,
     model_override: str | None,
@@ -1563,35 +1209,6 @@ def _friendly_gemini_error(raw_message: str, status_code: int) -> str:
     if detail:
         clipped = detail[:220].rstrip()
         return f"Gemini request failed ({status_code}): {clipped}"
-    return SAFE_SERVICE_UNAVAILABLE_MESSAGE
-
-
-def _friendly_pollinations_error(raw_message: str, status_code: int) -> str:
-    detail = str(raw_message or "").strip()
-    lowered = detail.lower()
-    if status_code in {401, 403} or (
-        "api key" in lowered and ("invalid" in lowered or "unauthorized" in lowered or "forbidden" in lowered)
-    ):
-        return "Pollinations API key is invalid or blocked. Check POLLINATIONS_API_KEY."
-    if (
-        status_code == 402
-        or "insufficient balance" in lowered
-        or "payment_required" in lowered
-        or "payment required" in lowered
-    ):
-        if detail:
-            clipped = detail[:220].rstrip()
-            return f"Pollinations balance is too low for this request. {clipped}"
-        return "Pollinations balance is too low for this request."
-    if status_code == 404 or ("model" in lowered and "not found" in lowered):
-        return "Pollinations model is not available. Check configured Pollinations model names."
-    if status_code == 429 or "rate limit" in lowered or "quota" in lowered:
-        return "Pollinations is rate-limited right now. Please retry shortly."
-    if status_code >= 500:
-        return "Pollinations service is temporarily unavailable upstream. Please retry shortly."
-    if detail:
-        clipped = detail[:220].rstrip()
-        return f"Pollinations request failed ({status_code}): {clipped}"
     return SAFE_SERVICE_UNAVAILABLE_MESSAGE
 
 
@@ -2484,3 +2101,4 @@ def _is_complex_code_request(text: str) -> bool:
 
 def _is_retryable_status(status_code: int) -> bool:
     return status_code in RETRYABLE_HTTP_STATUSES or status_code >= 500
+

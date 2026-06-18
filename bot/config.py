@@ -18,12 +18,6 @@ DEFAULT_STT_MODEL = "openai/whisper-large-v3"
 DEFAULT_GEMINI_MODEL = "gemini-2.0-flash"
 DEFAULT_TTS_FUNCTION_ID = "bc45d9e9-7c78-4d56-9737-e27011962ba8"
 DEFAULT_AI_BASE_URL = "https://integrate.api.nvidia.com/v1"
-DEFAULT_POLLINATIONS_BASE_URL = "https://gen.pollinations.ai"
-DEFAULT_POLLINATIONS_IMAGE_MODEL_CHAT_GBT = "gpt-image-1-mini"
-DEFAULT_POLLINATIONS_IMAGE_MODEL_GROK_IMAGINE = "grok-imagine"
-DEFAULT_POLLINATIONS_VIDEO_MODEL_GROK_TEXT_TO_VIDEO = "grok-video"
-DEFAULT_POLLINATIONS_AUDIO_MODEL_GPT_AUDIO = "openai-audio"
-DEFAULT_POLLINATIONS_AUDIO_VOICE_GPT_AUDIO = "fable"
 DEFAULT_JO_VIDEO_ALLOWED_ASPECT_RATIOS = ("16:9", "9:16")
 DEFAULT_JO_VIDEO_IMAGE_MODELS = ("imagen-4", "flux-2-dev", "dirtberry-pro")
 DEFAULT_MINIAPP_URL = "https://ygirma315-cell.github.io/jo-ai/"
@@ -58,13 +52,6 @@ class Settings:
     nvidia_chat_model: str
     code_model: str
     image_model: str
-    pollinations_api_key: str | None
-    pollinations_base_url: str
-    pollinations_image_model_chat_gbt: str
-    pollinations_image_model_grok_imagine: str
-    pollinations_video_model_grok_text_to_video: str
-    pollinations_audio_model_gpt_audio: str
-    pollinations_audio_voice_gpt_audio: str
     jo_video_model_enabled: bool
     jo_video_provider_order: tuple[str, ...]
     jo_video_image_models: tuple[str, ...]
@@ -394,27 +381,14 @@ def load_settings() -> Settings:
     nvidia_chat_model = _read_env("CHAT_MODEL") or _read_env("NVIDIA_CHAT_MODEL") or DEFAULT_CHAT_MODEL
     code_model = _read_env("CODE_MODEL") or _read_env("NVIDIA_CODE_MODEL") or DEFAULT_CODE_MODEL
     image_model = _read_env("IMAGE_MODEL") or DEFAULT_IMAGE_MODEL
-    pollinations_api_key = _read_secret_env("POLLINATIONS_API_KEY") or None
-    pollinations_base_url = (_read_env("POLLINATIONS_BASE_URL") or DEFAULT_POLLINATIONS_BASE_URL).rstrip("/")
-    pollinations_image_model_chat_gbt = (
-        _read_env("POLLINATIONS_IMAGE_MODEL_CHAT_GBT") or DEFAULT_POLLINATIONS_IMAGE_MODEL_CHAT_GBT
-    )
-    pollinations_image_model_grok_imagine = (
-        _read_env("POLLINATIONS_IMAGE_MODEL_GROK_IMAGINE") or DEFAULT_POLLINATIONS_IMAGE_MODEL_GROK_IMAGINE
-    )
-    pollinations_video_model_grok_text_to_video = (
-        _read_env("POLLINATIONS_VIDEO_MODEL_GROK_TEXT_TO_VIDEO") or DEFAULT_POLLINATIONS_VIDEO_MODEL_GROK_TEXT_TO_VIDEO
-    )
-    pollinations_audio_model_gpt_audio = (
-        _read_env("POLLINATIONS_AUDIO_MODEL_GPT_AUDIO") or DEFAULT_POLLINATIONS_AUDIO_MODEL_GPT_AUDIO
-    )
-    pollinations_audio_voice_gpt_audio = (
-        _read_env("POLLINATIONS_AUDIO_VOICE_GPT_AUDIO") or DEFAULT_POLLINATIONS_AUDIO_VOICE_GPT_AUDIO
-    )
     jo_video_model_enabled = _parse_bool_env(_read_env("JO_VIDEO_MODEL_ENABLED"), default=True)
-    jo_video_provider_order = _parse_csv_models(_read_env("JO_VIDEO_PROVIDER_ORDER"))
+    jo_video_provider_order = tuple(
+        provider
+        for provider in _parse_csv_models(_read_env("JO_VIDEO_PROVIDER_ORDER"))
+        if provider.strip().lower() != "provider"
+    )
     if not jo_video_provider_order:
-        jo_video_provider_order = ("pollinations", "local")
+        jo_video_provider_order = ("local",)
     jo_video_image_models = _parse_csv_models(_read_env("JO_VIDEO_IMAGE_MODELS"))
     if not jo_video_image_models:
         jo_video_image_models = DEFAULT_JO_VIDEO_IMAGE_MODELS
@@ -633,14 +607,11 @@ def load_settings() -> Settings:
         validation_warnings.append("Text-to-Audio credentials are missing. TTS will use fallback synthesis.")
     if not speech_to_text_api_key:
         validation_warnings.append("Hear Audio credentials are missing. /hear will be unavailable.")
-    if not pollinations_api_key:
+    if jo_video_level1_provider_enabled:
         validation_warnings.append(
-            "Pollinations credentials are missing. Image generation and image editing may be unavailable."
+            "JO_VIDEO_LEVEL1_PROVIDER_ENABLED is ignored because provider video models are disabled."
         )
-    if jo_video_level1_provider_enabled and not pollinations_api_key:
-        validation_warnings.append(
-            "JO_VIDEO_LEVEL1_PROVIDER_ENABLED is true but POLLINATIONS_API_KEY is missing. JO AI Video Model will use fallback engine only."
-        )
+        jo_video_level1_provider_enabled = False
     for alias_warning in (
         _alias_conflict_warning("SUPABASE_URL", "SUPABASE_PROJECT_URL"),
         _alias_conflict_warning("SUPABASE_ANON_KEY", "SUPABASE_PUBLISHABLE_KEY"),
@@ -711,13 +682,6 @@ def load_settings() -> Settings:
         nvidia_chat_model=nvidia_chat_model,
         code_model=code_model,
         image_model=image_model,
-        pollinations_api_key=pollinations_api_key,
-        pollinations_base_url=pollinations_base_url,
-        pollinations_image_model_chat_gbt=pollinations_image_model_chat_gbt,
-        pollinations_image_model_grok_imagine=pollinations_image_model_grok_imagine,
-        pollinations_video_model_grok_text_to_video=pollinations_video_model_grok_text_to_video,
-        pollinations_audio_model_gpt_audio=pollinations_audio_model_gpt_audio,
-        pollinations_audio_voice_gpt_audio=pollinations_audio_voice_gpt_audio,
         jo_video_model_enabled=jo_video_model_enabled,
         jo_video_provider_order=jo_video_provider_order,
         jo_video_image_models=jo_video_image_models,

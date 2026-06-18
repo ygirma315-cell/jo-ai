@@ -1,6 +1,7 @@
-from __future__ import annotations
+﻿from __future__ import annotations
 
 import asyncio
+import base64
 from dataclasses import dataclass
 import hashlib
 import html
@@ -78,7 +79,7 @@ from bot.services.ai_service import (
     GeneratedVideoResult,
     GeminiChatService,
     ImageGenerationService,
-    PollinationsMediaService,
+    RemovedMediaProviderService,
     SpeechToTextService,
     TextToSpeechService,
     build_enhanced_image_prompt,
@@ -135,17 +136,10 @@ IMAGE_MODEL_OPTION_JO = "joai_image_generate"
 IMAGE_MODEL_OPTION_CHAT_GBT = "chat_gbt"
 IMAGE_MODEL_OPTION_GROK_IMAGINE = "grok_imagine"
 DEFAULT_IMAGE_MODEL_OPTION = IMAGE_MODEL_OPTION_JO
-DEFAULT_POLLINATIONS_IMAGE_MODEL = "gptimage"
-
-POLLINATIONS_FREE_IMAGE_MODEL_OPTIONS: tuple[tuple[str, str], ...] = (
-    ("gptimage", "GPT Image Generator"),
-)
+DEFAULT_LEGACY_IMAGE_MODEL = IMAGE_MODEL_OPTION_JO
 
 IMAGE_MODEL_LABELS = {
     IMAGE_MODEL_OPTION_JO: "JO AI Image Generate",
-    IMAGE_MODEL_OPTION_CHAT_GBT: "Chat GBT",
-    IMAGE_MODEL_OPTION_GROK_IMAGINE: "Grok Imagine",
-    **{model_id: label for model_id, label in POLLINATIONS_FREE_IMAGE_MODEL_OPTIONS},
 }
 
 JO_IMAGE_MODEL_ALIASES = {
@@ -158,40 +152,15 @@ JO_IMAGE_MODEL_ALIASES = {
     "image generator",
 }
 
-POLLINATIONS_IMAGE_MODEL_ALIASES: dict[str, str] = {
-    "gptimage": "gptimage",
-    "gpt_image": "gptimage",
-    "gpt_image_1_mini": "gptimage",
-    "gpt_image_1": "gptimage",
-    "flux": "flux",
-    "zimage": "zimage",
-    "z_image": "zimage",
-    "z_image_turbo": "zimage",
-    "klein": "klein",
-    "flux_klein": "klein",
-    "imagen_4": "imagen-4",
-    "imagen": "imagen-4",
-    "flux_2_dev": "flux-2-dev",
-    "flux_2": "flux-2-dev",
-    "flux2_dev": "flux-2-dev",
-    "grok_imagine": "grok-imagine",
-    "dirtberry": "dirtberry",
-    "dirtberry_pro": "dirtberry-pro",
-    "special_berry": "dirtberry-pro",
-}
-
 VIDEO_MODEL_OPTION_GROK_TEXT_TO_VIDEO = "grok_text_to_video"
 VIDEO_MODEL_OPTION_JO_AI_VIDEO = "jo_ai_video"
-VIDEO_MODEL_LABEL_GROK_TEXT_TO_VIDEO = "Grok Text to Video"
 VIDEO_MODEL_LABEL_JO_AI_VIDEO = "JO AI Video Model"
 VIDEO_MODEL_LABELS = {
-    VIDEO_MODEL_OPTION_GROK_TEXT_TO_VIDEO: VIDEO_MODEL_LABEL_GROK_TEXT_TO_VIDEO,
     VIDEO_MODEL_OPTION_JO_AI_VIDEO: VIDEO_MODEL_LABEL_JO_AI_VIDEO,
 }
-DEFAULT_VIDEO_MODEL_OPTION = VIDEO_MODEL_OPTION_GROK_TEXT_TO_VIDEO
+DEFAULT_VIDEO_MODEL_OPTION = VIDEO_MODEL_OPTION_JO_AI_VIDEO
 DEFAULT_VIDEO_DURATION_SECONDS = 5
 DEFAULT_VIDEO_ASPECT_RATIO = "9:16"
-JO_VIDEO_FRAME_MODEL = "imagen-4"
 VIDEO_ASPECT_RATIO_TOKEN_MAP = {
     "16_9": "16:9",
     "9_16": "9:16",
@@ -223,7 +192,7 @@ TTS_EMOTION_LABELS = {
 
 SENSITIVE_PUBLIC_ERROR_DETAIL_PATTERN = re.compile(
     r"\b("
-    r"pollinations?|nvidia|openai|gemini|deepseek|kimi|provider|backend|model|"
+    r"nvidia|openai|gemini|deepseek|kimi|provider|backend|model|"
     r"api(?:\s|-)?key|endpoint|base(?:\s|-)?url|token|credential|secret"
     r")\b",
     re.IGNORECASE,
@@ -234,15 +203,8 @@ def _normalize_image_model_token(value: str | None) -> str:
     return str(value or "").strip().lower().replace("-", "_").replace(" ", "_")
 
 
-def _pollinations_image_model_from_alias(value: str | None) -> str | None:
-    normalized = _normalize_image_model_token(value)
-    if not normalized:
-        return None
-    return POLLINATIONS_IMAGE_MODEL_ALIASES.get(normalized)
-
-
 def _image_model_keyboard_options() -> list[tuple[str, str]]:
-    return [(IMAGE_MODEL_LABELS[IMAGE_MODEL_OPTION_JO], IMAGE_MODEL_OPTION_JO), *POLLINATIONS_FREE_IMAGE_MODEL_OPTIONS]
+    return [(IMAGE_MODEL_LABELS[IMAGE_MODEL_OPTION_JO], IMAGE_MODEL_OPTION_JO)]
 
 
 def _resolve_image_model_option(value: str | None) -> str:
@@ -251,40 +213,22 @@ def _resolve_image_model_option(value: str | None) -> str:
         return DEFAULT_IMAGE_MODEL_OPTION
     if normalized in JO_IMAGE_MODEL_ALIASES:
         return IMAGE_MODEL_OPTION_JO
-    if normalized in {"chat_gbt", "chatgbt"}:
-        return DEFAULT_POLLINATIONS_IMAGE_MODEL
-    if normalized == IMAGE_MODEL_OPTION_GROK_IMAGINE:
-        return "grok-imagine"
-    pollinations_model = _pollinations_image_model_from_alias(normalized)
-    if pollinations_model:
-        return pollinations_model
+    if normalized:
+        return IMAGE_MODEL_OPTION_JO
     return DEFAULT_IMAGE_MODEL_OPTION
 
 
-def _pollinations_image_model_id_for_option(
+def _legacy_image_model_id_for_option(
     model_option: str | None,
-    pollinations_media_service: PollinationsMediaService,
+    removed_media_provider_service: RemovedMediaProviderService,
 ) -> str | None:
-    normalized_option = _resolve_image_model_option(model_option)
-    if normalized_option == IMAGE_MODEL_OPTION_JO:
-        return None
-    if normalized_option == IMAGE_MODEL_OPTION_CHAT_GBT:
-        return str(pollinations_media_service.image_model_chat_gbt or "").strip() or DEFAULT_POLLINATIONS_IMAGE_MODEL
-    if normalized_option == IMAGE_MODEL_OPTION_GROK_IMAGINE:
-        return str(pollinations_media_service.image_model_grok_imagine or "").strip() or "grok-imagine"
-    pollinations_model = _pollinations_image_model_from_alias(normalized_option) or str(normalized_option).strip()
-    return pollinations_model or DEFAULT_POLLINATIONS_IMAGE_MODEL
+    _ = (model_option, removed_media_provider_service)
+    return None
 
 
-def _is_grok_image_model_option(model_option: str | None, pollinations_media_service: PollinationsMediaService) -> bool:
-    model_id = _pollinations_image_model_id_for_option(model_option, pollinations_media_service)
-    if not model_id:
-        return False
-    normalized_model_id = _normalize_image_model_token(model_id)
-    normalized_grok_model = _normalize_image_model_token(
-        str(pollinations_media_service.image_model_grok_imagine or "grok-imagine")
-    )
-    return normalized_model_id in {normalized_grok_model, "grok_imagine"}
+def _is_grok_image_model_option(model_option: str | None, removed_media_provider_service: RemovedMediaProviderService) -> bool:
+    _ = (model_option, removed_media_provider_service)
+    return False
 
 
 def _image_model_label(model_option: str | None) -> str:
@@ -299,7 +243,7 @@ def _resolve_video_model_option(value: str | None) -> str:
     if normalized in {"jo_ai_video", "jo_video", "jo_video_model", "jo_ai"}:
         return VIDEO_MODEL_OPTION_JO_AI_VIDEO
     if normalized in {"grok_text_to_video", "grok_video", "grok"}:
-        return VIDEO_MODEL_OPTION_GROK_TEXT_TO_VIDEO
+        return VIDEO_MODEL_OPTION_JO_AI_VIDEO
     return DEFAULT_VIDEO_MODEL_OPTION
 
 
@@ -309,17 +253,15 @@ def _video_model_label(model_option: str | None) -> str:
 
 
 def _video_feature_unavailable_text(
-    pollinations_media_service: PollinationsMediaService,
+    removed_media_provider_service: RemovedMediaProviderService,
     image_generation_service: ImageGenerationService | None = None,
     *,
     model_option: str | None = None,
 ) -> str | None:
     selected_model = _resolve_video_model_option(model_option)
-    has_pollinations = bool(str(pollinations_media_service.api_key or "").strip())
+    _ = removed_media_provider_service
     has_image_service = bool(image_generation_service and str(image_generation_service.api_key or "").strip())
-    if selected_model == VIDEO_MODEL_OPTION_GROK_TEXT_TO_VIDEO and not has_pollinations:
-        return "Video generation does not work right now because video API access is not configured."
-    if selected_model == VIDEO_MODEL_OPTION_JO_AI_VIDEO and not (has_pollinations or has_image_service):
+    if selected_model == VIDEO_MODEL_OPTION_JO_AI_VIDEO and not has_image_service:
         return "Video generation does not work right now because video or image API access is not configured."
     return None
 
@@ -1165,7 +1107,7 @@ async def _activate_group_mode(message: Message, user_id: int, mode: JoAIMode, s
     async with session_manager.lock(user_id) as session:
         session.jo_ai_group_chat_id = int(message.chat.id)
         if mode == JoAIMode.IMAGE:
-            session.jo_ai_image_model = DEFAULT_POLLINATIONS_IMAGE_MODEL
+            session.jo_ai_image_model = DEFAULT_LEGACY_IMAGE_MODEL
             session.jo_ai_image_ratio = None
         elif mode == JoAIMode.VIDEO:
             session.jo_ai_video_duration = DEFAULT_VIDEO_DURATION_SECONDS
@@ -1406,17 +1348,6 @@ def _is_service_unavailable_error(exc: Exception | None) -> bool:
     if not normalized:
         return False
     return normalized == SAFE_SERVICE_UNAVAILABLE_MESSAGE
-
-
-def _is_pollinations_payment_error(exc: Exception | str | None) -> bool:
-    normalized = str(exc or "").strip().lower()
-    if not normalized:
-        return False
-    return (
-        "insufficient balance" in normalized
-        or "payment_required" in normalized
-        or "payment required" in normalized
-    )
 
 
 def _image_request_blocked_text() -> str:
@@ -2153,7 +2084,7 @@ async def _process_group_image_edit_command(
     user_text: str,
     session_manager: SessionManager,
     image_generation_service: ImageGenerationService,
-    pollinations_media_service: PollinationsMediaService,
+    removed_media_provider_service: RemovedMediaProviderService,
     tracking_service: SupabaseTrackingService | None,
 ) -> None:
     file_id, file_size = _extract_replied_image_file(message)
@@ -2175,7 +2106,7 @@ async def _process_group_image_edit_command(
         reference_image_url = await _upload_reference_image_from_telegram(
             message=message,
             file_id=file_id,
-            pollinations_media_service=pollinations_media_service,
+            removed_media_provider_service=removed_media_provider_service,
         )
     except Exception:
         logger.exception("Failed to upload group edit reference image.")
@@ -2187,9 +2118,9 @@ async def _process_group_image_edit_command(
         prompt,
         session_manager,
         image_generation_service,
-        pollinations_media_service,
+        removed_media_provider_service,
         "1:1",
-        DEFAULT_POLLINATIONS_IMAGE_MODEL,
+        DEFAULT_LEGACY_IMAGE_MODEL,
         tracking_service,
         reply_markup=None,
         feature_used_prefix="group_image_edit",
@@ -2319,7 +2250,7 @@ async def group_search_command(
 async def group_audio_command(
     message: Message,
     session_manager: SessionManager,
-    pollinations_media_service: PollinationsMediaService,
+    removed_media_provider_service: RemovedMediaProviderService,
     tts_service: TextToSpeechService,
     tracking_service: SupabaseTrackingService | None = None,
 ) -> None:
@@ -2343,7 +2274,7 @@ async def group_audio_command(
     await _process_group_audio_command(
         message,
         prompt,
-        pollinations_media_service,
+        removed_media_provider_service,
         tracking_service,
         tts_service=tts_service,
         show_progress=False,
@@ -2401,7 +2332,7 @@ async def open_jo_ai_menu(
     miniapp_url: str | None,
     chat_service: ChatService,
     image_generation_service: ImageGenerationService,
-    pollinations_media_service: PollinationsMediaService,
+    removed_media_provider_service: RemovedMediaProviderService,
     tts_service: TextToSpeechService,
     speech_to_text_service: SpeechToTextService,
     code_api_key: str | None,
@@ -2437,9 +2368,9 @@ async def open_jo_ai_menu(
                 prompt,
                 session_manager,
                 image_generation_service,
-                pollinations_media_service,
+                removed_media_provider_service,
                 "1:1",
-                DEFAULT_POLLINATIONS_IMAGE_MODEL,
+                DEFAULT_LEGACY_IMAGE_MODEL,
                 tracking_service,
                 reply_markup=None,
                 feature_used_prefix="group_image_command",
@@ -2455,7 +2386,7 @@ async def open_jo_ai_menu(
                 prompt,
                 session_manager,
                 image_generation_service,
-                pollinations_media_service,
+                removed_media_provider_service,
                 tracking_service,
             )
             return
@@ -2512,7 +2443,7 @@ async def open_jo_ai_menu(
             await _process_group_audio_command(
                 message,
                 prompt,
-                pollinations_media_service,
+                removed_media_provider_service,
                 tracking_service,
                 tts_service=tts_service,
                 show_progress=False,
@@ -2582,7 +2513,7 @@ async def open_jo_ai_menu(
         return
     if text in {"/video", MENU_AI_VIDEO.lower()}:
         unavailable_text = _video_feature_unavailable_text(
-            pollinations_media_service,
+            removed_media_provider_service,
             image_generation_service,
             model_option=DEFAULT_VIDEO_MODEL_OPTION,
         )
@@ -2741,13 +2672,13 @@ async def enable_video_mode(
     query: CallbackQuery,
     session_manager: SessionManager,
     miniapp_url: str | None,
-    pollinations_media_service: PollinationsMediaService,
+    removed_media_provider_service: RemovedMediaProviderService,
     image_generation_service: ImageGenerationService,
 ) -> None:
     if not query.from_user:
         await query.answer()
         return
-    _ = (session_manager, miniapp_url, pollinations_media_service, image_generation_service)
+    _ = (session_manager, miniapp_url, removed_media_provider_service, image_generation_service)
     await query.answer("Mode removed.", show_alert=True)
     if isinstance(query.message, Message):
         await _send_removed_mode_notice(query.message)
@@ -3364,7 +3295,7 @@ async def handle_jo_ai_text(
     chat_service: ChatService,
     gemini_service: GeminiChatService,
     image_generation_service: ImageGenerationService,
-    pollinations_media_service: PollinationsMediaService,
+    removed_media_provider_service: RemovedMediaProviderService,
     tts_service: TextToSpeechService,
     deepseek_api_key: str | None,
     deepseek_model: str,
@@ -3395,9 +3326,9 @@ async def handle_jo_ai_text(
                     text,
                     session_manager,
                     image_generation_service,
-                    pollinations_media_service,
+                    removed_media_provider_service,
                     group_image_ratio or "1:1",
-                    group_image_model or DEFAULT_POLLINATIONS_IMAGE_MODEL,
+                    group_image_model or DEFAULT_LEGACY_IMAGE_MODEL,
                     tracking_service,
                     reply_markup=None,
                     feature_used_prefix="group_image_flow",
@@ -3409,7 +3340,7 @@ async def handle_jo_ai_text(
             await _process_group_audio_command(
                 message,
                 text,
-                pollinations_media_service,
+                removed_media_provider_service,
                 tracking_service,
                 tts_service=tts_service,
                 show_progress=False,
@@ -3480,7 +3411,7 @@ async def handle_jo_ai_text(
             inline_ratio = image_ratio if image_ratio in IMAGE_RATIO_TO_SIZE else "1:1"
             inline_model = image_model or (
                 CHAT_INLINE_IMAGE_DEFAULT_MODEL
-                if str(pollinations_media_service.api_key or "").strip()
+                if str(removed_media_provider_service.api_key or "").strip()
                 else IMAGE_MODEL_OPTION_JO
             )
             inline_prompt = _build_chat_inline_image_prompt(user_text, history_snapshot)
@@ -3490,7 +3421,7 @@ async def handle_jo_ai_text(
                     reference_image_url = await _upload_reference_image_from_telegram(
                         message=message,
                         file_id=reply_image_file_id,
-                        pollinations_media_service=pollinations_media_service,
+                        removed_media_provider_service=removed_media_provider_service,
                     )
                 except Exception:
                     logger.exception("Failed to resolve replied image for chat edit.")
@@ -3515,7 +3446,7 @@ async def handle_jo_ai_text(
                 inline_prompt,
                 session_manager,
                 image_generation_service,
-                pollinations_media_service,
+                removed_media_provider_service,
                 inline_ratio,
                 inline_model,
                 tracking_service,
@@ -3544,7 +3475,7 @@ async def handle_jo_ai_text(
                     reference_image_url = await _upload_reference_image_from_telegram(
                         message=message,
                         file_id=reply_image_file_id,
-                        pollinations_media_service=pollinations_media_service,
+                        removed_media_provider_service=removed_media_provider_service,
                     )
                 except Exception:
                     logger.exception("Failed to resolve replied image for chat video request.")
@@ -3573,7 +3504,7 @@ async def handle_jo_ai_text(
             await _process_video_message(
                 message=message,
                 user_text=user_text,
-                pollinations_media_service=pollinations_media_service,
+                removed_media_provider_service=removed_media_provider_service,
                 current_duration_seconds=video_duration,
                 current_aspect_ratio=video_aspect_ratio,
                 current_model_option=selected_video_model,
@@ -3717,7 +3648,7 @@ async def handle_jo_ai_text(
                 reference_image_url = await _upload_reference_image_from_telegram(
                     message=message,
                     file_id=reference_file_id,
-                    pollinations_media_service=pollinations_media_service,
+                    removed_media_provider_service=removed_media_provider_service,
                 )
             except Exception:
                 logger.exception("Failed to resolve replied image for Image Edit mode.")
@@ -3737,7 +3668,7 @@ async def handle_jo_ai_text(
                     reference_image_url = await _upload_reference_image_from_telegram(
                         message=message,
                         file_id=reference_file_id,
-                        pollinations_media_service=pollinations_media_service,
+                        removed_media_provider_service=removed_media_provider_service,
                     )
                 except Exception:
                     logger.exception("Failed to resolve saved image for Image Edit mode.")
@@ -3755,9 +3686,9 @@ async def handle_jo_ai_text(
             user_text,
             session_manager,
             image_generation_service,
-            pollinations_media_service,
+            removed_media_provider_service,
             image_ratio or "1:1",
-            image_model or DEFAULT_POLLINATIONS_IMAGE_MODEL,
+            image_model or DEFAULT_LEGACY_IMAGE_MODEL,
             tracking_service,
             reply_markup=jo_chat_keyboard("joai:image_edit"),
             feature_used_prefix="image_edit",
@@ -3770,7 +3701,7 @@ async def handle_jo_ai_text(
             user_text,
             session_manager,
             image_generation_service,
-            pollinations_media_service,
+            removed_media_provider_service,
             image_ratio,
             image_model,
             tracking_service,
@@ -3780,7 +3711,7 @@ async def handle_jo_ai_text(
         await _process_video_message(
             message,
             user_text,
-            pollinations_media_service,
+            removed_media_provider_service,
             video_duration,
             video_aspect_ratio,
             video_model_option,
@@ -3819,7 +3750,8 @@ async def handle_jo_ai_text(
         await _process_gpt_audio_message(
             message,
             user_text,
-            pollinations_media_service,
+            removed_media_provider_service,
+            tts_service,
             tracking_service,
         )
         return
@@ -3893,7 +3825,7 @@ async def handle_code_document_upload(
     session_manager: SessionManager,
     chat_service: ChatService,
     image_generation_service: ImageGenerationService,
-    pollinations_media_service: PollinationsMediaService,
+    removed_media_provider_service: RemovedMediaProviderService,
     speech_to_text_service: SpeechToTextService,
     code_api_key: str | None,
     code_model: str,
@@ -3940,7 +3872,7 @@ async def handle_code_document_upload(
                     reference_image_url = await _upload_reference_image_from_telegram(
                         message=message,
                         file_id=document.file_id,
-                        pollinations_media_service=pollinations_media_service,
+                        removed_media_provider_service=removed_media_provider_service,
                     )
                 except Exception:
                     logger.exception("Failed to upload Image Edit document reference.")
@@ -3954,9 +3886,9 @@ async def handle_code_document_upload(
                     prompt,
                     session_manager,
                     image_generation_service,
-                    pollinations_media_service,
+                    removed_media_provider_service,
                     "1:1",
-                    DEFAULT_POLLINATIONS_IMAGE_MODEL,
+                    DEFAULT_LEGACY_IMAGE_MODEL,
                     tracking_service,
                     reply_markup=jo_chat_keyboard("joai:image_edit"),
                     feature_used_prefix="image_edit",
@@ -4166,7 +4098,7 @@ async def handle_kimi_photo(
     session_manager: SessionManager,
     chat_service: ChatService,
     image_generation_service: ImageGenerationService,
-    pollinations_media_service: PollinationsMediaService,
+    removed_media_provider_service: RemovedMediaProviderService,
     kimi_api_key: str | None,
     kimi_model: str,
     tracking_service: SupabaseTrackingService | None = None,
@@ -4195,7 +4127,7 @@ async def handle_kimi_photo(
                 reference_image_url = await _upload_reference_image_from_telegram(
                     message=message,
                     file_id=largest.file_id,
-                    pollinations_media_service=pollinations_media_service,
+                    removed_media_provider_service=removed_media_provider_service,
                 )
             except Exception:
                 logger.exception("Failed to upload Image Edit photo reference.")
@@ -4209,9 +4141,9 @@ async def handle_kimi_photo(
                 prompt_text,
                 session_manager,
                 image_generation_service,
-                pollinations_media_service,
+                removed_media_provider_service,
                 "1:1",
-                DEFAULT_POLLINATIONS_IMAGE_MODEL,
+                DEFAULT_LEGACY_IMAGE_MODEL,
                 tracking_service,
                 reply_markup=jo_chat_keyboard("joai:image_edit"),
                 feature_used_prefix="image_edit",
@@ -5250,15 +5182,12 @@ async def _upload_reference_image_from_telegram(
     *,
     message: Message,
     file_id: str,
-    pollinations_media_service: PollinationsMediaService,
+    removed_media_provider_service: RemovedMediaProviderService,
 ) -> str:
     image_bytes = await _download_telegram_file_bytes(message, file_id)
-    extension = _image_extension_for_mime_type("image/jpeg")
-    return await pollinations_media_service.upload_media_bytes(
-        media_bytes=image_bytes,
-        mime_type="image/jpeg",
-        file_name=f"telegram_ref.{extension}",
-    )
+    _ = removed_media_provider_service
+    compact = base64.b64encode(image_bytes).decode("ascii")
+    return f"data:image/jpeg;base64,{compact}"
 
 
 async def _remember_generated_image_context(
@@ -5363,93 +5292,12 @@ def _jo_video_storyboard_prompts(prompt: str, keyframe_count: int) -> list[str]:
     return selected
 
 
-async def _generate_jo_video_animation(
-    *,
-    prompt: str,
-    aspect_ratio: str,
-    duration_seconds: int,
-    pollinations_media_service: PollinationsMediaService,
-    reference_image_url: str | None = None,
-) -> tuple[bytes, str]:
-    if Image is None:
-        raise AIServiceError("JO video renderer is unavailable right now.")
-    if not str(pollinations_media_service.api_key or "").strip():
-        raise AIServiceError("Video generation is unavailable right now.")
-
-    safe_duration = max(1, int(duration_seconds or DEFAULT_VIDEO_DURATION_SECONDS))
-    width, height = _video_dimensions_from_ratio(aspect_ratio)
-    image_size = f"{width}x{height}"
-    storyboard_count = max(3, min(5, 1 + (safe_duration // 2)))
-    storyboard_prompts = _jo_video_storyboard_prompts(prompt, storyboard_count)
-    keyframe_bytes: list[bytes] = []
-    reference_url = str(reference_image_url or "").strip() or None
-    for stage_index, stage_prompt in enumerate(storyboard_prompts):
-        enhanced_prompt = build_enhanced_image_prompt(stage_prompt, ratio=aspect_ratio) or stage_prompt
-        if reference_url and stage_index == 0:
-            enhanced_prompt = (
-                f"{enhanced_prompt}\n\n"
-                "Preserve the same subject identity, outfit, background, and style from the reference image."
-            )
-        generated = await pollinations_media_service.generate_image(
-            prompt=enhanced_prompt,
-            model=JO_VIDEO_FRAME_MODEL,
-            size=image_size,
-            enhance=True,
-            quality="high",
-            image=reference_url if reference_url and stage_index == 0 else None,
-        )
-        if not generated.image_bytes:
-            raise AIServiceError("JO video could not generate storyboard frames.")
-        keyframe_bytes.append(generated.image_bytes)
-
-    if len(keyframe_bytes) < 2:
-        raise AIServiceError("JO video could not generate storyboard frames.")
-
-    frame_target = max(14, min(64, safe_duration * 8))
-    segment_count = len(keyframe_bytes) - 1
-    base_segment_frames = max(5, frame_target // max(1, segment_count))
-    frame_remainder = max(0, frame_target - (base_segment_frames * segment_count))
-    frames: list["Image.Image"] = []
-    for index in range(segment_count):
-        segment_frames = base_segment_frames + (1 if index < frame_remainder else 0)
-        with Image.open(io.BytesIO(keyframe_bytes[index])) as first_img, Image.open(
-            io.BytesIO(keyframe_bytes[index + 1])
-        ) as second_img:
-            composed = _compose_jo_video_frames(
-                first_img,
-                second_img,
-                width=width,
-                height=height,
-                frame_count=segment_frames,
-                segment_index=index,
-                segment_total=segment_count,
-            )
-        if index > 0 and composed:
-            composed = composed[1:]
-        frames.extend(composed)
-    if not frames:
-        raise AIServiceError("JO video did not create frames.")
-
-    frame_duration_ms = max(60, int((safe_duration * 1000) / len(frames)))
-    output = io.BytesIO()
-    frames[0].save(
-        output,
-        format="GIF",
-        save_all=True,
-        append_images=frames[1:],
-        duration=frame_duration_ms,
-        loop=0,
-        optimize=False,
-    )
-    return output.getvalue(), "image/gif"
-
-
 async def _process_image_message(
     message: Message,
     user_text: str,
     session_manager: SessionManager,
     image_generation_service: ImageGenerationService,
-    pollinations_media_service: PollinationsMediaService,
+    removed_media_provider_service: RemovedMediaProviderService,
     current_image_ratio: str | None,
     current_image_model: str | None,
     tracking_service: SupabaseTrackingService | None,
@@ -5470,31 +5318,12 @@ async def _process_image_message(
     requested_model_label = model_label
     effective_model_option = model_option
     effective_model_label = model_label
-    provider_source = "jo_ai" if effective_model_option == IMAGE_MODEL_OPTION_JO else "pollinations"
-    if reference_url:
-        provider_source = "pollinations"
+    provider_source = "jo_ai"
     feature_used = f"{feature_prefix}:{effective_model_option}"
     if reference_url:
         feature_used = f"{feature_used}:edit"
     ratio_label = current_image_ratio if current_image_ratio in IMAGE_RATIO_TO_SIZE else "1:1"
     image_size = IMAGE_RATIO_TO_SIZE.get(ratio_label, IMAGE_RATIO_TO_SIZE["1:1"])
-    if reference_url and not str(pollinations_media_service.api_key or "").strip():
-        reply_text = "Image edit needs image API access right now. Please retry after API balance resets."
-        if compact_result:
-            reply_text = _compact_generation_failure_text("image")
-        await message.answer(reply_text, reply_markup=keyboard)
-        await _track_telegram_action(
-            tracking_service=tracking_service,
-            message=message,
-            message_type="image",
-            user_message=user_text,
-            bot_reply=reply_text,
-            model_used=model_label,
-            success=False,
-            image_increment=1,
-            feature_used=f"{feature_used}:missing_api_access",
-        )
-        return
     guardrail_reply = guardrail_response_for_user_query(user_text, ratio_label)
     if guardrail_reply:
         reply_text = guardrail_reply if not _is_internal_rule_block(guardrail_reply) else _image_request_blocked_text()
@@ -5514,7 +5343,7 @@ async def _process_image_message(
         )
         return
 
-    if _is_grok_image_model_option(model_option, pollinations_media_service):
+    if _is_grok_image_model_option(model_option, removed_media_provider_service):
         moderation_result = moderate_grok_generation_prompt(user_text)
         if moderation_result.blocked:
             block_reason = grok_safety_reason_code(moderation_result)
@@ -5547,7 +5376,8 @@ async def _process_image_message(
     if reference_url:
         base_prompt = (
             f"{user_text}\n\n"
-            "Edit the referenced image while preserving core subject identity, style, and scene continuity "
+            "Reference-guided image edit. A source image was provided by the user. "
+            "Preserve the source subject identity, scene continuity, and overall composition as much as possible "
             "unless the user explicitly asks to change them."
         )
     enhanced_prompt = build_enhanced_image_prompt(base_prompt, ratio=ratio_label) or base_prompt
@@ -5565,67 +5395,27 @@ async def _process_image_message(
     fallback_notice: str | None = None
     try:
         async with ChatActionSender.upload_photo(bot=message.bot, chat_id=message.chat.id):
+            if effective_model_option != IMAGE_MODEL_OPTION_JO:
+                fallback_notice = "Removed provider model mapped to JO AI Image Generate."
+            effective_model_option = IMAGE_MODEL_OPTION_JO
+            effective_model_label = IMAGE_MODEL_LABELS[IMAGE_MODEL_OPTION_JO]
+            provider_source = "jo_ai"
+            feature_used = (
+                f"{feature_prefix}:{requested_model_option}:mapped_to_{effective_model_option}"
+                if requested_model_option != IMAGE_MODEL_OPTION_JO
+                else f"{feature_prefix}:{effective_model_option}"
+            )
             if reference_url:
-                pollinations_model_id = _pollinations_image_model_id_for_option(
-                    effective_model_option,
-                    pollinations_media_service,
-                ) or CHAT_INLINE_IMAGE_DEFAULT_MODEL
-                effective_model_option = _resolve_image_model_option(pollinations_model_id)
-                effective_model_label = _image_model_label(effective_model_option)
-                provider_source = "pollinations"
-                feature_used = f"{feature_prefix}:{effective_model_option}:edit"
-                generated = await asyncio.wait_for(
-                    pollinations_media_service.generate_image(
-                        prompt=enhanced_prompt,
-                        model=pollinations_model_id,
-                        size=image_size,
-                        enhance=True,
-                        image=reference_url,
-                        quality="high",
-                    ),
-                    timeout=TELEGRAM_IMAGE_TIMEOUT_SECONDS,
-                )
-            elif effective_model_option == IMAGE_MODEL_OPTION_JO:
-                generated = await asyncio.wait_for(
-                    image_generation_service.generate_image(
-                        enhanced_prompt,
-                        size=image_size,
-                        ratio=ratio_label,
-                    ),
-                    timeout=TELEGRAM_IMAGE_TIMEOUT_SECONDS,
-                )
-            else:
-                pollinations_model_id = _pollinations_image_model_id_for_option(
-                    effective_model_option,
-                    pollinations_media_service,
-                ) or DEFAULT_POLLINATIONS_IMAGE_MODEL
-                try:
-                    generated = await asyncio.wait_for(
-                        pollinations_media_service.generate_image(
-                            prompt=enhanced_prompt,
-                            model=pollinations_model_id,
-                            size=image_size,
-                            enhance=True,
-                            quality="high",
-                        ),
-                        timeout=TELEGRAM_IMAGE_TIMEOUT_SECONDS,
-                    )
-                except AIServiceError as exc:
-                    if not _is_pollinations_payment_error(exc):
-                        raise
-                    fallback_notice = str(exc).strip()[:220]
-                    effective_model_option = IMAGE_MODEL_OPTION_JO
-                    effective_model_label = IMAGE_MODEL_LABELS[IMAGE_MODEL_OPTION_JO]
-                    provider_source = "jo_ai"
-                    feature_used = f"{feature_prefix}:{requested_model_option}:fallback_to_{effective_model_option}"
-                    generated = await asyncio.wait_for(
-                        image_generation_service.generate_image(
-                            enhanced_prompt,
-                            size=image_size,
-                            ratio=ratio_label,
-                        ),
-                        timeout=TELEGRAM_IMAGE_TIMEOUT_SECONDS,
-                    )
+                feature_used = f"{feature_used}:reference_guided_edit"
+                fallback_notice = fallback_notice or "Image edit uses JO AI reference-guided generation."
+            generated = await asyncio.wait_for(
+                image_generation_service.generate_image(
+                    enhanced_prompt,
+                    size=image_size,
+                    ratio=ratio_label,
+                ),
+                timeout=TELEGRAM_IMAGE_TIMEOUT_SECONDS,
+            )
     except asyncio.TimeoutError:
         await _clear_progress_message(progress_message)
         reply_text = "Image generation timed out. Please retry."
@@ -5677,11 +5467,7 @@ async def _process_image_message(
                 ),
             )
             return
-        primary_image_key = (
-            image_generation_service.api_key
-            if effective_model_option == IMAGE_MODEL_OPTION_JO
-            else pollinations_media_service.api_key
-        )
+        primary_image_key = image_generation_service.api_key
         if _is_service_unavailable_error(exc) or not bool(primary_image_key):
             reply_text = _image_generation_failed_text(confirmed_unavailable=True)
         else:
@@ -5756,15 +5542,7 @@ async def _process_image_message(
         else "Image generated successfully."
     )
     stored_media_url = str(generated.image_url or "").strip() or None
-    if generated.image_bytes and not stored_media_url and str(pollinations_media_service.api_key or "").strip():
-        try:
-            stored_media_url = await pollinations_media_service.upload_media_bytes(
-                media_bytes=generated.image_bytes,
-                mime_type="image/png",
-                file_name="jo_ai_generated.png",
-            )
-        except Exception:
-            logger.warning("Failed to upload generated image for future edit context.", exc_info=True)
+    _ = removed_media_provider_service
 
     if generated.image_bytes:
         image_file = BufferedInputFile(generated.image_bytes, filename="jo_ai_generated.png")
@@ -5875,9 +5653,11 @@ async def _process_image_message(
 async def _process_gpt_audio_message(
     message: Message,
     user_text: str,
-    pollinations_media_service: PollinationsMediaService,
+    removed_media_provider_service: RemovedMediaProviderService,
+    tts_service: TextToSpeechService,
     tracking_service: SupabaseTrackingService | None,
 ) -> None:
+    _ = removed_media_provider_service
     feature_used = "gpt_audio"
     guardrail_reply = guardrail_response_for_user_query(user_text)
     if guardrail_reply:
@@ -5905,11 +5685,11 @@ async def _process_gpt_audio_message(
     try:
         async with ChatActionSender.typing(bot=message.bot, chat_id=message.chat.id):
             generated = await asyncio.wait_for(
-                pollinations_media_service.generate_audio(
-                    prompt=enhanced_prompt,
-                    model=pollinations_media_service.audio_model_gpt_audio,
-                    voice=pollinations_media_service.audio_voice_gpt_audio,
-                    enhance=False,
+                tts_service.generate_speech(
+                    text=enhanced_prompt,
+                    language="en",
+                    voice="female",
+                    emotion="neutral",
                 ),
                 timeout=GPT_AUDIO_TIMEOUT_SECONDS,
             )
@@ -5929,7 +5709,7 @@ async def _process_gpt_audio_message(
             feature_used=feature_used,
             media=TrackingMedia(
                 media_type="audio",
-                provider_source="pollinations",
+                provider_source="tts",
                 media_origin="generated",
                 media_status="failed",
                 media_error_reason="timeout",
@@ -5952,7 +5732,7 @@ async def _process_gpt_audio_message(
             feature_used=feature_used,
             media=TrackingMedia(
                 media_type="audio",
-                provider_source="pollinations",
+                provider_source="tts",
                 media_origin="generated",
                 media_status="failed",
                 media_error_reason=reply_text,
@@ -5976,7 +5756,7 @@ async def _process_gpt_audio_message(
             feature_used=feature_used,
             media=TrackingMedia(
                 media_type="audio",
-                provider_source="pollinations",
+                provider_source="tts",
                 media_origin="generated",
                 media_status="failed",
                 media_error_reason=reply_text,
@@ -6007,7 +5787,7 @@ async def _process_gpt_audio_message(
             media_type="audio",
             storage_path=storage_path,
             mime_type=generated.mime_type,
-            provider_source="pollinations",
+            provider_source="tts",
             media_origin="generated",
             media_status="available",
         ),
@@ -6046,7 +5826,7 @@ async def _send_group_audio_result(
 async def _process_group_audio_command(
     message: Message,
     user_text: str,
-    pollinations_media_service: PollinationsMediaService,
+    removed_media_provider_service: RemovedMediaProviderService,
     tracking_service: SupabaseTrackingService | None,
     *,
     tts_service: TextToSpeechService | None = None,
@@ -6076,37 +5856,33 @@ async def _process_group_audio_command(
         f"User request: {user_text}"
     )
     progress_message = await _send_progress_message(message, "Generating your audio...") if show_progress else None
+    _ = removed_media_provider_service
     generated: GeneratedAudioResult | None = None
-    provider_source = "pollinations"
+    provider_source = "tts"
     try:
         async with ChatActionSender.typing(bot=message.bot, chat_id=message.chat.id):
-            generated = await asyncio.wait_for(
-                pollinations_media_service.generate_audio(
-                    prompt=enhanced_prompt,
-                    model=pollinations_media_service.audio_model_gpt_audio,
-                    voice=pollinations_media_service.audio_voice_gpt_audio,
-                    enhance=False,
-                ),
-                timeout=GPT_AUDIO_TIMEOUT_SECONDS,
-            )
-    except Exception:
-        logger.exception("Group audio Pollinations path failed; trying TTS fallback.")
-
-    if generated is None and tts_service is not None:
-        provider_source = "tts"
-        try:
-            async with ChatActionSender.typing(bot=message.bot, chat_id=message.chat.id):
+            if tts_service is not None:
                 generated = await asyncio.wait_for(
                     tts_service.generate_speech(
-                        user_text,
+                        enhanced_prompt,
                         language="en",
                         voice="female",
                         emotion="neutral",
                     ),
                     timeout=GPT_AUDIO_TIMEOUT_SECONDS,
                 )
-        except Exception:
-            logger.exception("Group audio TTS fallback failed.")
+            else:
+                generated = await asyncio.wait_for(
+                    TextToSpeechService(api_key=None).generate_speech(
+                        enhanced_prompt,
+                        language="en",
+                        voice="female",
+                        emotion="neutral",
+                    ),
+                    timeout=GPT_AUDIO_TIMEOUT_SECONDS,
+                )
+    except Exception:
+        logger.exception("Group audio TTS generation failed.")
 
     if generated is None:
         await _clear_progress_message(progress_message)
@@ -6183,7 +5959,7 @@ async def _process_group_audio_command(
 async def _process_video_message(
     message: Message,
     user_text: str,
-    pollinations_media_service: PollinationsMediaService,
+    removed_media_provider_service: RemovedMediaProviderService,
     current_duration_seconds: int | None,
     current_aspect_ratio: str | None,
     current_model_option: str | None,
@@ -6205,9 +5981,7 @@ async def _process_video_message(
     selected_model_label = _video_model_label(selected_model_option)
     model_used = selected_model_label
     feature_used = f"video_generation:{selected_model_option}"
-    provider_source = (
-        "jo_ai" if selected_model_option == VIDEO_MODEL_OPTION_JO_AI_VIDEO else "pollinations"
-    )
+    provider_source = "jo_ai"
 
     async def _track_video_failure(
         reply_text: str,
@@ -6240,7 +6014,7 @@ async def _process_video_message(
         )
 
     unavailable_text = _video_feature_unavailable_text(
-        pollinations_media_service,
+        removed_media_provider_service,
         image_generation_service,
         model_option=selected_model_option,
     )
@@ -6286,45 +6060,32 @@ async def _process_video_message(
     progress_message = await _send_progress_message(message, progress_text) if show_progress else None
     try:
         async with ChatActionSender.typing(bot=message.bot, chat_id=message.chat.id):
-            if selected_model_option == VIDEO_MODEL_OPTION_JO_AI_VIDEO:
-                safe_ratio: Literal["16:9", "9:16"] = "9:16" if aspect_ratio == "9:16" else "16:9"
-                engine = JOAIVideoModelEngine(
-                    pollinations_service=pollinations_media_service,
-                    image_service=image_generation_service,
-                )
-                engine_result = await asyncio.wait_for(
-                    engine.generate(
-                        JOAIVideoOptions(
-                            prompt=video_prompt,
-                            aspect_ratio=safe_ratio,
-                            duration_seconds=duration_seconds,
-                            scene_count=1,
-                            fps=12,
-                            output_format="gif",
-                            reference_image_url=reference_image_url,
-                            provider_level1_enabled=False,
-                            fallback_enabled=True,
-                        )
-                    ),
-                    timeout=TELEGRAM_VIDEO_TIMEOUT_SECONDS,
-                )
-                generated = GeneratedVideoResult(
-                    video_bytes=engine_result.video_bytes,
-                    video_url=engine_result.video_url,
-                    mime_type=engine_result.mime_type,
-                )
-            else:
-                generated = await asyncio.wait_for(
-                    pollinations_media_service.generate_video(
+            safe_ratio: Literal["16:9", "9:16"] = "9:16" if aspect_ratio == "9:16" else "16:9"
+            engine = JOAIVideoModelEngine(
+                removed_media_provider=removed_media_provider_service,
+                image_service=image_generation_service,
+            )
+            engine_result = await asyncio.wait_for(
+                engine.generate(
+                    JOAIVideoOptions(
                         prompt=video_prompt,
-                        model=pollinations_media_service.video_model_grok_text_to_video,
+                        aspect_ratio=safe_ratio,
                         duration_seconds=duration_seconds,
-                        aspect_ratio=aspect_ratio,
-                        enhance=True,
-                        audio=False,
-                    ),
-                    timeout=TELEGRAM_VIDEO_TIMEOUT_SECONDS,
-                )
+                        scene_count=1,
+                        fps=12,
+                        output_format="gif",
+                        reference_image_url=reference_image_url,
+                        provider_level1_enabled=False,
+                        fallback_enabled=True,
+                    )
+                ),
+                timeout=TELEGRAM_VIDEO_TIMEOUT_SECONDS,
+            )
+            generated = GeneratedVideoResult(
+                video_bytes=engine_result.video_bytes,
+                video_url=engine_result.video_url,
+                mime_type=engine_result.mime_type,
+            )
     except asyncio.TimeoutError:
         await _clear_progress_message(progress_message)
         reply_text = "Video generation timed out. Please retry."
@@ -6332,13 +6093,8 @@ async def _process_video_message(
         return
     except AIServiceError as exc:
         await _clear_progress_message(progress_message)
-        force_visible_text = False
-        if _is_pollinations_payment_error(exc):
-            reply_text = "Video generation can't run right now because the video API needs credits/payment."
-            force_visible_text = True
-        else:
-            reply_text = _friendly_error_text("Video generation is temporarily unavailable", exc)
-        await _track_video_failure(reply_text, reason=reply_text, force_visible_text=force_visible_text)
+        reply_text = _friendly_error_text("Video generation is temporarily unavailable", exc)
+        await _track_video_failure(reply_text, reason=reply_text)
         return
     except Exception:
         await _clear_progress_message(progress_message)
@@ -6461,5 +6217,6 @@ async def jo_ai_unexpected_input(
         success=False,
         message_increment=1,
     )
+
 
 
